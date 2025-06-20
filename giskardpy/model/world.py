@@ -1611,7 +1611,11 @@ class WorldBranch(WorldTreeInterface):
 
     @property
     def free_variables(self) -> List[FreeVariable]:
-        return list({j.free_variables for j in self.joints.values() if hasattr(j, 'free_variables')})
+        result = []
+        for j in self.joints.values():
+            if hasattr(j, 'free_variables'):
+                result.extend(j.free_variables)
+        return list(set(result))
 
     @cached_property
     def groups(self) -> Dict[str, WorldBranch]:

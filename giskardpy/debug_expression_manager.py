@@ -60,7 +60,7 @@ class DebugExpressionManager:
         self.evaluated_debug_expressions = {}
         for name, f in self.compiled_debug_expressions.items():
             params = symbol_manager.resolve_symbols(f.params)
-            self.evaluated_debug_expressions[name] = f.fast_call(params).copy()
+            self.evaluated_debug_expressions[name] = f.fast_call(*params).copy()
         if log_traj:
             self.log_debug_expressions()
         return self.evaluated_debug_expressions
