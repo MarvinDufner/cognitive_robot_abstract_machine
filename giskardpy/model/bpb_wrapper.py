@@ -3,6 +3,7 @@ from typing import List, Tuple, Optional
 
 import betterpybullet as pb
 import trimesh
+from line_profiler.explicit_profiler import profile
 from pkg_resources import resource_filename
 
 from giskardpy.god_map import god_map
@@ -19,6 +20,7 @@ if not hasattr(pb, '__version__') or pb.__version__ != '1.0.0':
 
 
 class BPCollisionWrapper(Collision):
+    @profile
     def __init__(self, pb_collision: pb.Collision):
         self.pb_collision = pb_collision
         super().__init__(link_a=self.pb_collision.obj_a.name,
@@ -39,10 +41,6 @@ def create_cube_shape(extents: Tuple[float, float, float]) -> pb.BoxShape:
         extents) is not pb.Vector3 else pb.BoxShape(extents)
     out.margin = 0.001
     return out
-
-
-def to_giskard_collision(collision: pb.Collision):
-    return BPCollisionWrapper(collision)
 
 
 def create_cylinder_shape(diameter: float, height: float) -> pb.CylinderShape:
