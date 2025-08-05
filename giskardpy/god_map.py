@@ -25,7 +25,6 @@ class GodMap:
     world: World
     collision_scene: CollisionWorldSynchronizer
     qp_controller: QPController
-    qp_controller2: QPController
 
     # %% managers
     motion_statechart_manager: MotionStatechartManager
@@ -58,15 +57,11 @@ class GodMap:
             from giskardpy.debug_expression_manager import DebugExpressionManager
             self.debug_expression_manager = DebugExpressionManager()
         elif item == 'time_symbol':
-            self.time_symbol = symbol_manager.register_symbol_provider('time', lambda : self.time)
+            self.time_symbol = symbol_manager.register_symbol_provider('time', lambda: self.time)
         return super().__getattribute__(item)
 
     def is_collision_checking_enabled(self):
         return self.collision_scene.collision_checker_id != self.collision_scene.collision_checker_id.none
-
-    @staticmethod
-    def is_in_github_workflow():
-        return 'GITHUB_WORKFLOW' in os.environ
 
     def to_tmp_path(self, file_name: str) -> str:
         path = god_map.tmp_folder
