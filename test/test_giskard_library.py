@@ -19,7 +19,7 @@ from semantic_world.world_description.connections import (
     ActiveConnection,
     RevoluteConnection,
 )
-from semantic_world.geometry import Box, Scale, Color
+from semantic_world.world_description.geometry import Box, Scale, Color
 from semantic_world.datastructures.prefixed_name import PrefixedName
 from semantic_world.robots import AbstractRobot, Manipulator
 from semantic_world.world import World

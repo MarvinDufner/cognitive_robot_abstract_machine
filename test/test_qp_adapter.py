@@ -16,7 +16,7 @@ from giskardpy.qp.solvers.qp_solver_qpalm import QPSolverQPalm
 from semantic_world.datastructures.prefixed_name import PrefixedName
 from semantic_world.spatial_types.derivatives import Derivatives
 from semantic_world.spatial_types.symbol_manager import symbol_manager
-from semantic_world.world_state import WorldState
+from semantic_world.world_description.world_state import WorldState
 
 
 @dataclass

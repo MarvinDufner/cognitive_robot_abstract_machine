@@ -3,6 +3,9 @@ import traceback
 from collections import defaultdict
 from itertools import chain
 from typing import Optional, List, Dict, Tuple, Union, Type
+
+from giskard_msgs.msg import CollisionEntry
+
 import semantic_world.spatial_types.spatial_types as cas
 from giskardpy.data_types.exceptions import EmptyProblemException
 from giskardpy.data_types.exceptions import SetupException
@@ -354,7 +357,7 @@ class GiskardWrapper:
     def __init__(
         self,
         world_config: WorldConfig,
-        collision_avoidance_config: Optional[CollisionAvoidanceConfig] = None,
+        # collision_avoidance_config: Optional[CollisionAvoidanceConfig] = None,
         qp_controller_config: Optional[QPControllerConfig] = None,
         additional_goal_package_paths: Optional[List[str]] = None,
         additional_monitor_package_paths: Optional[List[str]] = None,
