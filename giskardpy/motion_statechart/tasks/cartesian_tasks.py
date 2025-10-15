@@ -127,31 +127,26 @@ class CartesianPositionStraight(Task):
         # such that its x-axis shows towards the goal position.
         # The goal frame is called 'a'.
         # Thus, the rotation matrix is called t_R_a.
-        tip_V_error = cas.Vector3(tip_P_goal)
+        tip_V_error = cas.Vector3.from_iterable(tip_P_goal)
         trans_error = tip_V_error.norm()
         # x-axis
         tip_V_intermediate_error = tip_V_error.safe_division(trans_error)
         # y- and z-axis
-        tip_V_intermediate_y = cas.Vector3(np.random.random((3,)))
+        tip_V_intermediate_y = cas.Vector3.from_iterable(np.random.random((3,)))
         tip_V_intermediate_y.scale(1)
         y = tip_V_intermediate_error.cross(tip_V_intermediate_y)
         z = tip_V_intermediate_error.cross(y)
         t_R_a = cas.RotationMatrix.from_vectors(x=tip_V_intermediate_error, y=-z, z=y)
 
         # Apply rotation matrix on the fk of the tip link
-        a_T_t = (
-            t_R_a.inverse()
-            .dot(
-                god_map.world.compute_forward_kinematics(
-                    self.tip_link, self.root_link
-                )
-            )
-            .dot(
-                god_map.world.compose_forward_kinematics_expression(
-                    self.root_link, self.tip_link
-                )
-            )
+        tip_T_root = god_map.world.compute_forward_kinematics(
+            self.tip_link, self.root_link
         )
+        root_T_tip = god_map.world.compose_forward_kinematics_expression(
+            self.root_link, self.tip_link
+        )
+        a_T_t = t_R_a.inverse() @ tip_T_root @ root_T_tip
+
         expr_p = a_T_t.to_position()
         dist = (root_P_goal - root_P_tip).norm()
 
@@ -348,8 +343,9 @@ class CartesianPositionVelocityLimit(Task):
             self.root_link, self.tip_link
         ).to_position()
         self.add_translational_velocity_limit(
-            frame_P_current=r_P_c, max_velocity=self.max_linear_velocity, weight=self.weight
-        ,
+            frame_P_current=r_P_c,
+            max_velocity=self.max_linear_velocity,
+            weight=self.weight,
         )
 
 
@@ -376,6 +372,7 @@ class CartesianRotationVelocityLimit(Task):
             frame_R_current=r_R_c, max_velocity=self.max_velocity, weight=self.weight
         )
 
+
 @dataclass
 class CartesianVelocityLimit(Task):
     root_link: Body
@@ -400,11 +397,14 @@ class CartesianVelocityLimit(Task):
         r_P_c = r_T_c.to_position()
         r_R_c = r_T_c.to_rotation_matrix()
         self.add_translational_velocity_limit(
-            frame_P_current=r_P_c, max_velocity=self.max_linear_velocity, weight=self.weight
-        ,)
+            frame_P_current=r_P_c,
+            max_velocity=self.max_linear_velocity,
+            weight=self.weight,
+        )
         self.add_rotational_velocity_limit(
-            frame_R_current=r_R_c, max_velocity=self.max_angular_velocity, weight=self.weight
-        ,
+            frame_R_current=r_R_c,
+            max_velocity=self.max_angular_velocity,
+            weight=self.weight,
         )
 
 

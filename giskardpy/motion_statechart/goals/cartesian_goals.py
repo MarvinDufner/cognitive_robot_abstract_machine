@@ -204,8 +204,8 @@ class CartesianPoseStraight(Goal):
     root_link: Body
     tip_link: Body
     goal_pose: cas.TransformationMatrix
-    reference_linear_velocity: Optional[float] = None
-    reference_angular_velocity: Optional[float] = None
+    reference_linear_velocity: float = CartesianPosition.default_reference_velocity
+    reference_angular_velocity: float = CartesianOrientation.default_reference_velocity
     weight: float = WEIGHT_ABOVE_CA
     absolute: bool = False
 
