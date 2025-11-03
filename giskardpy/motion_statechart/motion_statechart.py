@@ -208,19 +208,63 @@ class ObservationState(State):
 
 @dataclass
 class MotionStatechart:
+    """
+    Represents a motion statechart.
+    A motion statechart is a directed graph of nodes and edges.
+    Nodes have two states: observation state and life cycle state.
+    Life cycle states indicate the current state in the life cycle of the node:
+        - NOT_STARTED: the node has not started yet.
+        - RUNNING: the node is running.
+        - PAUSED: the node is paused.
+        - DONE: the node has ended.
+    Out of these 4 states, nodes are only "active" if they are in the RUNNING state.
+    Observation states indicate the current observation of the node:
+        - TrinaryFalse: the thing the node is observing is not True.
+        - TrinaryUnknown: the node has not yet made an observation or it cannot determine its truth value yet.
+        - TrinaryTrue: the thing the node is observing is True.
+    Nodes are connected with edges, or transitions.
+    There are 4 types of transitions:
+        - start condition: If True, the node transitions from NOT_STARTED to RUNNING.
+        - pause condition: If True, the node transitions from RUNNING to PAUSED.
+                           If False, the node transitions from PAUSED to RUNNING.
+        - end condition: If True, the node transitions from RUNNING or PAUSED to DONE.
+        - reset condition: If True, the node transitions from any state to NOT_STARTED.
+    If multiple conditions are met, the following order is used:
+        1. reset condition
+        2. end condition
+        3. pause condition
+        4. start condition
+    How to use this class:
+        1. initialized with a world
+        2. add nodes.
+        3. set the transition conditions of nodes
+        4. compile the motion statechart.
+        5. call tick() to update the observation state and life cycle state.
+            tick() will raise an exception if the cancel motion condition is met.
+        6. call is_end_motion() to check if the motion is done.
+    """
+
     world: World
+    """
+    Reference to the world, where the motion statechart is defined.
+    Symbols to the degree of freedom of the world can be used by nodes.
+    """
+
     rx_graph: rx.PyDiGraph[MotionStatechartNode] = field(
         default_factory=lambda: rx.PyDAG(multigraph=True), init=False, repr=False
     )
+    """
+    The underlying graph of the motion statechart.
+    """
+
     observation_state: ObservationState = field(init=False)
+    """
+    Combined representation of the observation state of the motion statechart, to enable an efficient tick().
+    """
+
     life_cycle_state: LifeCycleState = field(init=False)
     """
-    1. evaluate observation state
-        input: anything
-        output: observation state
-    2. evaluate life cycle state
-        input: observation state, life cycle state
-        output: life cycle state
+    Combined representation of the life cycle state of the motion statechart, to enable an efficient tick().
     """
 
     def __post_init__(self):
@@ -253,23 +297,13 @@ class MotionStatechart:
         for parent in condition._parents:
             self.rx_graph.add_edge(condition._child.index, parent.index, condition)
 
-    def remove_transition(self, condition: StateTransitionCondition):
-        to_delete = [
-            e
-            for e in self.rx_graph.edges()
-            if self.rx_graph.get_edge_data_by_index(e) is condition
-        ]
-
-        for e in to_delete:
-            self.rx_graph.remove_edge_from_index(e)
-
     def compile(self):
         for goal in self.get_nodes_by_type(Goal):
             goal.apply_goal_conditions_to_children()
         self.observation_state.compile()
         self.life_cycle_state.compile()
 
-    def update_observation_state(self):
+    def _update_observation_state(self):
         self.observation_state.update_state(
             self.life_cycle_state.data, self.world.state.data
         )
@@ -279,13 +313,13 @@ class MotionStatechart:
                     payload_monitor.compute_observation()
                 )
 
-    def update_life_cycle_state(self):
+    def _update_life_cycle_state(self):
         self.life_cycle_state.update_state(self.observation_state.data)
 
     def tick(self):
-        self.update_observation_state()
-        self.update_life_cycle_state()
-        self.raise_if_cancel_motion()
+        self._update_observation_state()
+        self._update_life_cycle_state()
+        self._raise_if_cancel_motion()
 
     def get_nodes_by_type(
         self, node_type: Type[GenericMotionStatechartNode]
@@ -298,7 +332,7 @@ class MotionStatechart:
             for node in self.get_nodes_by_type(EndMotion)
         )
 
-    def raise_if_cancel_motion(self):
+    def _raise_if_cancel_motion(self):
         for node in self.get_nodes_by_type(CancelMotion):
             if self.observation_state[node] == ObservationState.TrinaryTrue:
                 raise node.exception

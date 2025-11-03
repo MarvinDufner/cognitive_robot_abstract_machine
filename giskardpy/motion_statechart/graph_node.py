@@ -18,6 +18,7 @@ from typing_extensions import (
 
 import semantic_digital_twin.spatial_types.spatial_types as cas
 from giskardpy.god_map import god_map
+from giskardpy.motion_statechart.data_types import LifeCycleValues
 from giskardpy.utils.utils import string_shortener
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.world import World
@@ -151,6 +152,14 @@ class MotionStatechartNode(cas.Symbol, SubclassJSONSerializer):
 
     def __hash__(self):
         return hash(self.name)
+
+    @property
+    def life_cycle_state(self) -> LifeCycleValues:
+        return LifeCycleValues(self.motion_statechart.life_cycle_state[self])
+
+    @property
+    def observation_state(self) -> float:
+        return self.motion_statechart.observation_state[self]
 
     @property
     def start_condition(self) -> cas.Expression:
@@ -357,7 +366,7 @@ class ThreadPayloadMonitor(PayloadMonitor, ABC):
     # Cache of last successful result from _compute_observation
     _has_result: bool = field(default=False, init=False, repr=False)
     _last_result: float = field(
-        default=float(ObservationState.TrinaryUnknown), init=False, repr=False
+        default=float(cas.TrinaryUnknown.to_np()), init=False, repr=False
     )
 
     def __post_init__(self):
