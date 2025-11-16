@@ -72,7 +72,7 @@ class TimeAbove(MotionStatechartNode):
     threshold: float = field(kw_only=True)
 
     def __post_init__(self):
-        traj_length_in_sec = god_map.time_symbol
+        traj_length_in_sec = context.time_symbol
         condition = traj_length_in_sec > self.threshold
         self.observation_expression = condition
 
@@ -82,6 +82,6 @@ class Alternator(MotionStatechartNode):
     mod: int = 2
 
     def __post_init__(self):
-        time = god_map.time_symbol
+        time = context.time_symbol
         expr = cas.fmod(cas.floor(time), self.mod) == 0
         self.observation_expression = expr

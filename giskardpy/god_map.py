@@ -36,15 +36,10 @@ class GodMap:
     state_synchronizer: StateSynchronizer
 
     # %% controller datatypes
-    time: float  # real/planning time in s
-    time_symbol: cas.FloatVariable
-    control_cycle_counter: int
     trajectory: Trajectory
     qp_solver_solution: np.ndarray
     added_collision_checks: Dict[Tuple[PrefixedName, PrefixedName], float]
     motion_start_time: float
-    hack: float
-    free_variables: List[DegreeOfFreedom]
 
     # %% other
     tmp_folder: str
@@ -59,10 +54,6 @@ class GodMap:
             from giskardpy.debug_expression_manager import DebugExpressionManager
 
             self.debug_expression_manager = DebugExpressionManager()
-        elif item == "time_symbol":
-            self.time_symbol = symbol_manager.register_symbol_provider(
-                "time", lambda: self.time
-            )
         return super().__getattribute__(item)
 
     def to_tmp_path(self, file_name: str) -> str:

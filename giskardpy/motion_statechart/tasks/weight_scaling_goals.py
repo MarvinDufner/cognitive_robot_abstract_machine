@@ -100,7 +100,7 @@ class MaxManipulability(Task):
             self.root_link, self.tip_link
         ).to_position()[:3]
 
-        symbols = root_P_tip.free_variables()
+        symbols = context.free_variables()
         e = cas.vstack([root_P_tip])
         J = e.jacobian(symbols)
         JJT = J.dot(J.T)

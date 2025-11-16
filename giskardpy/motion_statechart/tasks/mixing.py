@@ -29,7 +29,7 @@ class SpiralMixing(Task):
         root_T_tip = god_map.world._forward_kinematic_manager.compose_expression(
             root_link=self.root_link, tip_link=self.tip_link
         )
-        t = god_map.time_symbol
+        t = context.time_symbol
 
         r = self.radial_increment * t
         a = self.angle_increment * t

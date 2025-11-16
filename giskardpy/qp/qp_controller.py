@@ -92,7 +92,7 @@ class QPControllerDebugger:
             ],
             ["weights", "b", "E", "bE", "A", "lbA", "ubA", "debug"],
             god_map.tmp_folder,
-            god_map.time,
+            None,
             folder_name,
         )
 

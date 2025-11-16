@@ -49,6 +49,9 @@ class Executor:
     _control_cycles: int = field(init=False)
     _control_cycles_variable: AuxiliaryVariable = field(init=False)
 
+    _time: float = field(init=False)
+    _time_variable: AuxiliaryVariable = field(init=False)
+
     def __post_init__(self, collision_checker: CollisionCheckerLib):
         if collision_checker == CollisionCheckerLib.bpb:
             collision_detector = BulletCollisionDetector(_world=self.world)

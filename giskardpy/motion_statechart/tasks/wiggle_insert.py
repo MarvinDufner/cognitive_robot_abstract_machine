@@ -151,7 +151,7 @@ class WiggleInsert(Task):
         self.observation_expression = end
 
     def get_rand_angle(self) -> float:
-        now = god_map.time
+        now = context.time
         if now - self.last_angular_change >= self.dt:
             self.last_angular_change = now
 
@@ -159,7 +159,7 @@ class WiggleInsert(Task):
         return self.current_angle
 
     def get_rand_walk_angle(self):
-        now = god_map.time
+        now = context.time
         if now - self.last_angular_change >= self.dt:
             self.last_angular_change = now
             random_angular_change = (
@@ -185,7 +185,7 @@ class WiggleInsert(Task):
         return self.current_angle
 
     def get_rand_vector(self) -> cas.Vector3:
-        now = god_map.time
+        now = context.time
         if now - self.last_vector_change >= self.dt:
             self.last_vector_change = now
 
@@ -196,7 +196,7 @@ class WiggleInsert(Task):
         return self.current_vector
 
     def get_rand_walk_vector(self) -> cas.Vector3:
-        now = god_map.time
+        now = context.time
         if now - self.last_vector_change >= self.dt:
             self.last_vector_change = now
 

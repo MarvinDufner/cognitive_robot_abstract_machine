@@ -16,7 +16,7 @@ class CheckMaxTrajectoryLength(MotionStatechartNode):
     length: float
 
     def __post_init__(self):
-        self.observation_expression = god_map.time_symbol > self.length
+        self.observation_expression = context.time_symbol > self.length
 
 
 @dataclass(eq=False, repr=False)
@@ -28,26 +28,18 @@ class Print(MotionStatechartNode):
         return ObservationStateValues.TRUE
 
 
-@dataclass
-class Sleep(MotionStatechartNode):
-    seconds: float
-    start_time: Optional[float] = field(default=None, init=False)
-
-    def on_start(self, context: ExecutionContext):
-        self.start_time = None
-
-    def on_tick(self, context: ExecutionContext) -> Optional[float]:
-        if self.start_time is None:
-            self.start_time = god_map.time
-        return god_map.time - self.start_time >= self.seconds
-
-
-@dataclass
-class PayloadAlternator(MotionStatechartNode):
-    mod: int = 2
-
-    def __call__(self):
-        self.state = np.floor(god_map.time) % self.mod == 0
+# @dataclass
+# class Sleep(MotionStatechartNode):
+#     seconds: float
+#     start_time: Optional[float] = field(default=None, init=False)
+#
+#     def on_start(self, context: ExecutionContext):
+#         self.start_time = None
+#
+#     def on_tick(self, context: ExecutionContext) -> Optional[float]:
+#         if self.start_time is None:
+#             self.start_time = god_map.time
+#         return god_map.time - self.start_time >= self.seconds
 
 
 @dataclass
