@@ -73,7 +73,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: 'semantic_digital_twin'
-          ref: symbol-update
+          repository: ichumuh/semantic_digital_twin
+          ref: symbol_update
       - name: build semdt
         run: |
           cd semantic_digital_twin
