@@ -265,12 +265,17 @@ class LifeCycleVariable(cas.FloatVariable):
 class DebugExpression:
     """
     Symbolic expressions used for debugging only.
+    Allows you to keep track of any expression and evaluate them later in debug mode.
     """
 
     name: str
+    """
+    Name used for this expression in some debugging tools.
+    """
 
     expression: (
-        cas.Point3
+        cas.Expression
+        | cas.Point3
         | cas.Vector3
         | cas.Quaternion
         | cas.RotationMatrix
