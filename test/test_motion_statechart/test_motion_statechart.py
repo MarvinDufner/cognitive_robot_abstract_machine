@@ -1390,10 +1390,12 @@ def test_InvalidConditionError():
 class TestEndMotion:
     def test_end_motion_when_all_done1(self):
         msc = MotionStatechart()
-        node = ConstTrueNode()
-        msc.add_node(node)
-        node = ConstTrueNode()
-        msc.add_node(node)
+        msc.add_nodes(
+            [
+                ConstTrueNode(),
+                ConstTrueNode(),
+            ]
+        )
         end = EndMotion.when_all_true(msc.nodes)
         msc.add_node(end)
 
@@ -1407,10 +1409,12 @@ class TestEndMotion:
 
     def test_end_motion_when_all_done2(self):
         msc = MotionStatechart()
-        node = ConstTrueNode()
-        msc.add_node(node)
-        node = ConstFalseNode()
-        msc.add_node(node)
+        msc.add_nodes(
+            [
+                ConstTrueNode(),
+                ConstFalseNode(),
+            ]
+        )
         end = EndMotion.when_all_true(msc.nodes)
         msc.add_node(end)
 
@@ -1425,10 +1429,12 @@ class TestEndMotion:
 
     def test_end_motion_when_any_done1(self):
         msc = MotionStatechart()
-        node = ConstTrueNode()
-        msc.add_node(node)
-        node = ConstFalseNode()
-        msc.add_node(node)
+        msc.add_nodes(
+            [
+                ConstTrueNode(),
+                ConstFalseNode(),
+            ]
+        )
         end = EndMotion.when_any_true(msc.nodes)
         msc.add_node(end)
 
@@ -1442,10 +1448,12 @@ class TestEndMotion:
 
     def test_end_motion_when_any_done2(self):
         msc = MotionStatechart()
-        node = ConstFalseNode()
-        msc.add_node(node)
-        node = ConstFalseNode()
-        msc.add_node(node)
+        msc.add_nodes(
+            [
+                ConstFalseNode(),
+                ConstFalseNode(),
+            ]
+        )
         end = EndMotion.when_any_true(msc.nodes)
         msc.add_node(end)
 

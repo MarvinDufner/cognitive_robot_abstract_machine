@@ -433,6 +433,10 @@ class MotionStatechart(SubclassJSONSerializer):
         self.life_cycle_state.grow()
         self.observation_state.grow()
 
+    def add_nodes(self, nodes: List[MotionStatechartNode]):
+        for node in nodes:
+            self.add_node(node)
+
     def get_node_by_index(self, index: int) -> MotionStatechartNode:
         return self.rx_graph.get_node_data(index)
 

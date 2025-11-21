@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from uno import Any
+from typing_extensions import Any
 
 
 class MotionStatechartError(Exception):
