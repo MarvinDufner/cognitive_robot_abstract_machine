@@ -15,7 +15,9 @@ from giskardpy.motion_statechart.data_types import (
     LifeCycleValues,
     ObservationStateValues,
 )
-from giskardpy.motion_statechart.exceptions import NodeNotFoundError
+from giskardpy.motion_statechart.exceptions import (
+    EmptyMotionStatechartError,
+)
 from giskardpy.motion_statechart.graph_node import (
     MotionStatechartNode,
     TrinaryCondition,
@@ -29,7 +31,6 @@ from giskardpy.motion_statechart.graph_node import (
 from giskardpy.motion_statechart.graph_node import Task
 from giskardpy.motion_statechart.plotters.graphviz import MotionStatechartGraphviz
 from giskardpy.qp.constraint_collection import ConstraintCollection
-from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 
 
 @dataclass(repr=False, eq=False)
@@ -481,6 +482,7 @@ class MotionStatechart(SubclassJSONSerializer):
 
         :param context: The build context required to execute the compilation process.
         """
+        self.sanity_check()
         self._expand_goals(context=context)
         self._apply_goal_conditions_to_their_children()
         self._build_nodes(context=context)
@@ -635,3 +637,10 @@ class MotionStatechart(SubclassJSONSerializer):
             if node.parent_node is not None:
                 node.parent_node.nodes.append(node)
         return motion_statechart
+
+    def sanity_check(self):
+        """
+        Executes a sanity check on the motion statechart to ensure that it is valid.
+        """
+        if len(self.nodes) == 0:
+            raise EmptyMotionStatechartError()
