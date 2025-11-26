@@ -12,6 +12,7 @@ from giskardpy.motion_statechart.data_types import (
     LifeCycleValues,
     ObservationStateValues,
 )
+from giskardpy.motion_statechart.goals.templates import Sequence
 from giskardpy.motion_statechart.graph_node import TrinaryCondition, EndMotion
 from giskardpy.motion_statechart.motion_statechart import (
     MotionStatechart,
@@ -292,17 +293,15 @@ def test_compressed_copy_can_be_plotted(pr2_world: World):
 
 def test_nested_goals():
     msc = MotionStatechart()
-
-    node1 = ConstTrueNode()
-    msc.add_node(node1)
-
-    outer = TestNestedGoal()
-    msc.add_node(outer)
-    outer.start_condition = node1.observation_variable
-
-    end = EndMotion()
-    msc.add_node(end)
-    end.start_condition = outer.observation_variable
+    msc.add_node(
+        sequence := Sequence(
+            [
+                ConstTrueNode(),
+                TestNestedGoal(),
+            ]
+        )
+    )
+    msc.add_node(EndMotion.when_true(sequence))
 
     msc._expand_goals(BuildContext.empty())
     json_data = msc.create_structure_copy().to_json()
@@ -311,7 +310,12 @@ def test_nested_goals():
 
     msc_copy = MotionStatechart.from_json(new_json_data)
     msc_copy._add_transitions()
+    msc_copy.draw("muh.pdf")
 
     for node in msc.nodes:
-        assert node.index == msc_copy.get_node_by_index(node.index).index
-    msc_copy.draw("muh.pdf")
+        node_copy = msc_copy.get_node_by_index(node.index)
+        assert node.index == node_copy.index
+        if node.parent_node_index is not None:
+            assert node.parent_node.unique_name == node_copy.parent_node.unique_name
+        else:
+            assert node_copy.parent_node_index is None
