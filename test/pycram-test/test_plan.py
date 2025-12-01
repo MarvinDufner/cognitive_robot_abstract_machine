@@ -21,7 +21,7 @@ class TestPlan(unittest.TestCase):
         Plan.current_plan = None
         self.world = URDFParser.from_file(
             os.path.join(
-                os.path.dirname(__file__), "..", "resources", "robots", "pr2.urdf"
+                os.path.dirname(__file__), "..", "..", "pycram", "resources", "robots", "pr2.urdf"
             )
         ).parse()
         self.context = Context(self.world, None, None)
@@ -100,7 +100,7 @@ class TestPlanNode(unittest.TestCase):
     def setUp(self):
         self.world = URDFParser.from_file(
             os.path.join(
-                os.path.dirname(__file__), "..", "resources", "robots", "pr2.urdf"
+                os.path.dirname(__file__), "..", "..", "pycram", "resources", "robots", "pr2.urdf"
             )
         ).parse()
         self.context = Context(self.world, None, None)

@@ -56,13 +56,13 @@ class TestJointStatePublisher(ApartmentWorldTestCase):
         self.assertAlmostEqual(
             joint_to_position["r_wrist_roll_joint"],
             self.world.state[
-                self.world.get_degree_of_freedom_by_name("r_wrist_roll_joint")
+                self.world.get_degree_of_freedom_by_name("r_wrist_roll_joint").id
             ].position,
         )
         self.assertAlmostEqual(
             joint_to_position["r_shoulder_pan_joint"],
             self.world.state[
-                self.world.get_degree_of_freedom_by_name("r_shoulder_pan_joint")
+                self.world.get_degree_of_freedom_by_name("r_shoulder_pan_joint").id
             ].position,
         )
 

@@ -59,14 +59,14 @@ class TestActionDesignatorGrounding(ApartmentWorldTestCase):
             joint_states_right.joint_names, joint_states_right.joint_positions
         ):
             dof = self.world.get_degree_of_freedom_by_name(joint_name)
-            compare_axis_angle(self.world.state[dof.name].position, np.array([1, 0, 0]), joint_state,
+            compare_axis_angle(self.world.state[dof.id].position, np.array([1, 0, 0]), joint_state,
                                np.array([1, 0, 0]), decimal=1)
             # self.assertAlmostEqual(self.world.state[dof.id].position, joint_state % (2 * np.pi), places=1)
         for joint_name, joint_state in zip(
             joint_states_left.joint_names, joint_states_left.joint_positions
         ):
             dof = self.world.get_degree_of_freedom_by_name(joint_name)
-            compare_axis_angle(self.world.state[dof.name].position, [1, 0, 0], joint_state, [1, 0, 0], decimal=1)
+            compare_axis_angle(self.world.state[dof.id].position, [1, 0, 0], joint_state, [1, 0, 0], decimal=1)
             # self.assertAlmostEqual(self.world.state[dof.id].position, joint_state % (2 * np.pi), places=1)
 
     def test_navigate(self):

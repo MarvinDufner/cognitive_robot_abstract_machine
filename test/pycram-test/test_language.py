@@ -216,7 +216,7 @@ class LanguageTestCase(ApartmentWorldTestCase):
         with simulated_robot:
             plan.perform()
         np.testing.assert_almost_equal(self.robot_view.root.global_pose.to_np()[:3, 3], [0.3, 0.3, 0], decimal=1)
-        self.assertAlmostEqual(self.world.state[self.world.get_degree_of_freedom_by_name("torso_lift_joint").name].position, 0.3, places=1)
+        self.assertAlmostEqual(self.world.state[self.world.get_degree_of_freedom_by_name("torso_lift_joint").id].position, 0.3, places=1)
 
 
     def test_perform_parallel(self):
