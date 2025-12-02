@@ -5,6 +5,11 @@ defaults:
 
 on:
   workflow_call:
+    inputs:
+      lib:
+        description: "Library folder name (relative to repo root)"
+        required: true
+        type: string
 
 jobs:
   test:
@@ -12,11 +17,10 @@ jobs:
     container:
       image: ghcr.io/${{ github.repository }}:jazzy
     steps:
-      - name: Checkout main repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          path: 'cognitive_robot_abstract_machine'
-          submodules: 'recursive'
+          path: cognitive_robot_abstract_machine
+          submodules: recursive
 
       - name: Install dependencies
         run: |
@@ -28,5 +32,4 @@ jobs:
         run: |
           source /opt/ros/overlay_ws/install/setup.bash
           source /opt/ros/cram-env/bin/activate
-          cd cognitive_robot_abstract_machine
-          python -m pytest -sv test/
+          python -m pytest -sv test/${{ inputs.libs }}_test

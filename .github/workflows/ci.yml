@@ -1,22 +1,25 @@
-# .github/workflows/ci.yml
-name: CI
-defaults:
-  run:
-    shell: bash -ieo pipefail {0}
+name: CI (matrix over libs)
 
-    
 on:
   push:
     branches:
-      - main
-    paths-ignore:
-      - '.github/docker/**'
+    - main
   pull_request:
-    branches:
-      - main
-    paths-ignore:
-      - '.github/docker/**'
+  workflow_run:
+    workflows: [ "update_docker" ]
+    types: [ completed ]
+    branches: [ main ]
 
 jobs:
-  ci:
+  test_each_lib:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lib: giskardpy
+          - lib: krrood
+          - lib: pycram
+          - lib: semantic_digital_twin
     uses: ./.github/workflows/ci_reusable.yml
+    with:
+      lib: ${{ matrix.lib }}
