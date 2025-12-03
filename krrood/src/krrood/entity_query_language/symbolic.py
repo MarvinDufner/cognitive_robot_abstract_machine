@@ -446,8 +446,8 @@ class CanBehaveLikeAVariable(Selectable[T], ABC):
 @dataclass(eq=False, repr=False)
 class ResultProcessor(CanBehaveLikeAVariable[T], ABC):
     """
-    Base for quantifiers that return concrete results from entity/set queries
-    (e.g., An, The).
+    Base class for processors that return concrete results from queries, including quantifiers
+    (e.g., An, The) and aggregators (e.g., Count, Sum, Max, Min).
     """
 
     _child_: SymbolicExpression[T]
