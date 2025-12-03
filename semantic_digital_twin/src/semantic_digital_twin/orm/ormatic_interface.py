@@ -1290,11 +1290,6 @@ class ConnectionDAO(
         nullable=True,
         use_existing_column=True,
     )
-    kinematics_id: Mapped[int] = mapped_column(
-        ForeignKey("TransformationMatrixMappingDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
     connection_T_child_expression_id: Mapped[int] = mapped_column(
         ForeignKey("TransformationMatrixMappingDAO.database_id", use_alter=True),
         nullable=True,
@@ -1320,12 +1315,6 @@ class ConnectionDAO(
             foreign_keys=[parent_T_connection_expression_id],
             post_update=True,
         )
-    )
-    kinematics: Mapped[TransformationMatrixMappingDAO] = relationship(
-        "TransformationMatrixMappingDAO",
-        uselist=False,
-        foreign_keys=[kinematics_id],
-        post_update=True,
     )
     connection_T_child_expression: Mapped[TransformationMatrixMappingDAO] = (
         relationship(
