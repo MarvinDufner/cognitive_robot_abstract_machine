@@ -393,30 +393,28 @@ class CartesianVelocityLimit(Task):
 
 @dataclass
 class CartesianPositionVelocityTarget(Task):
-    root_link: Body = field(kw_only=True)
-    tip_link: Body = field(kw_only=True)
+    """
+    This goal will use put a strict limit on the Cartesian velocity. This will require a lot of constraints, thus
+    slowing down the system noticeably.
+    """
+    root_link: KinematicStructureEntity = field(kw_only=True)
+    """root link of the kinematic chain"""
+    tip_link: KinematicStructureEntity = field(kw_only=True)
+    """tip link of the kinematic chain"""
     x_vel: float = field(kw_only=True)
     y_vel: float = field(kw_only=True)
     z_vel: float = field(kw_only=True)
     weight: float = DefaultWeights.WEIGHT_ABOVE_CA
+    threshold: float = field(default=0.01, kw_only=True)
 
-    def __post_init__(self):
-        """
-        This goal will use put a strict limit on the Cartesian velocity. This will require a lot of constraints, thus
-        slowing down the system noticeably.
-        :param root_link: root link of the kinematic chain
-        :param tip_link: tip link of the kinematic chain
-        :param root_group: if the root_link is not unique, use this to say to which group the link belongs
-        :param tip_group: if the tip_link is not unique, use this to say to which group the link belongs
-        :param max_linear_velocity: m/s
-        :param max_angular_velocity: rad/s
-        :param weight: default DefaultWeights.WEIGHT_ABOVE_CA
-        :param hard: Turn this into a hard constraint. This make create unsolvable optimization problems
-        """
+    def build(self, context: BuildContext) -> NodeArtifacts:
+        artifacts = NodeArtifacts()
+
         r_P_c = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         ).to_position()
-        self.add_velocity_eq_constraint_vector(
+
+        artifacts.constraints.add_velocity_eq_constraint_vector(
             velocity_goals=cas.Expression([self.x_vel, self.y_vel, self.z_vel]),
             task_expression=r_P_c,
             reference_velocities=[
@@ -431,6 +429,17 @@ class CartesianPositionVelocityTarget(Task):
             ],
             weights=[self.weight] * 3,
         )
+
+        position_variables = r_P_c.free_variables()
+        r_P_c_dot = cas.Expression(r_P_c).total_derivative(
+            position_variables
+        ).norm()
+
+        desired = cas.Vector3.from_iterable([self.x_vel, self.y_vel, self.z_vel]).norm()
+        vel_error = (r_P_c_dot.to_np() - desired).sum()
+        artifacts.observation = vel_error <= self.threshold
+
+        return artifacts
 
 
 @dataclass
