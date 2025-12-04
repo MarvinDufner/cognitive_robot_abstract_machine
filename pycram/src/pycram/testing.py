@@ -13,6 +13,7 @@ from semantic_digital_twin.spatial_types.spatial_types import TransformationMatr
 from semantic_digital_twin.utils import rclpy_installed
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import OmniDrive
+from krrood.entity_query_language.symbol_graph import SymbolGraph
 
 from .datastructures.dataclasses import Context
 from .datastructures.enums import WorldMode
@@ -27,6 +28,14 @@ except ImportError:
     logger.info(
         "Could not import VizMarkerPublisher. This is probably because you are not running ROS."
     )
+
+
+@pytest.fixture(autouse=True, scope="function")
+def cleanup_after_test():
+    # runs BEFORE each test
+    yield
+    # runs AFTER each test (even if the test fails or errors)
+    SymbolGraph().clear()
 
 
 @pytest.fixture(autouse=True, scope="session")
