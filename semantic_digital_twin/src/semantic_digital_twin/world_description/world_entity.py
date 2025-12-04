@@ -824,6 +824,14 @@ class RootedSemanticAnnotation(SemanticAnnotation):
             if body.has_collision() and not body.get_collision_config().disabled
         )
 
+@dataclass(eq=False)
+class Agent(RootedSemanticAnnotation):
+    """
+    Represents an agent (dynamic/controlled body) in the world.
+    """
+
+    ...
+
 
 @dataclass(eq=False)
 class SemanticEnvironmentAnnotation(RootedSemanticAnnotation):
@@ -1178,3 +1186,4 @@ class Actuator(WorldEntityWithID, SubclassJSONSerializer):
         :param dof: The degree of freedom to add.
         """
         self._dofs.append(dof)
+
