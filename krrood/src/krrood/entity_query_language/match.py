@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Generic, Optional, Type, Dict, Any, List, Union, Self, Iterable
+from typing_extensions import Generic, Optional, Type, Dict, Any, List, Union, Self, Iterable
 
-from krrood.entity_query_language.symbolic import Exists, ResultQuantifier, An
+from krrood.entity_query_language.symbolic import Exists, ResultQuantifier, An, UnificationDict
 
 from .entity import (
     ConditionType,
@@ -210,16 +210,25 @@ class Match(Generic[T]):
         return self._quantifier_data.apply(query_descriptor)
 
     def domain_from(self, domain: DomainType):
+        """
+        Record the domain to use for the variable created by the match.
+        """
         self.domain = domain
         return self
 
     def _quantify(
             self, quantifier: Type[ResultQuantifier], **quantifier_kwargs
     ) -> Union[ResultQuantifier[T], T]:
+        """
+        Record the quantifier to be applied to the result of the match.
+        """
         self._quantifier_data = Quantifier(quantifier, quantifier_kwargs)
         return self
 
-    def evaluate(self):
+    def evaluate(self) -> Iterable[Union[T, UnificationDict]]:
+        """
+        Evaluate the match expression and return the result.
+        """
         return self.expression.evaluate()
 
     def __getattr__(self, item):
