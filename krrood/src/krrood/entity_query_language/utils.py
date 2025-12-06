@@ -168,9 +168,18 @@ class ReEnterableLazyIterable(Generic[T]):
     """
 
     iterable: Iterable[T] = field(default_factory=list)
+    """
+    The iterable to wrap.
+    """
     materialized_values: List[T] = field(default_factory=list)
+    """
+    The materialized values of the iterable.
+    """
 
     def set_iterable(self, iterable):
+        """
+        Set the iterable to wrap.
+        """
         self.iterable = (v for v in iterable)
 
     def __iter__(self):
@@ -185,4 +194,7 @@ class ReEnterableLazyIterable(Generic[T]):
             yield v
 
     def __bool__(self):
+        """
+        Return True if the iterable has values, False otherwise.
+        """
         return bool(self.materialized_values) or bool(self.iterable)
