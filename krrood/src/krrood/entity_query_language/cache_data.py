@@ -106,7 +106,11 @@ class ReEnterableLazyIterable(Generic[T]):
 
     def set_iterable(self, iterable):
         """
-        Set the iterable to wrap.
+        Set the iterable and wrap it in a generator.
+
+        This is needed because of the weakref data we get from SymbolGraph. If we do `self.iterable = iterable` and
+        weakref instances die, the iterable would have None values for them. But if we wrap it in a generator,
+        they are actually removed, and the generator doesn't find them, which is the wanted behavior.
         """
         self.iterable = (v for v in iterable)
 
