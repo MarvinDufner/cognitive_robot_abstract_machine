@@ -1499,7 +1499,7 @@ class TestVelocityTasks:
         msc.add_node(EndMotion.when_true(goal_node))
         return msc
 
-    def _compile_msc_and_run_until_end(self, world: "World", goal_node, limit_node):
+    def _compile_msc_and_run_until_end(self, world: World, goal_node, limit_node):
         """
         Convenience Function:
         Build the MSC (no extra nodes), compile into an Executor,
@@ -1511,7 +1511,7 @@ class TestVelocityTasks:
         kin_sim.tick_until_end()
         return kin_sim.control_cycles, kin_sim
 
-    def _test_observation_variable(self, goal_node, limit_node, world: "World"):
+    def _test_observation_variable(self, goal_node, limit_node, world: World):
         """
         Tests that velocity limit's observation variable can trigger a CancelMotion
         when the planner chooses to violate the limit.
@@ -1532,7 +1532,7 @@ class TestVelocityTasks:
             kin_sim.tick_until_end()
 
     def _test_cartesian_position_velocity_limit(
-        self, pr2_world: "World", limit_cls: Type
+        self, pr2_world: World, limit_cls: Type
     ):
         """
         Test for the linear velocity limits.
@@ -1572,7 +1572,7 @@ class TestVelocityTasks:
         )
 
     def _test_cartesian_rotation_velocity_limit(
-        self, pr2_world: "World", limit_cls: Type
+        self, pr2_world: World, limit_cls: Type
     ):
         """
         Test for the angular velocity limits.
