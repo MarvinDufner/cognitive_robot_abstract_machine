@@ -10,7 +10,7 @@ from krrood.entity_query_language.match import (
     match_all,
 )
 from krrood.entity_query_language.predicate import HasType
-from krrood.entity_query_language.quantify_entity import the, a
+from krrood.entity_query_language.entity_result_processors import the, a
 from krrood.entity_query_language.symbolic import UnificationDict, SetOf
 from ..dataset.semantic_world_like_classes import (
     FixedConnection,

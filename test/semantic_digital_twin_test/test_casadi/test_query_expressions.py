@@ -4,7 +4,7 @@ from krrood.entity_query_language.entity import (
     contains,
 )
 from krrood.entity_query_language.match import matching
-from krrood.entity_query_language.quantify_entity import the, a
+from krrood.entity_query_language.entity_result_processors import the, a
 from semantic_digital_twin.spatial_types import Expression
 
 from semantic_digital_twin.testing import world_setup

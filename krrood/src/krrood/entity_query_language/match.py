@@ -33,26 +33,26 @@ from .symbolic import (
     Variable,
     Flatten,
     Exists,
-    DomainType
+    DomainType, ResultProcessor
 )
 from .utils import is_iterable, T
 
 
 @dataclass
-class QuantifierData:
+class ResultProcessorData:
     """
-    A class representing a quantifier in a Match statement. This is used to quantify the result of the match.
+    A class representing a result processor in a Match statement. This is used to process the result of the match.
     """
-    type_: Type[ResultQuantifier]
+    type_: Type[ResultProcessor]
     """
-    The type of the quantifier.
+    The type of the result processor.
     """
     kwargs: Dict[str, Any] = field(default_factory=dict)
     """
-    The keyword arguments to pass to the quantifier.
+    The keyword arguments to pass to the result processor.
     """
 
-    def apply(self, expr: QueryObjectDescriptor) -> Union[ResultQuantifier[T], T]:
+    def apply(self, expr: QueryObjectDescriptor) -> Union[ResultProcessor[T], T]:
         return self.type_(_child_=expr, **self.kwargs)
 
 
@@ -224,9 +224,9 @@ class Match(AbstractMatchExpression[T]):
     """
     The keyword arguments to match against.
     """
-    quantifier_data: Optional[QuantifierData] = field(init=False, default_factory=lambda: QuantifierData(An))
+    result_processor_data: Optional[ResultProcessorData] = field(init=False, default_factory=lambda: ResultProcessorData(An))
     """
-    The quantifier data for the match.
+    The result processor data to be applied to the match expression.
     """
     selected_variables: List[Selectable] = field(
         init=False, default_factory=list
@@ -245,13 +245,13 @@ class Match(AbstractMatchExpression[T]):
         self.kwargs = kwargs
         return self
 
-    def quantify(
-            self, quantifier: Type[ResultQuantifier], **quantifier_kwargs
-    ) -> Union[ResultQuantifier[T], T]:
+    def apply_result_processor(
+            self, result_processor: Type[ResultProcessor[T]], **result_processor_kwargs
+    ) -> Union[ResultProcessor[T], T]:
         """
-        Record the quantifier to be applied to the result of the match.
+        Record the result processor to be applied to the result of the match.
         """
-        self.quantifier_data = QuantifierData(quantifier, quantifier_kwargs)
+        self.result_processor_data = ResultProcessorData(result_processor, result_processor_kwargs)
         self.resolve()
         return SelectableMatchExpression(_match_expression_=self)
 
@@ -332,7 +332,7 @@ class Match(AbstractMatchExpression[T]):
             if not self.selected_variables:
                 self.selected_variables.append(self.variable)
             query_descriptor = entity(self.selected_variables[0], *self.conditions)
-        return self.quantifier_data.apply(query_descriptor)
+        return self.result_processor_data.apply(query_descriptor)
 
     @property
     def name(self) -> str:
