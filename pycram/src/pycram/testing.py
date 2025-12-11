@@ -10,7 +10,7 @@ import pytest
 from semantic_digital_twin.adapters.mesh import STLParser
 from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
-    MilkContainer,
+    Milk,
 )
 from semantic_digital_twin.spatial_types.spatial_types import TransformationMatrix
 from semantic_digital_twin.utils import rclpy_installed
@@ -139,7 +139,7 @@ def setup_world() -> World:
     ).parent_connection.origin = TransformationMatrix.from_xyz_rpy(
         2.37, 1.8, 1.05, reference_frame=apartment_world.root
     )
-    milk_view = MilkContainer(body=apartment_world.get_body_by_name("milk.stl"))
+    milk_view = Milk(body=apartment_world.get_body_by_name("milk.stl"))
     with apartment_world.modify_world():
         apartment_world.add_semantic_annotation(milk_view)
 

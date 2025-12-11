@@ -4249,7 +4249,7 @@ class KnifeDAO(
 class MilkDAO(
     CuttleryDAO,
     DataAccessObject[
-        semantic_digital_twin.semantic_annotations.semantic_annotations.MilkContainer
+        semantic_digital_twin.semantic_annotations.semantic_annotations.Milk
     ],
 ):
     __tablename__ = "MilkDAO"

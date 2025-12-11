@@ -10,7 +10,7 @@ from pycram.robot_plans.actions import *
 from pycram.robot_plans.motions import MoveTCPWaypointsMotion
 from pycram.testing import ApartmentWorldTestCase
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
-    MilkContainer,
+    Milk,
 )
 
 
@@ -221,7 +221,7 @@ class TestActionDesignatorGrounding(ApartmentWorldTestCase):
 
         description = DetectActionDescription(
             technique=DetectionTechnique.TYPES,
-            object_sem_annotation=MilkContainer,
+            object_sem_annotation=Milk,
         )
         plan = SequentialPlan(self.context, description)
         with simulated_robot:
@@ -385,11 +385,11 @@ class TestActionDesignatorGrounding(ApartmentWorldTestCase):
             self.context,
             MoveTorsoActionDescription([TorsoState.HIGH]),
             SearchActionDescription(
-                PoseStamped.from_list([2, 2, 1], self.world.root), MilkContainer
+                PoseStamped.from_list([2, 2, 1], self.world.root), Milk
             ),
         )
         with simulated_robot:
             milk = plan.perform()
         self.assertTrue(milk)
-        self.assertEqual(milk.obj_type, MilkContainer)
+        self.assertEqual(milk.obj_type, Milk)
         self.assertEqual(self.milk.pose, milk.pose)
