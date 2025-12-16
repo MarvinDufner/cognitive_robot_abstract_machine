@@ -111,9 +111,7 @@ class Vector3Mapping(AlternativeMapping[Vector3]):
         return result
 
     def create_from_dao(self) -> Vector3:
-        return Vector3(
-            x_init=self.x, y_init=self.y, z_init=self.z, reference_frame=None
-        )
+        return Vector3(x=self.x, y=self.y, z=self.z, reference_frame=None)
 
 
 @dataclass
@@ -134,7 +132,7 @@ class Point3Mapping(AlternativeMapping[Point3]):
         return result
 
     def create_from_dao(self) -> Point3:
-        return Point3(x_init=self.x, y_init=self.y, z_init=self.z, reference_frame=None)
+        return Point3(x=self.x, y=self.y, z=self.z, reference_frame=None)
 
 
 @dataclass
@@ -157,10 +155,10 @@ class QuaternionMapping(AlternativeMapping[Quaternion]):
 
     def create_from_dao(self) -> Quaternion:
         return Quaternion(
-            x_init=self.x,
-            y_init=self.y,
-            z_init=self.z,
-            w_init=self.w,
+            x=self.x,
+            y=self.y,
+            z=self.z,
+            w=self.w,
             reference_frame=None,
         )
 
@@ -185,7 +183,9 @@ class RotationMatrixMapping(AlternativeMapping[RotationMatrix]):
 
 
 @dataclass
-class TransformationMatrixMapping(AlternativeMapping[HomogeneousTransformationMatrix]):
+class HomogeneousTransformationMatrixMapping(
+    AlternativeMapping[HomogeneousTransformationMatrix]
+):
     position: Point3
     rotation: Quaternion
     reference_frame: Optional[KinematicStructureEntity] = field(

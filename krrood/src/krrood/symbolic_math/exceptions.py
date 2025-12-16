@@ -18,19 +18,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class SymbolicMathError(DataclassException):
-    pass
+    """
+    Represents an error specifically related to symbolic mathematics operations.
+    """
 
 
 @dataclass
 class UnsupportedOperationError(SymbolicMathError, TypeError):
     """
     Represents an error for unsupported operations between incompatible types.
-
-    This class is derived from `SymbolicMathError` and `TypeError` and is specifically
-    designed to handle cases where an operation is attempted between two arguments
-    that are of incompatible types. It stores details about the operation and the
-    involved arguments, and provides an error message that highlights the problematic
-    types.
     """
 
     operation: str

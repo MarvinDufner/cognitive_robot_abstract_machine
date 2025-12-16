@@ -28,8 +28,8 @@ from typing_extensions import (
     Type,
 )
 
-from krrood.entity_query_language.predicate import Symbol
-from krrood.symbolic_math.exceptions import (
+from ..entity_query_language.predicate import Symbol
+from .exceptions import (
     HasFreeVariablesError,
     DuplicateVariablesError,
     WrongNumberOfArgsError,
@@ -1158,9 +1158,20 @@ class Vector(Expression):
         return distance
 
     def norm(self) -> Scalar:
+        """
+        Computes the 2-norm (Euclidean norm) of the current object.
+
+        :return: The 2-norm of the object, represented as a `Scalar` type.
+        """
         return Scalar.from_casadi_sx(ca.norm_2(to_sx(self)))
 
     def scale(self, a: ScalarData) -> Vector:
+        """
+        Scales the current vector proportionally based on the provided scalar value.
+
+        :param a: A scalar value used to scale the vector
+        :return: A new vector resulting from the scaling operation
+        """
         return self.safe_division(self.norm()) * a
 
 
@@ -1404,6 +1415,9 @@ class Matrix(Expression):
 
     @property
     def T(self) -> Self:
+        """
+        :return: the Transpose of the matrix.
+        """
         return Matrix(self.casadi_sx.T)
 
     def reshape(self, new_shape: Tuple[int, int]) -> Self:
