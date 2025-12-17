@@ -751,6 +751,12 @@ def test_copy_two_times(pr2_world):
         assert connection.name == pr2_copy_connection.name
 
 
+def test_copy_id(pr2_world):
+    pr2_copy = deepcopy(pr2_world)
+    for body in pr2_world.bodies:
+        assert body.id == pr2_copy.get_kinematic_structure_entity_by_name(body.name).id
+
+
 def test_add_entity_with_duplicate_name(world_setup):
     world, l1, l2, bf, r1, r2 = world_setup
     body_duplicate = Body(name=PrefixedName("l1"))

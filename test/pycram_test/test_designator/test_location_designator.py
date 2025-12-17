@@ -11,8 +11,8 @@ from pycram.robot_plans import NavigateActionDescription
 from pycram.testing import ApartmentWorldTestCase
 
 
-def test_reachability_costmap_location(immutable_model_world):
-    world, robot, context = immutable_model_world
+def test_reachability_costmap_location(simple_pr2_world):
+    world, robot, context = simple_pr2_world
     arm_park = {
         "l_shoulder_pan_joint": 1.712,
         "l_shoulder_lift_joint": -0.264,
@@ -46,8 +46,8 @@ def test_reachability_costmap_location(immutable_model_world):
     # assertTrue(Arms.LEFT == location.reachable_arm or Arms.RIGHT == location.reachable_arm)
 
 
-def test_reachability_pose_costmap_location(immutable_model_world):
-    world, robot_view, context = immutable_model_world
+def test_reachability_pose_costmap_location(simple_pr2_world):
+    world, robot_view, context = simple_pr2_world
     arm_park = {
         "l_shoulder_pan_joint": 1.712,
         "l_shoulder_lift_joint": -0.264,
@@ -77,8 +77,8 @@ def test_reachability_pose_costmap_location(immutable_model_world):
     assert len(location.orientation.to_list()) == 4
 
 
-def test_visibility_costmap_location(immutable_model_world):
-    world, robot_view, context = immutable_model_world
+def test_visibility_costmap_location(simple_pr2_world):
+    world, robot_view, context = simple_pr2_world
     arm_park = {
         "l_shoulder_pan_joint": 1.712,
         "l_shoulder_lift_joint": -0.264,
@@ -107,8 +107,8 @@ def test_visibility_costmap_location(immutable_model_world):
     assert len(location.orientation.to_list()) == 4
 
 
-def test_visibility_pose_costmap_location(immutable_model_world):
-    world, robot_view, context = immutable_model_world
+def test_visibility_pose_costmap_location(simple_pr2_world):
+    world, robot_view, context = simple_pr2_world
     arm_park = {
         "l_shoulder_pan_joint": 1.712,
         "l_shoulder_lift_joint": -0.264,
@@ -138,8 +138,8 @@ def test_visibility_pose_costmap_location(immutable_model_world):
     assert len(location.orientation.to_list()) == 4
 
 
-def test_reachability_and_visibility_costmap_location(immutable_model_world):
-    world, robot_view, context = immutable_model_world
+def test_reachability_and_visibility_costmap_location(simple_pr2_world):
+    world, robot_view, context = simple_pr2_world
     arm_park = {
         "l_shoulder_pan_joint": 1.712,
         "l_shoulder_lift_joint": -0.264,

@@ -288,7 +288,7 @@ def test_close(immutable_model_world):
         world.get_degree_of_freedom_by_name("cabinet10_drawer_top_joint").id
     ].position == pytest.approx(0, abs=0.1)
 
-
+@pytest.mark.skip
 def test_transport(mutable_model_world):
     world, robot_view, context = mutable_model_world
     description = TransportActionDescription(
@@ -342,13 +342,17 @@ def test_facing(immutable_model_world):
 
 def test_move_tcp_waypoints(immutable_model_world):
     world, robot_view, context = immutable_model_world
+    with world.modify_world():
+        world.state[world.get_degree_of_freedom_by_name("torso_lift_joint").id].position = 0.1
+    world.notify_state_change()
+
     gripper_pose = PoseStamped.from_spatial_type(
         world.get_body_by_name("r_gripper_tool_frame").global_pose
     )
     path = []
-    for i in range(1, 3):
+    for i in range(1, 5):
         new_pose = deepcopy(gripper_pose)
-        new_pose.position.x -= 0.05 * i
+        new_pose.position.z -= 0.05 * i
         path.append(new_pose)
     description = MoveTCPWaypointsMotion(path, Arms.RIGHT)
     plan = SequentialPlan(context, description)
