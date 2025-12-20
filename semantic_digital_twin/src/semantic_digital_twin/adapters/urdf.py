@@ -363,12 +363,12 @@ class URDFParser:
                         package_path = self.package_resolver[package_name]
                     else:
                         raise ParsingError(
-                            msg=f"Package '{package_name}' not found in package resolver and "
+                            message=f"Package '{package_name}' not found in package resolver and "
                             f"ROS is not installed."
                         )
                 else:
                     raise ParsingError(
-                        msg="No ROS install found while the URDF file contains references to "
+                        message="No ROS install found while the URDF file contains references to "
                         "ROS packages."
                     )
             file_path = file_path.replace("package://" + package_name, package_path)
