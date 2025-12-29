@@ -5,7 +5,7 @@ from krrood.ormatic.alternative_mappings import FunctionMapping, UncallableFunct
 from krrood.ormatic.dao import (
     to_dao,
     is_data_column,
-    ToDAOState,
+    ToDataAccessObjectState,
 )
 from krrood.ormatic.exceptions import NoDAOFoundError
 from ..dataset.example_classes import *
@@ -574,7 +574,7 @@ def test_json_integration(session, database):
 
 def test_many_to_many_with_same_type(session, database):
 
-    state = ToDAOState()
+    state = ToDataAccessObjectState()
     position = Position(1, 2, 3)
     ps1 = Positions([position], ["a"])
     ps2 = Positions([position], ["a"])

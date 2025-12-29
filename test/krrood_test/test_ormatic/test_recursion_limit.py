@@ -1,15 +1,14 @@
 import sys
-import pytest
+
 from krrood.ormatic.dao import to_dao
 from ..dataset.example_classes import Person
-from ..dataset.ormatic_interface import PersonDAO
 
 
 def test_deep_person_chain_to_dao():
     # Increase recursion limit just to be sure we can create the objects if needed,
     # though iterative creation doesn't need it.
     # But the goal is to show that to_dao doesn't hit it.
-
+    python_recursion_limit = sys.getrecursionlimit()
     limit = 1500
     sys.setrecursionlimit(limit)
 
@@ -24,8 +23,11 @@ def test_deep_person_chain_to_dao():
 
     root_person = current_person
 
-    # This should not raise RecursionError
-    dao = to_dao(root_person)
+    try:
+        # This should not raise RecursionError
+        dao = to_dao(root_person)
+    finally:
+        sys.setrecursionlimit(python_recursion_limit)
 
     assert dao.name == "Person 0"
     assert len(dao.knows) == 1
@@ -33,6 +35,7 @@ def test_deep_person_chain_to_dao():
 
 
 def test_deep_person_chain_from_dao():
+    python_recursion_limit = sys.getrecursionlimit()
     limit = 1500
     sys.setrecursionlimit(limit)
 
@@ -43,10 +46,14 @@ def test_deep_person_chain_from_dao():
         current_person = p
 
     root_person = current_person
-    dao = to_dao(root_person)
+    try:
+        dao = to_dao(root_person)
 
-    # This should not raise RecursionError
-    reconstructed_person = dao.from_dao()
+        # This should not raise RecursionError
+        reconstructed_person = dao.from_dao()
+
+    finally:
+        sys.setrecursionlimit(python_recursion_limit)
 
     assert reconstructed_person.name == "Person 0"
     assert len(reconstructed_person.knows) == 1

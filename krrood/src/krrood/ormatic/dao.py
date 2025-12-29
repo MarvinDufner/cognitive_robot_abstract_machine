@@ -718,7 +718,7 @@ class DataAccessObject(HasGeneric[T]):
 
         dao_clazz = get_dao_class(type(source_object))
         if dao_clazz is None:
-            raise NoDAOFoundDuringParsingError(source_object, type(self))
+            raise NoDAOFoundDuringParsingError(source_object, type(self), None)
 
         # Check for alternative mapping
         mapped_object = state.apply_alternative_mapping_if_needed(
@@ -1099,7 +1099,7 @@ class DataAccessObject(HasGeneric[T]):
 
         # Delegation to from_dao handles discovery/allocation without recursion depth risk
         domain_object = dao_instance.from_dao(state=state)
-        return domain_object, dao_instance
+        return domain_object, None
 
     def _build_base_keyword_arguments_for_alternative_parent(
         self,
@@ -1182,7 +1182,10 @@ class DataAccessObject(HasGeneric[T]):
 
     @classmethod
     def _apply_circular_fixes(
-        cls, result: Any, circular_refs: Dict[str, Any], state: "FromDAOState"
+        cls,
+        result: Any,
+        circular_refs: Dict[str, Any],
+        state: FromDataAccessObjectState,
     ) -> None:
         """
         Finalize circular references in the domain object.
@@ -1354,8 +1357,3 @@ def to_dao(
         raise NoDAOFoundError(source_object)
     state = state or ToDataAccessObjectState()
     return dao_clazz.to_dao(source_object, state)
-
-
-# Compatibility aliases for backward compatibility and to avoid breaking existing tests.
-ToDAOState = ToDataAccessObjectState
-FromDAOState = FromDataAccessObjectState
