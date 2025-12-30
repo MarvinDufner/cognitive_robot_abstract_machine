@@ -261,7 +261,7 @@ class FromDataAccessObjectState(DataAccessObjectState[FromDataAccessObjectWorkIt
 
     def push_work_item(self, dao_instance: DataAccessObject, domain_object: Any):
         """
-        Add a new work item to the processing work_items.
+        Add a new work item to the processing queue.
 
         :param dao_instance: The DAO instance being converted.
         :param domain_object: The domain object being populated.
