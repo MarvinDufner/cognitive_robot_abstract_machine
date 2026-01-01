@@ -18,6 +18,29 @@ from ..tf_transformations import quaternion_multiply
 from ..utils import translate_pose_along_local_axis
 
 
+
+@dataclass
+class NewGraspDescription:
+    approach_direction: ApproachDirection
+    vertical_alignment: VerticalAlignment
+
+    body: Body
+
+    manipulator: Manipulator
+
+    @classmethod
+    def calculate_all_grasp_descriptions(cls, body: Body, manipulator: Manipulator):
+        pass
+
+    def grasp_pose_sequence(self, reverse: bool = False):
+        pass
+
+    def grasp_orientation(self):
+        pass
+
+    def grasp_position(self):
+        pass
+
 # @has_parameters
 @dataclass
 class GraspDescription(HasParameters):
