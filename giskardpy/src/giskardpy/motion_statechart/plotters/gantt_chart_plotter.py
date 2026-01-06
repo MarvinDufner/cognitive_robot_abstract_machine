@@ -29,7 +29,13 @@ if TYPE_CHECKING:
 @dataclass
 class HistoryGanttChartPlotter:
     """
-    Plot a hierarchy-aware Gantt chart of node states.
+    Plot a hierarchy of a MotionStatechart as a Gantt chart.
+
+    Each node is represented by two horizontal bars:
+        Top bar is life cycle state.
+        Bottom bar is observation state.
+    At the end, there is a final short bar plot highlighting the final state of each node,
+    because they may be difficult to see otherwise.
 
     Shows parent-child relationships of Goals by ordering rows in
     preorder and by prefixing labels with tree glyphs (├─, └─, │).
@@ -37,9 +43,16 @@ class HistoryGanttChartPlotter:
     """
 
     motion_statechart: MotionStatechart
+    """Plots history of this motion statechart."""
     context: ExecutionContext | None = None
+    """
+    Optional context to use for time conversion. 
+    If not provided, control cycles are used instead of second.
+    """
     second_width_in_cm: float = 2.0
+    """Width of a second in cm."""
     final_state_band_height_in_cm: float = 0.5
+    """Height of the final state band in cm."""
 
     @property
     def x_width_per_control_cycle(self) -> float:
@@ -90,6 +103,8 @@ class HistoryGanttChartPlotter:
         - Left: the normal timeline over control cycles or seconds
         - Right: a compact column showing only the final state for each node, with the x label "final"
         Y-axis labels are shown only once on the right plot.
+
+        :param file_name: File name to save the plot to.
         """
 
         nodes = self.motion_statechart.nodes
@@ -106,26 +121,39 @@ class HistoryGanttChartPlotter:
 
         ordered_nodes = self._sort_nodes_by_parents()
 
+        ax_main, ax_final = self._build_subplots(ordered_nodes=ordered_nodes)
+
+        for node_idx, node in enumerate(ordered_nodes):
+            self._plot_lifecycle_bar(axis=ax_main, node=node, node_idx=node_idx)
+            self._plot_observation_bar(axis=ax_main, node=node, node_idx=node_idx)
+            # Draw the final-state-only blocks on the right axis
+            self._plot_final_state_column(axis=ax_final, node=node, node_idx=node_idx)
+
+        self._format_axes(
+            main_axis=ax_main, final_state_axis=ax_final, ordered_nodes=ordered_nodes
+        )
+        self._save_figure(file_name=file_name)
+
+    def _build_subplots(
+        self, ordered_nodes: List[MotionStatechartNode]
+    ) -> tuple[plt.Axes, plt.Axes]:
+        """
+        Builds a subplot layout with a main axis and a fixed-width final-state axis for the
+        visualization of motion statechart nodes. Adaptively calculates layout dimensions,
+        padding, and margins to ensure proper alignment and display of node labels.
+
+        :param ordered_nodes: A list of MotionStatechartNode objects representing the nodes
+            to be plotted.
+        :type ordered_nodes: List[MotionStatechartNode]
+        :return: A tuple containing the main axis and the fixed-width final-state axis.
+        """
+
         # Build node label list early so we can size the right margin adaptively
         node_names: List[str] = []
         for idx, n in enumerate(ordered_nodes):
             prev_depth = 0 if idx == 0 else ordered_nodes[idx - 1].depth
             node_names.append(self._make_label(n, prev_depth))
 
-        ax_main, ax_final = self._build_subplots(node_names)
-
-        for node_idx, node in enumerate(ordered_nodes):
-            self._plot_lifecycle_bar(ax=ax_main, node=node, node_idx=node_idx)
-            self._plot_observation_bar(ax=ax_main, node=node, node_idx=node_idx)
-            # Draw the final-state-only blocks on the right axis
-            self._plot_final_state_column(ax=ax_final, node=node, node_idx=node_idx)
-
-        self._format_axes(
-            ax_main=ax_main, ax_final=ax_final, ordered_nodes=ordered_nodes
-        )
-        self._save_figure(file_name=file_name)
-
-    def _build_subplots(self, node_names: List[str]):
         # Build figure so that axes widths are fixed in physical units (inches)
         # Main axis width = length_in_units * second_width_in_cm; Final axis width = fixed value independent of second_width_in_cm
         inches_per_unit = self.second_width_in_cm / 2.54
@@ -202,6 +230,14 @@ class HistoryGanttChartPlotter:
         return ax_main, ax_final
 
     def _sort_nodes_by_parents(self) -> List[MotionStatechartNode]:
+        """
+        Sorts nodes of a motion statechart by their parent-child hierarchy.
+        This method organizes nodes of the motion statechart such that child nodes
+        appear directly after their respective parents in depth-first traversal.
+
+        :return: A list of MotionStatechartNode objects ordered by their parent-child
+            relationships in reversed order.
+        """
 
         def return_children_in_order(n: MotionStatechartNode):
             yield n
@@ -217,10 +253,20 @@ class HistoryGanttChartPlotter:
 
     def _plot_lifecycle_bar(
         self,
-        ax: plt.Axes,
+        axis: plt.Axes,
         node: MotionStatechartNode,
         node_idx: int,
     ):
+        """
+        Plots the lifecycle bar for a given node onto the supplied Axes object. The plot
+        visualizes the lifecycle state of the node as a bar in the context of control
+        cycles. This method utilizes the lifecycle history of the node and maps the states
+        to corresponding colors defined in the color map.
+
+        :param axis: The matplotlib Axes on which to plot the lifecycle bar.
+        :param node: The specific motion statechart node whose lifecycle is being plotted.
+        :param node_idx: The index of the node being plotted in the node list.
+        """
         life_cycle_history = (
             self.motion_statechart.history.get_life_cycle_history_of_node(node)
         )
@@ -228,7 +274,7 @@ class HistoryGanttChartPlotter:
             h.control_cycle for h in self.motion_statechart.history.history
         ]
         self._plot_node_bar(
-            ax=ax,
+            axis=axis,
             node_idx=node_idx,
             history=life_cycle_history,
             control_cycle_indices=control_cycle_indices,
@@ -238,10 +284,22 @@ class HistoryGanttChartPlotter:
 
     def _plot_observation_bar(
         self,
-        ax: plt.Axes,
+        axis: plt.Axes,
         node: MotionStatechartNode,
         node_idx: int,
     ):
+        """
+        Plots the observation state bar for a given motion statechart node in the
+        specified matplotlib Axes. The visualization represents the changes in observation states over
+        control cycles, providing insights into the node's observation behavior
+        over time.
+
+        :param axis: The matplotlib Axes object where the observation bar will be plotted.
+        :param node: The motion statechart node for which the observation history will
+                     be represented.
+        :param node_idx: Index of the node in the motion statechart used for positioning
+                         the bar in the plot.
+        """
         obs_history = self.motion_statechart.history.get_observation_history_of_node(
             node
         )
@@ -249,7 +307,7 @@ class HistoryGanttChartPlotter:
             h.control_cycle for h in self.motion_statechart.history.history
         ]
         self._plot_node_bar(
-            ax=ax,
+            axis=axis,
             node_idx=node_idx,
             history=obs_history,
             control_cycle_indices=control_cycle_indices,
@@ -259,14 +317,20 @@ class HistoryGanttChartPlotter:
 
     def _plot_final_state_column(
         self,
-        ax: plt.Axes,
+        axis: plt.Axes,
         node: MotionStatechartNode,
         node_idx: int,
         column_padding: float = 0.1,
-    ) -> None:
+    ):
         """
         Draw the final state for both lifecycle (top half) and observation (bottom half)
         as a compact column on the right axes.
+
+        :param axis: The matplotlib axis on which the final state column will be plotted.
+        :param node: The motion statechart node whose final state is to be plotted.
+        :param node_idx: The index of the node within the motion statechart.
+        :param column_padding: The padding on each side of the column. Determines how far
+            the edges of the column are from the axis boundaries. Default is 0.1.
         """
         # Determine last lifecycle and observation states
         life_cycle_history = (
@@ -284,7 +348,7 @@ class HistoryGanttChartPlotter:
 
         # Draw top (lifecycle) and bottom (observation) halves
         self._draw_block(
-            ax=ax,
+            axis=axis,
             node_idx=node_idx,
             block_start=start,
             block_width=width,
@@ -292,7 +356,7 @@ class HistoryGanttChartPlotter:
             top=True,
         )
         self._draw_block(
-            ax=ax,
+            axis=axis,
             node_idx=node_idx,
             block_start=start,
             block_width=width,
@@ -302,20 +366,36 @@ class HistoryGanttChartPlotter:
 
     def _plot_node_bar(
         self,
-        ax: plt.Axes,
+        axis: plt.Axes,
         node_idx: int,
         history: List[LifeCycleValues | ObservationStateValues],
         control_cycle_indices: List[int],
         color_map: Dict[LifeCycleValues | ObservationStateValues, str],
         top: bool,
-    ) -> None:
+    ):
+        """
+        Plots a bar segment corresponding to the state changes of a node as per the history
+        and its associated control cycle indices. Each state transition is represented as
+        a colored block determined by the color mapping.
+
+        :param axis: The matplotlib Axes instance where the bar will be plotted.
+        :param node_idx: The index of the node for which the bar is being plotted.
+        :param history: A list of state values indicating the historical lifecycle
+            or observation state of the node.
+        :param control_cycle_indices: A list of indices representing the control cycles
+            associated with the state transitions.
+        :param color_map: A mapping between lifecycle or observation states and their
+            associated colors used for visualization.
+        :param top: Indicates if the bar is to be plotted in the upper or lower part
+            of the chart.
+        """
         current_state = history[0]
         start_idx = 0
         for idx, next_state in zip(control_cycle_indices[1:], history[1:]):
             if current_state != next_state:
                 life_cycle_width = (idx - start_idx) * self.x_width_per_control_cycle
                 self._draw_block(
-                    ax=ax,
+                    axis=axis,
                     node_idx=node_idx,
                     block_start=start_idx * self.x_width_per_control_cycle,
                     block_width=life_cycle_width,
@@ -328,7 +408,7 @@ class HistoryGanttChartPlotter:
         last_idx = control_cycle_indices[-1]
         life_cycle_width = (last_idx - start_idx) * self.x_width_per_control_cycle
         self._draw_block(
-            ax=ax,
+            axis=axis,
             node_idx=node_idx,
             block_start=start_idx * self.x_width_per_control_cycle,
             block_width=life_cycle_width,
@@ -338,7 +418,7 @@ class HistoryGanttChartPlotter:
 
     def _draw_block(
         self,
-        ax: plt.Axes,
+        axis: plt.Axes,
         node_idx,
         block_start,
         block_width,
@@ -346,11 +426,24 @@ class HistoryGanttChartPlotter:
         top: bool,
         bar_height: float = 0.8,
     ):
+        """
+        Draws a block in a horizontal bar chart with specified parameters.
+
+        :param axis: The matplotlib Axes object where the block will be drawn.
+        :param node_idx: The y-axis index position of the node on the chart.
+        :param block_start: The starting position of the block along the x-axis.
+        :param block_width: The width of the block along the x-axis.
+        :param color: The fill color of the block.
+        :param top: A flag indicating whether the block should be positioned
+            above the baseline (True) or below it (False).
+        :param bar_height: The total height of the bar containing the block.
+            Defaults to 0.8.
+        """
         if top:
             y = node_idx + bar_height / 4
         else:
             y = node_idx - bar_height / 4
-        ax.barh(
+        axis.barh(
             y,
             block_width,
             height=bar_height / 2,
@@ -361,32 +454,47 @@ class HistoryGanttChartPlotter:
 
     def _format_axes(
         self,
-        ax_main: plt.Axes,
-        ax_final: plt.Axes,
+        main_axis: plt.Axes,
+        final_state_axis: plt.Axes,
         ordered_nodes: List[MotionStatechartNode],
-    ) -> None:
+    ):
+        """
+        Configure and format axes for visualizing motion statechart nodes.
+
+        This function modifies the provided matplotlib axes to display a timeline
+        and statechart information for a motion control simulation or experiment.
+        Additionally, it prepares the axes to show details such as time units,
+        control cycle labels, final-state configurations, and node-specific
+        labels, enabling clear visual representation of the motion statechart.
+
+        :param main_axis: Matplotlib Axes object used for the main timeline display.
+        :param final_state_axis: Matplotlib Axes object used for the final-state
+                                 representation.
+        :param ordered_nodes: List of MotionStatechartNode objects to determine
+                              the y-axis labels and structure.
+        """
         # Configure x-axis for main timeline
         if self.use_seconds_for_x_axis:
-            ax_main.set_xlabel("Time [s]")
+            main_axis.set_xlabel("Time [s]")
             base_ticks = np.arange(0.0, self.time_span_seconds + 1e-9, 0.5).tolist()
-            ax_main.set_xlim(0, self.time_span_seconds)
+            main_axis.set_xlim(0, self.time_span_seconds)
         else:
-            ax_main.set_xlabel("Control cycle")
+            main_axis.set_xlabel("Control cycle")
             step = max(int(self.x_width_per_control_cycle), 1)
             base_ticks = list(range(0, self.total_control_cycles + 1, step))
-            ax_main.set_xlim(0, self.total_control_cycles)
-        ax_main.set_xticks(base_ticks)
-        ax_main.set_xticklabels([str(t) for t in base_ticks])
+            main_axis.set_xlim(0, self.total_control_cycles)
+        main_axis.set_xticks(base_ticks)
+        main_axis.set_xticklabels([str(t) for t in base_ticks])
 
         # Configure final-state column x-axis
-        ax_final.set_xlim(0.0, 1.0)
-        ax_final.set_xticks([0.5])
-        ax_final.set_xticklabels(["final"])
-        ax_final.grid(False)
+        final_state_axis.set_xlim(0.0, 1.0)
+        final_state_axis.set_xticks([0.5])
+        final_state_axis.set_xticklabels(["final"])
+        final_state_axis.grid(False)
 
         # Y axis labels and limits shown only on the right (final column)
         ymin, ymax = -0.8, self.num_bars - 1 + 0.8
-        ax_final.set_ylim(ymin, ymax)
+        final_state_axis.set_ylim(ymin, ymax)
 
         node_names = []
         for idx, n in enumerate(ordered_nodes):
@@ -395,19 +503,27 @@ class HistoryGanttChartPlotter:
         node_idx = list(range(len(node_names)))
 
         # Hide y ticks on main axis but keep the shared tick locations intact
-        ax_main.tick_params(axis="y", left=False, labelleft=False)
-        ax_main.set_ylabel("Nodes")
+        main_axis.tick_params(axis="y", left=False, labelleft=False)
+        main_axis.set_ylabel("Nodes")
 
         # Put all y tick labels on the right (final axis)
-        ax_final.set_yticks(node_idx)
-        ax_final.set_yticklabels(node_names)
-        ax_final.set_ylabel("")
-        ax_final.yaxis.set_ticks_position("right")
-        ax_final.tick_params(
+        final_state_axis.set_yticks(node_idx)
+        final_state_axis.set_yticklabels(node_names)
+        final_state_axis.set_ylabel("")
+        final_state_axis.yaxis.set_ticks_position("right")
+        final_state_axis.tick_params(
             axis="y", right=True, labelright=True, left=False, labelleft=False
         )
 
     def _make_label(self, node: MotionStatechartNode, prev_depth: int) -> str:
+        """
+        Generates a formatted label for a given node in a motion statechart by incorporating
+        its depth and using ASCII art for hierarchical representation.
+
+        :param node: The motion statechart node for which the label is created.
+        :param prev_depth: The depth of the previously processed node in the hierarchy.
+        :return: A string representing the hierarchical label of the node.
+        """
         depth = node.depth
         if depth == 0:
             return node.unique_name
@@ -425,10 +541,12 @@ class HistoryGanttChartPlotter:
 
     def _measure_labels_width_in(self, labels: List[str]) -> float:
         """
-        Measure the maximum rendered width of the given labels in inches.
+        Measures the maximum width of a list of text labels when rendered in a temporary
+        figure. This is useful to determine the required space for labels in a plot.
 
-        Creates a temporary figure to access a renderer so that text extents are
-        measured accurately for the current Matplotlib configuration.
+        :param labels: A list of strings representing the text labels whose widths need
+            to be measured.
+        :return: The maximum width of the rendered labels in the figure's DPI units.
         """
         # Use a small temporary figure
         fig = plt.figure(figsize=(2, 2))
@@ -451,6 +569,12 @@ class HistoryGanttChartPlotter:
             plt.close(fig)
 
     def _save_figure(self, file_name: str) -> None:
+        """
+        Saves the current figure to the specified file.
+
+        :param file_name: The complete path and file name where the figure
+            should be saved.
+        """
         create_path(file_name)
         plt.savefig(file_name)
         plt.close()
