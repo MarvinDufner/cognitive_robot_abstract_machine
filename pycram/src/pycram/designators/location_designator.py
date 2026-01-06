@@ -77,7 +77,7 @@ from ..datastructures.partial_designator import PartialDesignator
 from ..datastructures.pose import PoseStamped, GraspPose, PyCramVector3
 from ..designator import LocationDesignatorDescription
 from ..failures import RobotInCollision
-from ..pose_generator_and_validator import (
+from ..pose_validator import (
     visibility_validator,
     collision_check,
     pose_sequence_reachability_validator,
