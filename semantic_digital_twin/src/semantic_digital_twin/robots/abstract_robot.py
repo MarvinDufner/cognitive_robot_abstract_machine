@@ -372,13 +372,13 @@ class Base(KinematicChain):
     @property
     def bounding_box(self) -> BoundingBox:
         bounding_boxes = [
-            ke.collision.as_bounding_box_collection_in_frame(
+            kse.collision.as_bounding_box_collection_in_frame(
                 self._world.root
             ).bounding_box()
-            for ke in self._world.compute_chain_of_kinematic_structure_entities(
+            for kse in self._world.compute_chain_of_kinematic_structure_entities(
                 self.root, self.tip
             )
-            if ke.collision is not None
+            if kse.collision is not None
         ]
         bb_collection = BoundingBoxCollection(
             bounding_boxes, reference_frame=self._world.root

@@ -163,7 +163,11 @@ def tracy_world():
     if not tracy_installed():
         pytest.skip("Tracy not installed")
     urdf_dir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "resources", "urdf"
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "semantic_digital_twin",
+        "resources",
+        "urdf",
     )
     tracy = os.path.join(urdf_dir, "tracy.urdf")
     world = World()
