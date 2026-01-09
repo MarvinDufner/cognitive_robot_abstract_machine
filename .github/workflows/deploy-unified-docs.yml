@@ -17,6 +17,8 @@ jobs:
   # ============================================================================
   build-krrood-docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -51,6 +53,8 @@ jobs:
   # ============================================================================
   build-pycram-docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -89,6 +93,8 @@ jobs:
   # ============================================================================
   build-semantic-docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     container:
       image: "pycram/semantic_world:jazzy"
     defaults:
