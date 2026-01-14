@@ -13,7 +13,6 @@ from semantic_digital_twin.adapters.procthor.procthor_pipelines import (
     door_from_body_in_world,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.exceptions import WorldEntityNotFoundError
 from semantic_digital_twin.pipeline.pipeline import (
     Step,
     Pipeline,

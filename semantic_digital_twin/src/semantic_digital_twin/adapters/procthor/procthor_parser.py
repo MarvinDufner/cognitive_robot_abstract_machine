@@ -32,6 +32,7 @@ from ...semantic_annotations.semantic_annotations import (
 from ...spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Point3,
+    Vector3,
 )
 from ...utils import Direction
 from ...world import World
@@ -235,7 +236,7 @@ class ProcthorDoor:
         )
         door.add_handle(handle)
 
-        world_T_hinge = door.calculate_world_T_hinge_based_on_handle()
+        world_T_hinge = door.calculate_world_T_hinge_based_on_handle(Vector3.Z())
         hinge = Hinge.create_with_new_body_in_world(
             name=PrefixedName(f"{name.name}_hinge", name.prefix),
             world=world,
