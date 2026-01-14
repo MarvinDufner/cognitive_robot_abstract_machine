@@ -668,7 +668,6 @@ class TestFactories(unittest.TestCase):
         self.assertEqual(dof.lower_limits.position, -0.5)
         self.assertEqual(dof.upper_limits.position, 0.5)
 
-
     def test_create_with_invalid_connection_limits(self):
         world = World()
         root = Body(name=PrefixedName("root"))
