@@ -3011,3 +3011,21 @@ class TestLifeCycleTransitions:
 
         assert unpause.count_ticks1.observation_state == ObservationStateValues.TRUE
         assert unpause.observation_state == ObservationStateValues.TRUE
+
+    def test_long_pause(self):
+        msc = MotionStatechart()
+        msc.add_nodes(
+            [
+                node1 := Parallel([ConstTrueNode(), ConstFalseNode()]),
+                pulse := Pulse(length=5),
+            ]
+        )
+        node1.pause_condition = pulse.observation_variable
+        msc.add_node(EndMotion.when_false(pulse))
+
+        kin_sim = Executor(world=World())
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+        msc.plot_gantt_chart()
+
+        assert len(msc.history) == 5

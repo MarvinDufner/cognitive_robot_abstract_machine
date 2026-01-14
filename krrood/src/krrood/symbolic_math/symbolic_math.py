@@ -781,6 +781,9 @@ class Scalar(SymbolicMathType):
         if self.casadi_sx.shape != (1, 1):
             raise NotScalerError(self.casadi_sx.shape)
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({str(self)})"
+
     # %% Boolean operations
     @classmethod
     def const_false(cls) -> Self:
@@ -856,6 +859,14 @@ class Scalar(SymbolicMathType):
         self, other: Scalar | FloatVariable | NumericalScalar | bool
     ) -> Scalar | bool:
         return self._compare(other, operator.eq)
+
+    def __ne__(
+        self, other: Scalar | FloatVariable | NumericalScalar | bool
+    ) -> Scalar | bool:
+        eq_result = self == other
+        if isinstance(eq_result, bool):
+            return not eq_result
+        return logic_not(eq_result)
 
     def __le__(self, other: Scalar | FloatVariable) -> Scalar | bool:
         return self._compare(other, operator.le)
