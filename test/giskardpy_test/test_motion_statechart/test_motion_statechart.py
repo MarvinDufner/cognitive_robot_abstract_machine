@@ -45,7 +45,7 @@ from giskardpy.motion_statechart.monitors.payload_monitors import (
     Print,
     Pulse,
     CountSeconds,
-    CountTicks,
+    CountControlCycles,
 )
 from giskardpy.motion_statechart.motion_statechart import (
     MotionStatechart,
@@ -2137,7 +2137,7 @@ def test_counting():
 
 def test_count_ticks():
     msc = MotionStatechart()
-    msc.add_node(counter := CountTicks(ticks=3))
+    msc.add_node(counter := CountControlCycles(control_cycles=3))
     msc.add_node(EndMotion.when_true(counter))
     kin_sim = Executor(world=World())
     kin_sim.compile(motion_statechart=msc)
@@ -2240,7 +2240,12 @@ class TestParallel:
         msc = MotionStatechart()
         msc.add_nodes(
             [
-                parallel := Parallel([CountTicks(ticks=3), CountTicks(ticks=5)]),
+                parallel := Parallel(
+                    [
+                        CountControlCycles(control_cycles=3),
+                        CountControlCycles(control_cycles=5),
+                    ]
+                ),
             ]
         )
         msc.add_node(EndMotion.when_true(parallel))
@@ -2657,7 +2662,7 @@ class TestLifeCycleTransitions:
                 [
                     ConstTrueNode(),
                     TestRunAfterStop(),
-                    CountTicks(name="delay endmotion", ticks=5),
+                    CountControlCycles(name="delay endmotion", control_cycles=5),
                 ]
             )
         )
@@ -2683,7 +2688,7 @@ class TestLifeCycleTransitions:
                 [
                     ConstTrueNode(),
                     TestRunAfterStopFromPause(),
-                    CountTicks(name="delay endmotion", ticks=5),
+                    CountControlCycles(name="delay endmotion", control_cycles=5),
                 ]
             )
         )
@@ -2707,7 +2712,7 @@ class TestLifeCycleTransitions:
         """
         msc = MotionStatechart()
 
-        node1 = CountTicks(ticks=1)
+        node1 = CountControlCycles(control_cycles=1)
         node2 = ConstTrueNode()
         node3 = ConstTrueNode()
 
@@ -2759,9 +2764,9 @@ class TestLifeCycleTransitions:
         """
         msc = MotionStatechart()
 
-        count_node1 = CountTicks(ticks=1, name="node1")
-        count_node2 = CountTicks(ticks=2, name="node2")
-        end_count_node1 = CountTicks(ticks=11, name="end_node1")
+        count_node1 = CountControlCycles(control_cycles=1, name="node1")
+        count_node2 = CountControlCycles(control_cycles=2, name="node2")
+        end_count_node1 = CountControlCycles(control_cycles=11, name="end_node1")
         pulse_node1 = Pulse(name="pulse1")
         pulse_node2 = Pulse(name="pulse2")
 
@@ -3023,3 +3028,21 @@ class TestLifeCycleTransitions:
 
         assert unpause.count_ticks1.observation_state == ObservationStateValues.TRUE
         assert unpause.observation_state == ObservationStateValues.TRUE
+
+    def test_long_pause(self):
+        msc = MotionStatechart()
+        msc.add_nodes(
+            [
+                node1 := Parallel([ConstTrueNode(), ConstFalseNode()]),
+                pulse := Pulse(length=5),
+            ]
+        )
+        node1.pause_condition = pulse.observation_variable
+        msc.add_node(EndMotion.when_false(pulse))
+
+        kin_sim = Executor(world=World())
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+        msc.plot_gantt_chart()
+
+        assert len(msc.history) == 5
