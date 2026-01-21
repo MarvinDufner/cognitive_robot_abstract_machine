@@ -40,7 +40,8 @@ from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFr
 from semantic_digital_twin.world_description.geometry import Scale
 from semantic_digital_twin.world_description.world_entity import (
     Body,
-    SemanticAnnotation, synchronized_attribute_modification,
+    SemanticAnnotation,
+    synchronized_attribute_modification,
 )
 from semantic_digital_twin.world_description.world_modification import (
     AttributeUpdateModification,
