@@ -589,10 +589,9 @@ class MujocoSimTestCase(unittest.TestCase):
 
     def test_mujoco_with_tracy_dae_files(self):
         # tracy used .dae files for the UR arms and the robotiq grippers
-        try:
-            dae_world = URDFParser.from_file(file_path=self.test_urdf_tracy).parse()
-        except ParsingError:
-            self.skipTest("Could not parse file tracy.urdf.")
+
+        dae_world = URDFParser.from_file(file_path=self.test_urdf_tracy).parse()
+
         viewer = MultiverseViewer()
         multi_sim = MujocoSim(viewer=viewer, world=dae_world, headless=headless)
         self.assertIsInstance(multi_sim.simulator, MultiverseMujocoConnector)
