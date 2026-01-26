@@ -362,7 +362,7 @@ class DataAccessObject(HasGeneric[T]):
        Converts a DAO back into a domain object using a Four-Phase Iterative Approach:
 
        - Phase 1: Allocation & Discovery (DFS):
-         Traverses the DAO graph to identify all reachable DAOs. For each DAO, it
+         Traverses the DAO graph (its referenced objects) to identify all reachable DAOs. For each DAO, it
          allocates an uninitialized domain object (using ``__new__``) and records
          the discovery order.
        - Phase 2: Population & Alternative Mapping Resolution (Bottom-Up):
@@ -375,17 +375,9 @@ class DataAccessObject(HasGeneric[T]):
        - Phase 3: Container Finalization:
          Converts temporary lists back to sets where required by type hints.
        - Phase 4: Post-Initialization:
-         Calls ``__post_init__`` or ``post_init`` on all fully populated and
+         Calls ``__post_init__`` on all fully populated and
          finalized domain objects.
 
-    Handling Circular References
-    ----------------------------
-
-    Circular references are handled by separating object allocation from population.
-    All domain objects are allocated in Phase 1, establishing their identities.
-    During Phase 2, these identities are used to set attributes, even if the referenced
-    objects are not yet fully populated. The complete graph is guaranteed to be
-    consistent after Phase 2 is finished for all objects.
 
     Alternative Mappings
     --------------------
@@ -396,45 +388,6 @@ class DataAccessObject(HasGeneric[T]):
     method during the Filling Phase.
 
     """
-
-    def __init__(self, *args, **kwargs):
-        """
-        Initialize the DAO, optionally with positional arguments mapping to columns.
-
-        :param args: Positional arguments for data columns.
-        :param kwargs: Keyword arguments for data columns or relationships.
-        """
-        if args and not kwargs:
-            positional_kwargs = self._map_positional_arguments_to_data_columns(args)
-            if positional_kwargs:
-                args, kwargs = (), positional_kwargs
-        super().__init__(*args, **kwargs)
-
-    def _map_positional_arguments_to_data_columns(
-        self, arguments: Tuple[Any, ...]
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Map positional arguments to data columns.
-
-        :param arguments: The positional arguments to map.
-        :return: Dictionary of column names to values if mapping is possible.
-        """
-        try:
-            mapper: sqlalchemy.orm.Mapper = sqlalchemy.inspection.inspect(type(self))
-            data_columns = [
-                column for column in mapper.columns if is_data_column(column)
-            ]
-            if len(arguments) == len(data_columns):
-                return {
-                    column.name: value for column, value in zip(data_columns, arguments)
-                }
-        except (sqlalchemy.exc.NoInspectionAvailable, AttributeError, TypeError) as e:
-            # If inspection fails or mapping is not aligned, fall back
-            logger.debug(
-                f"Positional argument mapping failed for {type(self).__name__}: {e}. "
-                f"Falling back to default initialization."
-            )
-        return None
 
     @classmethod
     def to_dao(
@@ -459,12 +412,6 @@ class DataAccessObject(HasGeneric[T]):
             return existing
 
         resolved_source = state.apply_alternative_mapping_if_needed(cls, source_object)
-
-        # If alternative mapping already returned a DAO of this type, we are done.
-        if isinstance(resolved_source, cls):
-            if register:
-                state.register(source_object, resolved_source)
-            return resolved_source
 
         # Phase 2: Allocation & Registration
         result = cls()
@@ -598,12 +545,10 @@ class DataAccessObject(HasGeneric[T]):
         for prop in mapper.column_attrs:
             if prop.key in parent_column_names:
                 continue
-            try:
-                col = prop.columns[0]
-                if is_data_column(col):
-                    setattr(self, prop.key, getattr(source_object, prop.key))
-            except (IndexError, AttributeError):
-                continue
+
+            col = prop.columns[0]
+            if is_data_column(col):
+                setattr(self, prop.key, getattr(source_object, prop.key))
 
         # Partition and fill relationships
         relationships_of_parent, relationships_of_this_table = (
@@ -875,7 +820,7 @@ class DataAccessObject(HasGeneric[T]):
         processed_ids = set()
         for work_item in discovery_order:
             # Skip post_init for objects that were created via AlternativeMapping
-            # because they are typically created via their constructor which already
+            # because they are typically created via their constructor, which already
             # calls __post_init__ (for dataclasses).
             try:
                 if issubclass(
@@ -889,8 +834,6 @@ class DataAccessObject(HasGeneric[T]):
             if domain_object is not None and id(domain_object) not in processed_ids:
                 if hasattr(domain_object, "__post_init__"):
                     domain_object.__post_init__()
-                elif hasattr(domain_object, "post_init"):
-                    domain_object.post_init()
                 processed_ids.add(id(domain_object))
 
     def _register_for_conversion(self, state: FromDataAccessObjectState) -> T:
