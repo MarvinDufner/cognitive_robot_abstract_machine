@@ -35,7 +35,7 @@ class CollisionRequest(SubclassJSONSerializer):
     def to_json(self) -> Dict[str, Any]:
         return {
             **super().to_json(),
-            "type_": self.type_.to_json(),
+            "type_": to_json(self.type_),
             "distance": self.distance,
             "body_group1_ids": [to_json(body.id) for body in self.body_group1],
             "body_group2_ids": [to_json(body.id) for body in self.body_group2],
@@ -53,7 +53,7 @@ class CollisionRequest(SubclassJSONSerializer):
             for id_ in data["body_group2_ids"]
         ]
         return cls(
-            type_=CollisionAvoidanceTypes.from_json(data["type_"], **kwargs),
+            type_=from_json(data["type_"], **kwargs),
             distance=data["distance"],
             body_group1=body_group1,
             body_group2=body_group2,
