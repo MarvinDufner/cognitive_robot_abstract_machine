@@ -658,3 +658,15 @@ def test_underspecified_types():
     column_names = [c_attr.key for c_attr in inst.mapper.column_attrs]
     assert "any_list" not in column_names
     assert "any_field" not in column_names
+
+
+def test_position_set(session, database):
+    p1, p2 = Position(1, 2, 3), Position(2, 3, 4)
+    obj = PositionSet({p1, p2})
+    dao = to_dao(obj)
+    session.add(dao)
+    session.commit()
+
+    r = session.scalars(select(PositionSetDAO)).one()
+    reconstructed = r.from_dao()
+    assert reconstructed == obj
