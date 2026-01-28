@@ -1130,7 +1130,7 @@ def test_world_state_trajectory(world_setup):
 
 
 def test_merge_into_empty_world(world_setup):
-    world, l1, l2, bf, r1, r2 = world_setup
+    world, _, _, _, _, _ = world_setup
     world2 = deepcopy(world)
     world2.clear()
     world2.merge_world(world)
