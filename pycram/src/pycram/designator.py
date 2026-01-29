@@ -172,6 +172,11 @@ class LocationDesignatorDescription(DesignatorDescription, PartialDesignator):
 
     def __init__(self):
         super().__init__()
+        self._last_result = None
+
+    @property
+    def last_result(self) -> Iterator[PoseStamped]:
+        yield self._last_result
 
     def ground(self) -> PoseStamped:
         """

@@ -251,3 +251,22 @@ def test_giskard_location_pose(immutable_model_world):
     location = location_desig.resolve()
     assert len(location.position.to_list()) == 3
     assert len(location.orientation.to_list()) == 4
+
+
+def test_costmap_location_last_result(immutable_simple_pr2_world):
+    world, robot_view, context = immutable_simple_pr2_world
+    for name, state in arm_park.items():
+        world.state[world.get_degree_of_freedom_by_name(name).id].position = state
+    world.notify_state_change()
+    location_desig = CostmapLocation(
+        PoseStamped.from_list([-2.2, 0, 1], [0, 0, 0, 1], world.root),
+        reachable_for=robot_view,
+    )
+    plan = SequentialPlan(context, NavigateActionDescription(location_desig))
+    location = location_desig.resolve()
+    last_result = next(location_desig.last_result)
+
+    assert len(last_result.position.to_list()) == 3
+    assert len(last_result.orientation.to_list()) == 4
+    assert location == last_result
+    assert location is last_result
