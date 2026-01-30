@@ -40,6 +40,7 @@ from .exceptions import (
     AlreadyBelongsToAWorldError,
     MissingWorldModificationContextError,
     WorldEntityWithIDNotFoundError,
+    MissingReferenceFrameError,
 )
 from .robots.abstract_robot import AbstractRobot
 from .spatial_computations.forward_kinematics import ForwardKinematicsManager
@@ -1319,6 +1320,28 @@ class World:
             self.add_semantic_annotation(semantic_annotation)
 
     # %% Subgraph Targeting
+
+    def attach_with_fixed_connection(
+        self, new_parent: KinematicStructureEntity, new_child: KinematicStructureEntity
+    ):
+        """
+        Remounts a kinematic structure entity as a child of another kinematic structure entity with a fixed connection
+
+        :param new_parent: The new parent of the kinematic structure entity.
+        :param new_child: The new child of the kinematic structure entity.
+        """
+        root_T_parent = new_parent.global_pose
+        root_T_child = new_child.global_pose
+        new_parent_T_child = root_T_parent.inverse() @ root_T_child
+        self.remove_connection(new_child.parent_connection)
+        self.add_connection(
+            FixedConnection(
+                parent=new_parent,
+                child=new_child,
+                parent_T_connection_expression=new_parent_T_child,
+            )
+        )
+
     def get_connections_of_branch(
         self, root: KinematicStructureEntity
     ) -> List[Connection]:
@@ -1883,6 +1906,11 @@ class World:
         """
         return not bool(len(self.kinematic_structure))
 
+    def transform_to_world(
+        self, spatial_object: GenericSpatialType
+    ) -> GenericSpatialType:
+        return self.transform(spatial_object, self.root)
+
     def transform(
         self,
         spatial_object: GenericSpatialType,
@@ -1906,6 +1934,8 @@ class World:
             is a Quaternion, the returned object is a Quaternion. Otherwise, it is the
             transformed spatial object.
         """
+        if spatial_object.reference_frame is None:
+            raise MissingReferenceFrameError(spatial_object)
         target_frame_T_reference_frame = self.compute_forward_kinematics(
             root=target_frame, tip=spatial_object.reference_frame
         )

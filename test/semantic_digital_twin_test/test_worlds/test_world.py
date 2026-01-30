@@ -32,6 +32,7 @@ from semantic_digital_twin.spatial_types.derivatives import Derivatives, Derivat
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     RotationMatrix,
+    Point3,
 )
 from semantic_digital_twin.testing import world_setup
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
@@ -1134,3 +1135,72 @@ def test_merge_into_empty_world(world_setup):
     world2 = deepcopy(world)
     world2.clear()
     world2.merge_world(world)
+
+
+def test_attach_with_fixed_connection(world_setup):
+    world, l1, l2, bf, r1, r2 = world_setup
+    # Initial state: l2 is child of l1 via PrismaticConnection
+    old_child_global_pose = l2.global_pose
+    assert l2.parent_connection.parent == l1
+    assert isinstance(l2.parent_connection, PrismaticConnection)
+
+    with world.modify_world():
+        world.attach_with_fixed_connection(new_parent=bf, new_child=l2)
+
+    # New state: l2 is child of bf via FixedConnection
+    assert l2.parent_connection.parent == bf
+    assert isinstance(l2.parent_connection, FixedConnection)
+    assert l2 in world.compute_child_kinematic_structure_entities(bf)
+    assert l2 not in world.compute_child_kinematic_structure_entities(l1)
+    new_child_global_pose = l2.global_pose
+    np.allclose(old_child_global_pose.to_np(), new_child_global_pose.to_np())
+
+
+def test_transform_to_world(world_setup):
+    """
+    Test the transform_to_world method of the World class.
+    Ensures that spatial objects are correctly transformed from a child frame to the world frame,
+    especially when bodies are not at the origin.
+    """
+    world, l1, l2, bf, r1, r2 = world_setup
+
+    # Move bf (base_footprint) away from world origin (0,0,0)
+    # bf is child of root via Connection6DoF
+    c_root_bf: Connection6DoF = world.get_connection(world.root, bf)
+    assert isinstance(c_root_bf, Connection6DoF)
+
+    # Set bf at (1, 2, 3) with some rotation (90 degrees around Z)
+    target_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
+        x=1.0, y=2.0, z=3.0, roll=0, pitch=0, yaw=np.pi / 2
+    )
+    c_root_bf.origin = target_pose
+
+    # l1 is child of bf via FixedConnection (at 0,0,0 relative to bf in world_setup)
+    # l2 is child of l1 via PrismaticConnection (along X axis)
+    c_l1_l2 = world.get_connection(l1, l2)
+    assert isinstance(c_l1_l2, PrismaticConnection)
+    c_l1_l2.position = 0.5  # Move l2 0.5m along l1's X axis
+
+    # Define a point in l2's frame
+    point_in_l2 = Point3(x=0.1, y=0.0, z=0.0, reference_frame=l2)
+
+    # Transform to world frame
+    point_in_world = world.transform_to_world(point_in_l2)
+
+    # Expected calculation:
+    # point in l2: (0.1, 0, 0)
+    # l2 relative to l1: (0.5, 0, 0) -> point in l1: (0.6, 0, 0)
+    # l1 relative to bf: (0, 0, 0) -> point in bf: (0.6, 0, 0)
+    # bf relative to root (world): pos=(1, 2, 3), rot=90deg around Z
+    # Rotation of 90deg around Z: (x, y) -> (-y, x)
+    # (0.6, 0, 0) rotated 90deg around Z -> (0, 0.6, 0)
+    # Add translation (1, 2, 3) -> (1, 2.6, 3)
+
+    expected_x = 1.0
+    expected_y = 2.6
+    expected_z = 3.0
+
+    assert np.allclose(point_in_world.x, expected_x)
+    assert np.allclose(point_in_world.y, expected_y)
+    assert np.allclose(point_in_world.z, expected_z)
+    assert point_in_world.reference_frame == world.root
