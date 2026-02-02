@@ -9,7 +9,7 @@ parts:
     - file: eql/intro
     - file: eql/writing_queries
     - file: eql/result_quantifiers
-    - file: eql/result_processors
+    - file: eql/aggregators
     - file: eql/logical_operators
     - file: eql/comparators
     - file: eql/domain_mapping

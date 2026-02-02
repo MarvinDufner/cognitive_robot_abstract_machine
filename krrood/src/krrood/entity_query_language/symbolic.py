@@ -1230,7 +1230,7 @@ class SetOf(QueryObjectDescriptor[T]):
         :return: The mapped result.
         """
         return UnificationDict(
-            {v._var_: result[v._id_] for v in self._selected_variables}
+            {v._var_: result[v._binding_id_] for v in self._selected_variables}
         )
 
 
