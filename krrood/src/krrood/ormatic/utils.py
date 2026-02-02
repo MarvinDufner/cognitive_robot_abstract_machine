@@ -104,7 +104,7 @@ def drop_database(engine: Engine) -> None:
      dropping of objects occurs without conflict. For MySQL/MariaDB, foreign key
     checks are disabled temporarily during the process.
 
-     This method differs from sqlalchemy `MetaData.drop_all <https://docs.sqlalchemy.org/en/20/core/metadata.html#sqlalchemy.schema.MetaData.drop_all>`_\ such that databases containing cyclic
+     This method differs from sqlalchemy `MetaData.drop_all <https://docs.sqlalchemy.org/en/20/core/metadata.html#sqlalchemy.schema.MetaData.drop_all>`_ such that databases containing cyclic
      backreferences are also droppable.
 
      :param engine: The SQLAlchemy Engine instance connected to the target database

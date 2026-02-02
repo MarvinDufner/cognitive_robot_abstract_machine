@@ -441,7 +441,7 @@ def test_joint_goal():
 
     msc = MotionStatechart()
 
-    task1 = JointPositionList(goal_state=JointState({root_C_tip: 1}))
+    task1 = JointPositionList(goal_state=JointState.from_mapping({root_C_tip: 1}))
     always_true = ConstTrueNode()
     msc.add_node(always_true)
     msc.add_node(task1)
@@ -534,7 +534,7 @@ def test_two_goals(pr2_world_state_reset: World):
     msc = MotionStatechart()
     msc.add_nodes(
         [
-            JointPositionList(goal_state=JointState({torso_joint: 0.1})),
+            JointPositionList(goal_state=JointState.from_mapping({torso_joint: 0.1})),
             local_min := LocalMinimumReached(),
         ]
     )
@@ -550,7 +550,9 @@ def test_two_goals(pr2_world_state_reset: World):
 
     msc = MotionStatechart()
     msc.add_node(
-        joint_goal := JointPositionList(goal_state=JointState({r_wrist_roll_joint: 1}))
+        joint_goal := JointPositionList(
+            goal_state=JointState.from_mapping({r_wrist_roll_joint: 1})
+        )
     )
     msc.add_node(EndMotion.when_true(joint_goal))
 
@@ -978,7 +980,9 @@ def test_set_seed_configuration(pr2_world_state_reset):
         "torso_lift_joint"
     )
 
-    node1 = SetSeedConfiguration(seed_configuration=JointState({connection: goal}))
+    node1 = SetSeedConfiguration(
+        seed_configuration=JointState.from_mapping({connection: goal})
+    )
     end = EndMotion()
     msc.add_node(node1)
     msc.add_node(end)
