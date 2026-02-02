@@ -620,7 +620,7 @@ class Plan:
             cls.on_end_callback[action_type].remove(callback)
 
 
-    def parameterize_plan(self, classes: Optional[List[type]] = None) -> List:
+    def parameterize_plan(self, classes: Optional[List[type]] = None) -> List[Any]:
         """
         Parameterize all parameters of a plan using the krrood parameterizer.
 
