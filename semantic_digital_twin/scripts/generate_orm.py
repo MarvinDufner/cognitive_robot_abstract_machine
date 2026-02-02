@@ -67,6 +67,7 @@ all_classes |= set(classes_of_module(semantic_digital_twin.world))
 all_classes |= set(
     classes_of_module(semantic_digital_twin.datastructures.prefixed_name)
 )
+all_classes |= set(classes_of_module(semantic_digital_twin.datastructures.joint_state))
 
 all_classes |= set(
     classes_of_module(semantic_digital_twin.world_description.connections)
@@ -78,6 +79,7 @@ all_classes |= set(
     classes_of_module(semantic_digital_twin.world_description.degree_of_freedom)
 )
 all_classes |= set(classes_of_module(semantic_digital_twin.robots.abstract_robot))
+all_classes |= set(classes_of_module(semantic_digital_twin.datastructures.definitions))
 all_classes |= set(classes_of_module(semantic_digital_twin.robots.hsrb))
 # classes |= set(recursive_subclasses(ViewFactory))
 all_classes |= {SimulatorAdditionalProperty}
