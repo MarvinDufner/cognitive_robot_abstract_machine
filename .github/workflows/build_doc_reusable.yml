@@ -68,7 +68,7 @@ jobs:
         working-directory: ${{ inputs.lib }}
         run: |
           pip install -U pip setuptools wheel pybind11
-          pip install -e ../krrood
+          pip install -e ../krrood ../random_events ../probabilistic_model ../pycram ../semantic_digital_twin ../giskardpy
           [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || echo "No requirements-dev.txt"
           [ -f requirements.txt ] && pip install -r requirements.txt || echo "No requirements.txt"
           pip install .
@@ -83,7 +83,12 @@ jobs:
           cd /opt/ros/semantic_digital_twin
           source /opt/ros/semantic_digital_twin-venv/bin/activate
           pip install -U pip 
-          pip install -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/krrood
+          pip install -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/krrood \
+                      -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/random_events \
+                      -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/probabilistic_model \
+                      -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/pycram \
+                      -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/semantic_digital_twin \
+                      -e $GITHUB_WORKSPACE/ros/src/semantic_digital_twin/giskardpy
           pip install -r requirements.txt && pip install . && pip install -r doc/requirements.txt
 
       - name: Strip exercise-tagged cells (semantic_digital_twin only)
