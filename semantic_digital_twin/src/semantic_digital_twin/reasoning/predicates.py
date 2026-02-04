@@ -19,7 +19,7 @@ from ..spatial_computations.ik_solver import (
     UnreachableException,
 )
 from ..spatial_computations.raytracer import RayTracer
-from ..spatial_types import Vector3
+from ..spatial_types import Vector3, Point3
 from ..spatial_types.spatial_types import HomogeneousTransformationMatrix
 from ..world import World
 from ..world_description.connections import FixedConnection
@@ -196,7 +196,11 @@ def is_supported_by(
     If the intersection is higher than this value, the check returns False due to unhandled clipping.
     :return: True if the second object is supported by the first object, False otherwise
     """
-    if Below(supported_body, supporting_body, supported_body.global_pose)():
+    if Below(
+        supported_body.center_of_mass,
+        supporting_body.center_of_mass,
+        supported_body.global_pose,
+    )():
         return False
     bounding_box_supported_body = (
         supported_body.collision.as_bounding_box_collection_at_origin(
@@ -252,7 +256,7 @@ def is_body_in_region(body: Body, region: Region) -> float:
 
 
 @dataclass
-class SpatialRelation(Symbol, ABC):
+class KinematicStructureEntitySpatialRelation(Symbol, ABC):
     """
     Check if the KSE is spatially related to the other KSE if you are looking from the point of semantic annotation.
     The comparison is done using the centers of mass computed from the KSE's collision geometry.
@@ -266,11 +270,28 @@ class SpatialRelation(Symbol, ABC):
     other: KinematicStructureEntity
     """
     The other KSE.
-     """
+    """
 
 
 @dataclass
-class ViewDependentSpatialRelation(SpatialRelation, ABC):
+class PointSpatialRelation(Symbol, ABC):
+    """
+    Check if the point is spatially related to the other point.
+    """
+
+    point: Point3
+    """
+    The point for which the check should be done. 
+    """
+
+    other: Point3
+    """
+    The other point.
+    """
+
+
+@dataclass
+class ViewDependentSpatialRelation(PointSpatialRelation, ABC):
 
     point_of_semantic_annotation: HomogeneousTransformationMatrix
     """
@@ -306,8 +327,8 @@ class ViewDependentSpatialRelation(SpatialRelation, ABC):
             reference_frame=self.point_of_semantic_annotation.reference_frame,
         )
 
-        s_body = front_norm.dot(self.body.center_of_mass.to_vector3())
-        s_other = front_norm.dot(self.other.center_of_mass.to_vector3())
+        s_body = front_norm.dot(self.point.to_vector3())
+        s_other = front_norm.dot(self.other.to_vector3())
         return (s_body - s_other).compile()()
 
 
@@ -378,7 +399,7 @@ class InFrontOf(ViewDependentSpatialRelation):
 
 
 @dataclass
-class InsideOf(SpatialRelation):
+class InsideOf(KinematicStructureEntitySpatialRelation):
     """
     The "inside of" relation is defined as the fraction of the volume of self.body
     that lies within the bounding box of self.other.
