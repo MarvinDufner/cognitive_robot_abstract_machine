@@ -79,7 +79,7 @@ class ExceptIf(ConclusionSelector):
         """
         Evaluate the ExceptIf condition and yield the results.
         """
-        self._eval_parent_ = parent
+
         # init an empty source if none is provided
         sources = sources or {}
 

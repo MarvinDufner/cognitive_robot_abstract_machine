@@ -13,7 +13,7 @@ from abc import abstractmethod, ABC
 from collections import UserDict
 from copy import copy
 from dataclasses import dataclass, field, fields, MISSING, is_dataclass
-from functools import lru_cache, cached_property
+from functools import lru_cache, cached_property, wraps
 
 from krrood.entity_query_language.failures import VariableCannotBeEvaluated
 from typing_extensions import (
@@ -128,6 +128,23 @@ class OperationResult:
         )
 
 
+def auto_update_eval_parent(func):
+    """
+    Decorator that updates the _eval_parent_ of a SymbolicExpression during evaluation.
+    """
+
+    @wraps(func)
+    def wrapper(self, sources=None, parent=None):
+        previous_parent = self._eval_parent_
+        self._eval_parent_ = parent
+        try:
+            yield from func(self, sources, parent)
+        finally:
+            self._eval_parent_ = previous_parent
+
+    return wrapper
+
+
 @dataclass(eq=False)
 class SymbolicExpression(Generic[T], ABC):
     """
@@ -163,7 +180,15 @@ class SymbolicExpression(Generic[T], ABC):
         if hasattr(self, "_child_") and self._child_ is not None:
             self._update_child_()
 
-    def _update_child_(self, child: Optional[SymbolicExpression] = None):
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "_evaluate__" in cls.__dict__:
+            cls._evaluate__ = auto_update_eval_parent(cls._evaluate__)
+
+    def _update_child_(
+        self,
+        child: Optional[SymbolicExpression] = None,
+    ):
         child = child or self._child_
         self._child_ = self._update_children_(child)[0]
 
@@ -378,6 +403,49 @@ class Selectable(SymbolicExpression[T], ABC):
         return False
 
 
+@dataclass
+class DomainMappingCacheItem:
+    """
+    A cache item for domain mapping creation. To prevent recreating same mapping multiple times, mapping instances are
+    stored in a dictionary with a hashable key. This class is used to generate the key for the dictionary that stores
+    the mapping instances.
+    """
+
+    type: Type[DomainMapping]
+    """
+    The type of the domain mapping.
+    """
+    child: CanBehaveLikeAVariable
+    """
+    The child of the domain mapping (i.e. the original variable on which the domain mapping is applied).
+    """
+    args: Tuple[Any, ...] = field(default_factory=tuple)
+    """
+    Positional arguments to pass to the domain mapping constructor.
+    """
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    """
+    Keyword arguments to pass to the domain mapping constructor.
+    """
+
+    def __post_init__(self):
+        self.args = (self.child,) + self.args
+
+    @cached_property
+    def all_kwargs(self):
+        return merge_args_and_kwargs(
+            self.type, self.args, self.kwargs, ignore_first=True
+        )
+
+    def __hash__(self):
+        return hash(
+            (self.type,) + convert_args_and_kwargs_into_a_hashable_key(self.all_kwargs)
+        )
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
+
 @dataclass(eq=False, repr=False)
 class CanBehaveLikeAVariable(Selectable[T], ABC):
     """
@@ -393,6 +461,52 @@ class CanBehaveLikeAVariable(Selectable[T], ABC):
     """
     A storage of created symbolic attributes to prevent recreating same attribute multiple times.
     """
+
+    def _update_truth_value_(self, current_value: Any) -> None:
+        """
+        Updates the truth value of the variable based on the current value.
+
+        :param current_value: The current value of the variable.
+        """
+        if isinstance(self._parent_, LogicalOperator):
+            is_true = (
+                len(current_value) > 0
+                if is_iterable(current_value)
+                else bool(current_value)
+            )
+            self._is_false_ = not is_true
+
+    def _get_domain_mapping_(
+        self, type_: Type[DomainMapping], *args, **kwargs
+    ) -> DomainMapping:
+        """
+        Retrieves or creates a domain mapping instance based on the provided arguments.
+
+        :param type_: The type of the domain mapping to retrieve or create.
+        :param args: Positional arguments to pass to the domain mapping constructor.
+        :param kwargs: Keyword arguments to pass to the domain mapping constructor.
+        :return: The retrieved or created domain mapping instance.
+        """
+        cache_item = DomainMappingCacheItem(type_, self, args, kwargs)
+        if cache_item in self._known_mappings_:
+            return self._known_mappings_[cache_item]
+        else:
+            instance = type_(**cache_item.all_kwargs)
+            self._known_mappings_[cache_item] = instance
+            return instance
+
+    def _get_domain_mapping_key_(self, type_: Type[DomainMapping], *args, **kwargs):
+        """
+        Generates a hashable key for the given type and arguments.
+
+        :param type_: The type of the domain mapping.
+        :param args: Positional arguments to pass to the domain mapping constructor.
+        :param kwargs: Keyword arguments to pass to the domain mapping constructor.
+        :return: The generated hashable key.
+        """
+        args = (self,) + args
+        all_kwargs = merge_args_and_kwargs(type_, args, kwargs, ignore_first=True)
+        return convert_args_and_kwargs_into_a_hashable_key(all_kwargs)
 
     def __getattr__(self, name: str) -> CanBehaveLikeAVariable[T]:
         # Prevent debugger/private attribute lookups from being interpreted as symbolic attributes
@@ -714,7 +828,7 @@ class ResultQuantifier(ResultProcessor[T], ABC):
         parent: Optional[SymbolicExpression] = None,
     ) -> Iterable[T]:
         sources = sources or {}
-        self._eval_parent_ = parent
+
         if self._id_ in sources:
             yield OperationResult(sources, False, self)
             return
@@ -1016,7 +1130,7 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
         Evaluate the query descriptor by constraining values, updating conclusions,
         and selecting variables.
         """
-        self._eval_parent_ = parent
+
         sources = sources or {}
 
         results_generator = self._generate_results__(sources)
@@ -1313,7 +1427,7 @@ class Variable(CanBehaveLikeAVariable[T]):
         or will yield from current domain if exists,
         or has no domain and will instantiate new values by constructing the type if the type is given.
         """
-        self._eval_parent_ = parent
+
         sources = sources or {}
         if self._id_ in sources:
             yield self._build_operation_result_and_update_truth_value_(sources)
@@ -1510,8 +1624,6 @@ class DomainMapping(CanBehaveLikeAVariable[T], ABC):
         """
 
         sources = sources or {}
-
-        self._eval_parent_ = parent
 
         if self._id_ in sources:
             yield OperationResult(sources, self._is_false_, self)
@@ -1781,7 +1893,6 @@ class Comparator(BinaryOperator):
         Compares the left and right symbolic variables using the "operation".
         """
         sources = sources or {}
-        self._eval_parent_ = parent
 
         if self._id_ in sources:
             yield OperationResult(sources, self._is_false_, self)
@@ -1876,7 +1987,7 @@ class Not(LogicalOperator[T]):
         parent: Optional[SymbolicExpression] = None,
     ) -> Iterable[OperationResult]:
         sources = sources or {}
-        self._eval_parent_ = parent
+
         for v in self._child_._evaluate__(sources, parent=self):
             self._is_false_ = v.is_true
             yield OperationResult(v.bindings, self._is_false_, self)
@@ -1908,7 +2019,7 @@ class AND(LogicalBinaryOperator):
         parent: Optional[SymbolicExpression] = None,
     ) -> Iterable[OperationResult]:
         sources = sources or {}
-        self._eval_parent_ = parent
+
         left_values = self.left._evaluate__(sources, parent=self)
         for left_value in left_values:
             self._is_false_ = left_value.is_false
@@ -1986,7 +2097,6 @@ class Union(OR):
         parent: Optional[SymbolicExpression] = None,
     ) -> Iterable[OperationResult]:
         sources = sources or {}
-        self._eval_parent_ = parent
 
         yield from self.evaluate_left(sources)
         yield from self.evaluate_right(sources)
@@ -2008,7 +2118,7 @@ class ElseIf(OR):
         This method overrides the base class method to handle ElseIf logic.
         """
         sources = sources or {}
-        self._eval_parent_ = parent
+
         yield from self.evaluate_left(sources)
 
 
@@ -2058,7 +2168,6 @@ class ForAll(QuantifiedConditional):
         parent: Optional[SymbolicExpression] = None,
     ) -> Iterable[OperationResult]:
         sources = sources or {}
-        self._eval_parent_ = parent
 
         solution_set = None
 
@@ -2117,7 +2226,7 @@ class Exists(QuantifiedConditional):
         parent: Optional[SymbolicExpression] = None,
     ) -> Iterable[OperationResult]:
         sources = sources or {}
-        self._eval_parent_ = parent
+
         seen_var_values = []
         for val in self.condition._evaluate__(sources, parent=self):
             var_val = val[self.variable._id_]
