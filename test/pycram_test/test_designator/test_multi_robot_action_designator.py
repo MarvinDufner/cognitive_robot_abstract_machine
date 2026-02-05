@@ -247,7 +247,7 @@ def test_reach_action_multi(immutable_multiple_robot_apartment):
     manipulator_position = manipulator_pose.to_position().to_np()
     manipulator_orientation = manipulator_pose.to_quaternion().to_np()
 
-    target_orientation = left_arm.manipulator.front_facing_orientation.to_np()
+    target_orientation = grasp_description.grasp_orientation()
 
     assert manipulator_position[:3] == pytest.approx([1, -2, 0.8], abs=0.01)
     compare_orientations(manipulator_orientation, target_orientation, decimal=2)
