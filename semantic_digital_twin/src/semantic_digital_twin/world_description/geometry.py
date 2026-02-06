@@ -502,12 +502,12 @@ class TriangleMesh(Mesh):
         if thickness_padding > 0:
             P_aug = np.vstack(
                 [
-                    points + thickness_padding * unit_vector_normal,
-                    points - thickness_padding * unit_vector_normal,
+                    centered_points + thickness_padding * unit_vector_normal,
+                    centered_points - thickness_padding * unit_vector_normal,
                 ]
             )
         else:
-            P_aug = points
+            P_aug = centered_points
 
         hull = trimesh.points.PointCloud(P_aug).convex_hull
         hull.remove_unreferenced_vertices()
