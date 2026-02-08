@@ -249,10 +249,9 @@ class WrappedField:
         origin = get_origin(self.type_endpoint)
         if origin is None:
             return False
-        try:
-            if not issubclass(origin, Generic):
-                return False
-        except TypeError:
+        if not isclass(origin):
+            return False
+        if not issubclass(origin, Generic):
             return False
         return len(get_args(self.type_endpoint)) > 0
 
@@ -272,17 +271,11 @@ class WrappedField:
 
         # Also check if it's a GenericAlias with empty args (though usually origin is used then)
         origin = get_origin(self.type_endpoint)
-        if origin is not None:
-            try:
-                if (
-                    issubclass(origin, Generic)
-                    and len(get_args(self.type_endpoint)) == 0
-                ):
-                    return True
-            except TypeError:
-                pass
 
-        return False
+        if origin is None or not isclass(origin):
+            return False
+
+        return issubclass(origin, Generic) and len(get_args(self.type_endpoint)) == 0
 
 
 @lru_cache(maxsize=None)

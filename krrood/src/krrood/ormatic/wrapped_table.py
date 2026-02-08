@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from inspect import isclass
 
-from typing_extensions import List, Dict, TYPE_CHECKING, Optional, Set, Type
+from typing_extensions import List, Dict, TYPE_CHECKING, Optional, Set, Type, get_origin
 
 from .dao import AlternativeMapping
 from .utils import InheritanceStrategy
@@ -13,6 +13,7 @@ from ..utils import module_and_class_name
 from ..class_diagrams.class_diagram import (
     WrappedClass,
     WrappedSpecializedGeneric,
+    Inheritance,
 )
 from ..class_diagrams.failures import ClassIsUnMappedInClassDiagram
 from ..class_diagrams.wrapped_field import WrappedField
@@ -283,7 +284,6 @@ class WrappedTable:
                         parent_wrapped.index, self.wrapped_clazz.index
                     )
                 )
-                from krrood.class_diagrams.class_diagram import Inheritance
 
                 if (
                     isinstance(edge_data, Inheritance)
@@ -326,8 +326,6 @@ class WrappedTable:
         current_class = self.wrapped_clazz.clazz
 
         # Handle GenericAlias which doesn't have __mro__
-        from typing import get_origin
-
         origin = get_origin(current_class)
         if origin is not None and not isinstance(current_class, type):
             mro = origin.__mro__
@@ -428,7 +426,6 @@ class WrappedTable:
 
     @property
     def is_alternatively_mapped(self):
-        from typing import get_origin
 
         origin = get_origin(self.wrapped_clazz.clazz)
         actual_cls = (
@@ -719,10 +716,6 @@ class WrappedTable:
 
         # Use the actual container type from the domain model (e.g., list)
         container_name = module_and_class_name(wrapped_field.container_type)
-
-        # # Provide explicit join conditions to disambiguate self-referential associations
-        # primaryjoin = f"{self.tablename}.{self.primary_key_name} == {association_table_name}.c.{left_fk_name}"
-        # secondaryjoin = f"{target_wrapped_table.tablename}.{target_wrapped_table.primary_key_name} == {association_table_name}.c.{right_fk_name}"
 
         # Association Object pattern
         rel_type = f"Mapped[{module_and_class_name(wrapped_field.container_type)}[{association_table.name}]]"

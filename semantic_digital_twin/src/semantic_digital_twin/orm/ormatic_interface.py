@@ -5058,6 +5058,10 @@ class AbstractRobotDAO(
         ForeignKey(AgentDAO.database_id), primary_key=True, use_existing_column=True
     )
 
+    full_body_controlled: Mapped[builtins.bool] = mapped_column(
+        use_existing_column=True
+    )
+
     torso_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
         ForeignKey("TorsoDAO.database_id", use_alter=True),
         nullable=True,
@@ -5080,32 +5084,32 @@ class AbstractRobotDAO(
     base: Mapped[BaseDAO] = relationship(
         "BaseDAO", uselist=False, foreign_keys=[base_id], post_update=True
     )
-    manipulators: Mapped[builtins.set[AbstractRobotDAO_manipulators_association]] = (
+    manipulators: Mapped[builtins.list[AbstractRobotDAO_manipulators_association]] = (
         relationship(
             "AbstractRobotDAO_manipulators_association",
-            collection_class=builtins.set,
+            collection_class=builtins.list,
             cascade="all, delete-orphan",
             foreign_keys="[AbstractRobotDAO_manipulators_association.source_abstractrobotdao_id]",
         )
     )
-    sensors: Mapped[builtins.set[AbstractRobotDAO_sensors_association]] = relationship(
+    sensors: Mapped[builtins.list[AbstractRobotDAO_sensors_association]] = relationship(
         "AbstractRobotDAO_sensors_association",
-        collection_class=builtins.set,
+        collection_class=builtins.list,
         cascade="all, delete-orphan",
         foreign_keys="[AbstractRobotDAO_sensors_association.source_abstractrobotdao_id]",
     )
     manipulator_chains: Mapped[
-        builtins.set[AbstractRobotDAO_manipulator_chains_association]
+        builtins.list[AbstractRobotDAO_manipulator_chains_association]
     ] = relationship(
         "AbstractRobotDAO_manipulator_chains_association",
-        collection_class=builtins.set,
+        collection_class=builtins.list,
         cascade="all, delete-orphan",
         foreign_keys="[AbstractRobotDAO_manipulator_chains_association.source_abstractrobotdao_id]",
     )
-    sensor_chains: Mapped[builtins.set[AbstractRobotDAO_sensor_chains_association]] = (
+    sensor_chains: Mapped[builtins.list[AbstractRobotDAO_sensor_chains_association]] = (
         relationship(
             "AbstractRobotDAO_sensor_chains_association",
-            collection_class=builtins.set,
+            collection_class=builtins.list,
             cascade="all, delete-orphan",
             foreign_keys="[AbstractRobotDAO_sensor_chains_association.source_abstractrobotdao_id]",
         )
@@ -5255,11 +5259,13 @@ class KinematicChainDAO(
     manipulator: Mapped[ManipulatorDAO] = relationship(
         "ManipulatorDAO", uselist=False, foreign_keys=[manipulator_id], post_update=True
     )
-    sensors: Mapped[builtins.set[KinematicChainDAO_sensors_association]] = relationship(
-        "KinematicChainDAO_sensors_association",
-        collection_class=builtins.set,
-        cascade="all, delete-orphan",
-        foreign_keys="[KinematicChainDAO_sensors_association.source_kinematicchaindao_id]",
+    sensors: Mapped[builtins.list[KinematicChainDAO_sensors_association]] = (
+        relationship(
+            "KinematicChainDAO_sensors_association",
+            collection_class=builtins.list,
+            cascade="all, delete-orphan",
+            foreign_keys="[KinematicChainDAO_sensors_association.source_kinematicchaindao_id]",
+        )
     )
 
     __mapper_args__ = {
@@ -5297,6 +5303,19 @@ class BaseDAO(
         ForeignKey(KinematicChainDAO.database_id),
         primary_key=True,
         use_existing_column=True,
+    )
+
+    main_axis_id: Mapped[int] = mapped_column(
+        ForeignKey("Vector3MappingDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+
+    main_axis: Mapped[Vector3MappingDAO] = relationship(
+        "Vector3MappingDAO",
+        uselist=False,
+        foreign_keys=[main_axis_id],
+        post_update=True,
     )
 
     __mapper_args__ = {
@@ -5499,6 +5518,7 @@ class CameraDAO(
 
     minimal_height: Mapped[builtins.float] = mapped_column(use_existing_column=True)
     maximal_height: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    default_camera: Mapped[builtins.bool] = mapped_column(use_existing_column=True)
 
     forward_facing_axis_id: Mapped[int] = mapped_column(
         ForeignKey("Vector3MappingDAO.database_id", use_alter=True),
