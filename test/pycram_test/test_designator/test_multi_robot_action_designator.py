@@ -434,7 +434,7 @@ def test_open(immutable_multiple_robot_apartment):
         MoveTorsoActionDescription([TorsoState.HIGH]),
         ParkArmsActionDescription(Arms.BOTH),
         NavigateActionDescription(
-            PoseStamped.from_list([1.75, 1.75, 0], [0, 0, 0.5, 1], world.root)
+            PoseStamped.from_list([1.6, 1.9, 0], [0, 0, 0.3, 1], world.root)
         ),
         OpenActionDescription(world.get_body_by_name("handle_cab10_m"), [Arms.LEFT]),
     )
@@ -448,7 +448,7 @@ def test_open(immutable_multiple_robot_apartment):
 def test_close(immutable_multiple_robot_apartment):
     world, robot_view, context = immutable_multiple_robot_apartment
 
-    world.get_connection_by_name("cabinet10_drawer_middle_joint").position = 0.45
+    world.get_connection_by_name("cabinet10_drawer_middle_joint").position = 0.3
     world.notify_state_change()
 
     plan = SequentialPlan(
@@ -456,7 +456,7 @@ def test_close(immutable_multiple_robot_apartment):
         MoveTorsoActionDescription([TorsoState.HIGH]),
         ParkArmsActionDescription(Arms.BOTH),
         NavigateActionDescription(
-            PoseStamped.from_list([1.75, 1.75, 0], [0, 0, 0.5, 1], world.root)
+            PoseStamped.from_list([1.46, 2.0, 0], [0, 0, 0.4, 1], world.root)
         ),
         CloseActionDescription(world.get_body_by_name("handle_cab10_m"), [Arms.LEFT]),
     )

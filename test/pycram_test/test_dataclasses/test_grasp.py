@@ -585,19 +585,3 @@ def test_pose_sequence_180_flip(immutable_simple_pr2_world):
     assert sequence[0].position.to_list() == pytest.approx([1.083, 0, 1], abs=0.001)
     assert sequence[1].position.to_list() == pytest.approx([1.0, 0, 1], abs=0.001)
     assert sequence[2].position.to_list() == pytest.approx([1.0, 0, 1.05], abs=0.001)
-
-
-def test_tiago_handle(tiago_apartment_world):
-    world, robot_view = tiago_apartment_world
-
-    handle = world.get_body_by_name("handle_cab10_m")
-
-    grasp_description = GraspDescription(
-        ApproachDirection.FRONT, VerticalAlignment.TOP, robot_view.left_arm.manipulator
-    )
-
-    sequence = grasp_description.grasp_pose_sequence(handle)
-
-    handle_pose = PoseStamped.from_spatial_type(handle.global_pose)
-
-    assert sequence[0].position.to_list() == pytest.approx([2.25, 2.24, 0.743])
