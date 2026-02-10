@@ -32,7 +32,7 @@ from .symbolic import (
     Literal,
     An,
     Flatten,
-    DomainType,
+    DomainType, Entity,
 )
 from .utils import T
 
@@ -168,16 +168,16 @@ class Match(AbstractMatchExpression[T]):
         return self
 
     @cached_property
-    def expression(self) -> Union[An[T], T]:
+    def expression(self) -> Union[Entity[T], T]:
         """
         Return the entity expression corresponding to the match query.
         """
-        if not self.variable:
+        if self.variable is None:
             self.resolve()
         entity_ = entity(self.variable)
         if self.conditions:
             entity_ = entity_.where(*self.conditions)
-        return An(entity_)
+        return entity_
 
     def _resolve(
         self,

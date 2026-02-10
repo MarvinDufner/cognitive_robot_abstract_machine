@@ -140,6 +140,25 @@ class UsageError(DataclassException):
 
 
 @dataclass
+class TryingToBuildAnAlreadyBuiltQuery(UsageError):
+    """
+    Raised when trying to build an already built `QueryObjectDescriptor`.
+
+    Check how to write queries correctly in :doc:`/krrood/doc/eql/writing_queries`.
+    """
+    
+    query_descriptor: QueryObjectDescriptor
+    """
+    The query object descriptor that has already been built.
+    """
+    
+    def __post_init__(self):
+        self.message = f"{self.query_descriptor} was already built."
+        super().__post_init__()
+    
+
+
+@dataclass
 class UnsupportedExpressionTypeForDistinct(UsageError):
     """
     Raised when an expression type is not supported for distinct operation.
@@ -252,6 +271,10 @@ class NonAggregatedSelectedVariablesError(AggregationUsageError):
     For further details, see :doc:`/krrood/doc/eql/result_processors`.
     """
 
+    group_by_builder: GroupByBuilder
+    """
+    The builder class for the GroupBy operation.
+    """
     non_aggregated_variables: List[Selectable]
     """
     The non-aggregated selected variables.
@@ -265,7 +288,7 @@ class NonAggregatedSelectedVariablesError(AggregationUsageError):
         self.message = (
             f"The variabls {self.non_aggregated_variables} are neither aggregated nor grouped by, they cannot be selected"
             f" along with the aggregated variables {self.aggregated_variables}. You can only select variables that are"
-            f" either aggregated or are in the grouped by variables {self.descriptor._variables_to_group_by_}."
+            f" either aggregated or are in the grouped by variables {self.group_by_builder.variables_to_group_by}."
         )
         super().__post_init__()
 

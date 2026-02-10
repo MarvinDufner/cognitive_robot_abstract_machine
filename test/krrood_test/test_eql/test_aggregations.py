@@ -5,6 +5,7 @@ import pytest
 from typing_extensions import List
 
 import krrood.entity_query_language.entity_result_processors as eql
+from krrood.entity_query_language.predicate import length
 from ..dataset.example_classes import NamedNumbers
 from krrood.entity_query_language.entity import (
     variable,
@@ -163,7 +164,7 @@ def test_max_grouped_by(handles_and_containers_world):
         c = res[cabinet]
         d = res[max_drawer]
         assert d in c.drawers
-        assert d.handle.name == max(cd.handle.name for cd in c.drawers)
+        assert d.handle.name == max((cd for cd in c.drawers), key=lambda d: d.handle.name).handle.name
 
 
 def test_having_with_max(handles_and_containers_world):
@@ -212,7 +213,7 @@ def test_sum_grouped_by(handles_and_containers_world):
 
     query = a(
         set_of(
-            total_characters := eql.sum(drawer, key=lambda d: len(d.handle.name)),
+            total_characters := eql.sum(length(drawer.handle.name)),
             cabinet,
         ).grouped_by(cabinet)
     )
@@ -492,11 +493,10 @@ def test_having_node_hierarchy(departments_and_employees):
         set_of(department, avg_salary).grouped_by(department).having(avg_salary > 20000)
     )
 
-    descriptor = query._child_
     # Graph hierarchy check
-    assert isinstance(descriptor._child_, Having)
-    assert isinstance(descriptor._child_.group_by, GroupBy)
-    assert descriptor._child_.conditions._name_ == ">"
+    assert isinstance(query._child_, Having)
+    assert isinstance(query._child_.group_by, GroupBy)
+    assert query._child_.conditions._name_ == ">"
 
 
 def test_complex_having_success(departments_and_employees):

@@ -40,11 +40,7 @@ from .symbolic import (
     ResultQuantifier,
 )
 
-from .predicate import (
-    Predicate,
-    # type: ignore
-    Symbol,  # type: ignore
-)
+from .predicate import * # type: ignore
 
 from .entity_result_processors import *
 

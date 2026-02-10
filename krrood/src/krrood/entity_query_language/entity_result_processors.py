@@ -67,7 +67,7 @@ def max(
     :param distinct: Whether to only consider distinct values.
     :return: A Max object that can be evaluated to find the maximum value.
     """
-    return Max(variable, _key_func_=key, _default_value_=default, _distinct_=distinct)
+    return Max(variable, _key_function_=key, _default_value_=default, _distinct_=distinct)
 
 
 def min(
@@ -85,7 +85,7 @@ def min(
     :param distinct: Whether to only consider distinct values.
     :return: A Min object that can be evaluated to find the minimum value.
     """
-    return Min(variable, _key_func_=key, _default_value_=default, _distinct_=distinct)
+    return Min(variable, _key_function_=key, _default_value_=default, _distinct_=distinct)
 
 
 def sum(
@@ -103,7 +103,7 @@ def sum(
     :param distinct: Whether to only consider distinct values.
     :return: A Sum object that can be evaluated to find the sum of values.
     """
-    return Sum(variable, _key_func_=key, _default_value_=default, _distinct_=distinct)
+    return Sum(variable, _key_function_=key, _default_value_=default, _distinct_=distinct)
 
 
 def average(
@@ -122,7 +122,7 @@ def average(
     :return: A Sum object that can be evaluated to find the sum of values.
     """
     return Average(
-        variable, _key_func_=key, _default_value_=default, _distinct_=distinct
+        variable, _key_function_=key, _default_value_=default, _distinct_=distinct
     )
 
 

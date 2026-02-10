@@ -10,7 +10,7 @@ from typing_extensions import (
     Any,
     Type,
     Tuple,
-    ClassVar,
+    ClassVar, Iterable, Sized,
 )
 
 from .enums import PredicateType
@@ -134,6 +134,15 @@ class HasTypes(HasType):
     """
     A tuple containing Type objects that are associated with this instance.
     """
+
+
+@symbolic_function
+def length(iterable: Sized) -> int:
+    """
+    :param iterable: The iterable.
+    :return: The length of the iterable.
+    """
+    return len(iterable)
 
 
 def update_cache(instance: Symbol):
