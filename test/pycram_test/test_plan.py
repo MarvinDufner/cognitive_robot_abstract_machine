@@ -9,7 +9,7 @@ from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import TaskStatus
 from pycram.language import ParallelPlan, CodeNode
 from pycram.plan import PlanNode, Plan, ActionDescriptionNode, ActionNode, MotionNode
-from pycram.process_module import simulated_robot
+from pycram.motion_executor import simulated_robot
 from pycram.robot_plans import *
 from semantic_digital_twin.adapters.urdf import URDFParser
 from pycram.orm.ormatic_interface import *
@@ -786,7 +786,7 @@ def test_algebra_parallelplan(immutable_model_world):
         assert torso_var in sample
 
 
-def test_parameterize_movetorse_navigate(immutable_model_world):
+def test_parameterize_move_torse_navigate(immutable_model_world):
     """
     Test parameterization of a potential robot plan consisting of: MoveTorso - Navigate - MoveTorso.
 

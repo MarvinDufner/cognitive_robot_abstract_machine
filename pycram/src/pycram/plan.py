@@ -31,6 +31,7 @@ from giskardpy.motion_statechart.graph_node import Task
 from krrood.class_diagrams.failures import ClassIsUnMappedInClassDiagram
 from krrood.ormatic.dao import get_dao_class, to_dao
 from random_events.product_algebra import SimpleEvent
+from krrood.ormatic.utils import leaf_types
 from semantic_digital_twin.world_description.world_entity import Body
 from semantic_digital_twin.world_description.world_modification import (
     WorldModelModificationBlock,
@@ -44,9 +45,7 @@ from krrood.probabilistic_knowledge.parameterizer import (
 from .datastructures.dataclasses import ExecutionData, Context
 from .datastructures.enums import TaskStatus
 from .datastructures.pose import PoseStamped
-from .external_interfaces import giskard
 from .failures import PlanFailure
-from .has_parameters import leaf_types
 from .motion_executor import MotionExecutor
 
 if TYPE_CHECKING:
@@ -884,8 +883,7 @@ class PlanNode:
         """
         self.status = TaskStatus.INTERRUPTED
         logger.info(f"Interrupted node: {str(self)}")
-        if giskard.giskard_wrapper:
-            giskard.giskard_wrapper.interrupt()
+        # TODO: cancel giskard execution
 
     def resume(self):
         """
