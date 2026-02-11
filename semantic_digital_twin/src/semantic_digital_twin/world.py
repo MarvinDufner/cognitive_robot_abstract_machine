@@ -229,7 +229,6 @@ def atomic_world_modification(
             # Build a dict with all arguments (including positional), excluding 'self'
             bound_args = dict(bound.arguments)
             bound_args.pop("self", None)
-            print(current_world._id)
             if (
                 current_world.get_world_model_manager().current_model_modification_block
                 is None

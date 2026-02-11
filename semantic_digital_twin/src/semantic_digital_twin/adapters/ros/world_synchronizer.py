@@ -63,11 +63,6 @@ class Synchronizer(ABC):
     The type of the message that is sent and received.
     """
 
-    _id: UUID = field(default_factory=uuid.uuid4, init=False)
-    """
-    The id of this synchronizer. This is used to identify messages that were published by the same synchronizer.
-    """
-
     def __post_init__(self):
         self.publisher = self.node.create_publisher(
             std_msgs.msg.String, topic=self.topic_name, qos_profile=10
@@ -97,7 +92,7 @@ class Synchronizer(ABC):
         tracker = WorldEntityWithIDKwargsTracker.from_world(self.world)
         json_msg = json.loads(msg.data)
         world_id = from_json(json_msg["meta_data"]["world_id"])
-        if world_id == self._id:
+        if world_id == self.world._id:
             return
         msg = self.message_type.from_json(
             json.loads(msg.data), **tracker.create_kwargs()
@@ -151,7 +146,7 @@ class SynchronizerOnCallback(Synchronizer, Callback, ABC):
         if origin_world_id == self.world._id:
             return
 
-        self.world_callback()
+        self.world_callback(origin_world_id)
 
     def _subscription_callback(self, msg):
         if self._is_paused:
@@ -167,7 +162,7 @@ class SynchronizerOnCallback(Synchronizer, Callback, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def world_callback(self):
+    def world_callback(self, origin_world_id: Optional[UUID] = None):
         """
         Called when the world notifies and update that is not caused by this synchronizer.
         """
@@ -177,7 +172,7 @@ class SynchronizerOnCallback(Synchronizer, Callback, ABC):
         """
         Applies the missed messages to the world.
         """
-        with self.world.modify_world():
+        with self.world.modify_world(self.world._id):
             for msg in self.missed_messages:
                 self.apply_message(msg)
 
@@ -212,10 +207,13 @@ class StateSynchronizer(StateChangeCallback, SynchronizerOnCallback):
             self.update_previous_world_state()
             self.world.notify_state_change()
 
-    def world_callback(self):
+    def world_callback(self, origin_world_id: Optional[UUID] = None):
         """
         Publish the current world state to the ROS topic.
         """
+        if origin_world_id == self.world._id:
+            return
+
         changes = self.compute_state_changes()
 
         if not changes:
@@ -278,12 +276,17 @@ class ModelSynchronizer(
         ]
         for callback in running_callbacks:
             callback.pause()
-        with self.world.modify_world(msg.meta_data.world_id):
+
+        with self.world.modify_world(self.world._id):
             msg.modifications.apply(self.world)
         for callback in running_callbacks:
             callback.resume()
 
-    def world_callback(self):
+    def world_callback(self, origin_world_id: Optional[UUID] = None):
+
+        if origin_world_id == self.world._id:
+            return
+
         msg = ModificationBlock(
             meta_data=self.meta_data,
             modifications=self.world.get_world_model_manager().model_modification_blocks[

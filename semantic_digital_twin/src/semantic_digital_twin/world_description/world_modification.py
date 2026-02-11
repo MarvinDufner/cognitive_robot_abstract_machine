@@ -434,10 +434,8 @@ class WorldModelModificationBlock(SubclassJSONSerializer):
     """
 
     def apply(self, world: World):
-        ...
-        with world.modify_world():
-            for modification in self.modifications:
-                modification.apply(world)
+        for modification in self.modifications:
+            modification.apply(world)
 
     def to_json(self):
         return {
