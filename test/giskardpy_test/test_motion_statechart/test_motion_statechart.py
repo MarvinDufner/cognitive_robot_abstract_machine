@@ -1352,6 +1352,74 @@ class TestCartesianTasks:
         expected = np.eye(4)
         assert np.allclose(fk, expected, atol=cart_goal2.threshold)
 
+    def test_cart_pose_with_external_reference_frame(self, pr2_world_state_reset: World):
+        """
+        Test CartesianPose where goal is defined relative to a fixed external frame.
+
+        This catches the bug where rotation is extracted before transformation,
+        because the reference frame has a non-trivial orientation that affects
+        how the goal rotation should be composed.
+        """
+        # Create a marker body in the world at a known pose
+        with pr2_world_state_reset.modify_world():
+            marker = Body(
+                name=PrefixedName("marker"),
+                collision=ShapeCollection([Box(scale=Scale(0.1, 0.1, 0.1))]),
+            )
+            # Place marker at x=1.5m, rotated 90° around Z
+            connection = FixedConnection(
+                parent=pr2_world_state_reset.root,
+                child=marker,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=1.5, yaw=np.pi / 2, reference_frame=pr2_world_state_reset.root
+                ),
+            )
+            pr2_world_state_reset.add_connection(connection)
+
+        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "base_footprint"
+        )
+        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
+            "odom_combined"
+        )
+
+        # Define goal: 0.3m forward in X, rotated 90° around Z,
+        # RELATIVE TO THE MARKER (which itself is rotated)
+        # In world frame, this should end up at a specific combined orientation
+        goal_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=0.3,
+            yaw=np.pi / 2,
+            reference_frame=marker  # Key: reference is external fixed frame, not tip
+        )
+
+        msc = MotionStatechart()
+        cart_goal = CartesianPose(
+            root_link=root,
+            tip_link=tip,
+            goal_pose=goal_pose,
+        )
+        msc.add_node(cart_goal)
+        msc.add_node(EndMotion.when_true(cart_goal))
+
+        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+
+        # Verify the final pose matches the expected transformed goal
+        fk = pr2_world_state_reset.compute_forward_kinematics_np(root, tip)
+
+        # Manually compute expected pose: marker_pose @ goal_pose
+        marker_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=1.5, yaw=np.pi / 2, reference_frame=root
+        )
+        expected = (marker_pose @ goal_pose).to_np()
+
+        # Both position and orientation should match
+        assert np.allclose(fk[:3, 3], expected[:3, 3], atol=cart_goal.threshold), \
+            f"Position mismatch: {fk[:3, 3]} vs {expected[:3, 3]}"
+        assert np.allclose(fk[:3, :3], expected[:3, :3], atol=cart_goal.threshold), \
+            f"Orientation mismatch"
+
     def test_CartesianOrientation(self, pr2_world_state_reset: World):
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "base_footprint"
