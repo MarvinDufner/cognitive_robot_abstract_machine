@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -24,7 +25,6 @@ from .failures import (
     NoKwargsInMatchVar,
 )
 from .predicate import HasType
-from .rxnode import RWXNode
 from .symbolic import (
     CanBehaveLikeAVariable,
     Attribute,
@@ -32,7 +32,8 @@ from .symbolic import (
     Literal,
     An,
     Flatten,
-    DomainType, Entity,
+    DomainType,
+    Entity,
 )
 from .utils import T
 
@@ -62,19 +63,14 @@ class AbstractMatchExpression(Generic[T], ABC):
     """
     The parent match if this is a nested match.
     """
-    node: Optional[RWXNode] = field(init=False, default=None)
-    """
-    The RWXNode representing the match expression in the match query graph.
-    """
     resolved: bool = field(init=False, default=False)
     """
     Whether the match is resolved or not.
     """
-
-    def __post_init__(self):
-        self.node = RWXNode(self.name, data=self)
-        if self.parent:
-            self.node.parent = self.parent.node
+    id: int = field(init=False, default_factory=lambda: uuid.uuid4().int)
+    """
+    The unique identifier of the match expression.
+    """
 
     @cached_property
     @abstractmethod
@@ -109,10 +105,6 @@ class AbstractMatchExpression(Generic[T], ABC):
     @abstractmethod
     def name(self) -> str: ...
 
-    @property
-    def id(self):
-        return self.node.id
-
     @cached_property
     def type(self) -> Optional[Type[T]]:
         """
@@ -129,7 +121,10 @@ class AbstractMatchExpression(Generic[T], ABC):
         """
         :return: The root match expression.
         """
-        return self.node.root.data
+        parent = self
+        while parent.parent is not None:
+            parent = parent.parent
+        return parent
 
     def __eq__(self, other):
         return hash(self) == hash(other)
