@@ -113,6 +113,19 @@ class OperationResult:
     """
     The operand that produced the result.
     """
+    previous_bindings: Optional[Bindings] = None
+    """
+    The bindings of the previous operation that was evaluated before this one.
+    """
+
+    @cached_property
+    def all_bindings(self) -> Bindings:
+        """
+        :return: All the bindings from all the evaluated operations until this one, including this one.
+        """
+        if self.previous_bindings is None or self.previous_bindings is self.bindings:
+            return self.bindings
+        return self.previous_bindings | self.bindings
 
     @cached_property
     def has_value(self) -> bool:
@@ -306,15 +319,6 @@ class SymbolicExpression(ABC):
             v._parent_ = self
         return tuple(children.values())
 
-    def _on_parent_update_(self, parent: SymbolicExpression) -> None:
-        """
-        This method is called when the parent is updated. Subclasses should implement this method if they have logic
-        to be done when a parent is updated.
-
-        :param parent: The new parent expression.
-        """
-        pass
-
     def _process_result_(self, result: OperationResult) -> Any:
         """
         Map the result to the correct output data structure for user usage. It defaults to returning the bindings
@@ -437,7 +441,6 @@ class SymbolicExpression(ABC):
 
         if value is not None and value._id_ not in [v._id_ for v in self._parents_]:
             self._parents_.append(value)
-            self._on_parent_update_(value)
 
         if value is not None and self._id_ not in [v._id_ for v in value._children_]:
             value._children_.append(self)
@@ -799,7 +802,7 @@ class Having(Filter, BinaryExpression):
     ) -> Iterable[OperationResult]:
         yield from (
             OperationResult(
-                annotated_result.bindings,
+                grouping_result.bindings | annotated_result.bindings,
                 self._is_false_,
                 self,
             )
@@ -859,9 +862,10 @@ class OrderedBy(BinaryExpression, DerivedExpression):
         """
         var = self.variable
         var_id = var._binding_id_
-        if var_id not in result:
-            result[var_id] = next(var._evaluate_(result.bindings, self)).value
-        variable_value = result.bindings[var_id]
+        if var_id not in result.all_bindings:
+            variable_value = next(var._evaluate_(result.all_bindings, self)).value
+        else:
+            variable_value = result.all_bindings[var_id]
         if self.key:
             return self.key(variable_value)
         else:
@@ -1298,7 +1302,7 @@ class ResultQuantifier(UnaryExpression, DerivedExpression, ABC):
     ) -> Iterable[T]:
 
         result_count = 0
-        values = self._child_._evaluate_(sources, parent=self)
+        values = self._child_._evaluate_(parent=self)
         for value in values:
             result_count += 1
             self._assert_satisfaction_of_quantification_constraints_(
@@ -1811,6 +1815,10 @@ class QuantifierBuilder(ExpressionBuilder):
     """
     The quantification constraint that must be satisfied by the result quantifier if present.
     """
+    child: Optional[SymbolicExpression] = None
+    """
+    The child expression of the quantifier.
+    """
 
     @cached_property
     def expression(self) -> ResultQuantifier:
@@ -1819,7 +1827,7 @@ class QuantifierBuilder(ExpressionBuilder):
         """
         if self.type is An:
             return self.type(
-                self.query_descriptor._expression_,
+                self.child,
                 _quantification_constraint_=self.quantification_constraint,
             )
         else:
@@ -1840,12 +1848,14 @@ class OrderedByBuilder(ExpressionBuilder):
     """
     A function to extract the key from the variable value.
     """
+    data_source: Optional[SymbolicExpression] = None
+    """
+    The data source that generates the results to be ordered.
+    """
 
     @cached_property
     def expression(self) -> SymbolicExpression:
-        return OrderedBy(
-            self.query_descriptor, self.variable, self.descending, self.key
-        )
+        return OrderedBy(self.data_source, self.variable, self.descending, self.key)
 
 
 @dataclass(eq=False, repr=False)
@@ -1903,6 +1913,10 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
     Whether the query object descriptor has built the query (wired the query operations) or not. If built already, it
     cannot be modified further and an error will be raised if a user tries to modify the query object descriptor.
     """
+    _expression_: SymbolicExpression = field(init=False)
+    """
+    The expression representing the query, built by wiring the operations together.
+    """
 
     def __post_init__(self):
         super().__post_init__()
@@ -1910,6 +1924,7 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
             if isinstance(var, QueryObjectDescriptor):
                 var.build()
         self._quantifier_builder_ = QuantifierBuilder(self)
+        self._expression_ = self
 
     @staticmethod
     def modifies_query_structure(method):
@@ -1939,7 +1954,8 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         Wrap the query object descriptor in a ResultQuantifier expression and evaluate it,
          returning an iterator over the results.
         """
-        return self._quantifier_builder_.expression.evaluate(limit=limit)
+        self.build()
+        return self._expression_.evaluate(limit=limit)
 
     @modifies_query_structure
     def where(self, *conditions: ConditionType) -> Self:
@@ -1989,8 +2005,6 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         self._ordered_by_builder_ = OrderedByBuilder(
             self, variable, descending=descending, key=key
         )
-        # build ordered by expression; this is fine outside the build() as ordered by is the last operation.
-        _ = self._ordered_by_builder_.expression
         return self
 
     def distinct(
@@ -2045,12 +2059,6 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         self.build()
         super().__enter__()
 
-    def _on_parent_update_(self, parent: SymbolicExpression) -> None:
-        """
-        A parent update means this query object descriptor is complete and should be built.
-        """
-        self.build()
-
     def build(self) -> Self:
         """
         Build the query object descriptor by wiring the nodes together in the correct order of evaluation.
@@ -2078,23 +2086,14 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
 
         self._child_.update_children(*children)
 
-        return self
-
-    @property
-    def _expression_(self) -> SymbolicExpression:
-        """
-        The expression representing the query (without quantification), built by wiring the operations together.
-        """
-        self.build()
         if self._ordered_by_builder_ is not None:
-            return self._ordered_by_builder_.expression
-        return self
+            self._ordered_by_builder_.data_source = self._expression_
+            self._expression_ = self._ordered_by_builder_.expression
 
-    @property
-    def _ordered_by_expression_(self) -> Optional[OrderedByBuilder]:
-        return (
-            self._ordered_by_builder_.expression if self._ordered_by_builder_ else None
-        )
+        self._quantifier_builder_.child = self._expression_
+        self._expression_ = self._quantifier_builder_.expression
+
+        return self
 
     def _evaluate__(
         self,
@@ -2105,19 +2104,8 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         and selecting variables.
         """
 
-        if all(var._binding_id_ in sources for var in self._selected_variables_):
-            yield OperationResult(sources, False, self)
-            return
-
         yield from (
-            OperationResult(
-                {
-                    v._binding_id_: result[v._binding_id_]
-                    for v in self._selected_variables_
-                },
-                self._is_false_,
-                self,
-            )
+            self._get_operation_result_(result)
             for result in self._apply_results_mapping_(
                 self._child_._evaluate_(sources, parent=self)
             )
@@ -2125,6 +2113,21 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
 
         if self._seen_results is not None:
             self._seen_results.clear()
+
+    def _get_operation_result_(self, child_result: OperationResult) -> OperationResult:
+        """
+        :param child_result: The child result to construct the operation result from.
+        :return: The operation result.
+        """
+        return OperationResult(
+            {
+                v._binding_id_: child_result[v._binding_id_]
+                for v in self._selected_variables_
+            },
+            self._is_false_,
+            self,
+            child_result.bindings,
+        )
 
     @property
     def _where_expression_(self) -> Optional[Where]:
@@ -2232,6 +2235,17 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
             results = result_mapping(results)
         return results
 
+    @UnaryExpression._parent_.setter
+    def _parent_(self, parent: SymbolicExpression):
+        """
+        Make sure to set the parent of the built expression of the query instead of the query object descriptor itself.
+        """
+        self.build()
+        if self._expression_ is not self:
+            self._expression_._parent_ = parent
+        else:
+            UnaryExpression._parent_.__set__(self, parent)
+
     def _invert_(self):
         raise UnsupportedNegation(self.__class__)
 
@@ -2310,8 +2324,18 @@ class Entity(QueryObjectDescriptor, CanBehaveLikeAVariable[T]):
     """
 
     def __post_init__(self):
-        self._var_ = self.selected_variable
+        self._var_ = self
         super().__post_init__()
+
+    def _get_operation_result_(self, child_result: OperationResult) -> OperationResult:
+        """
+        Update the result bindings with this operation's bindings.
+        """
+        operation_result = super()._get_operation_result_(child_result)
+        operation_result.bindings = {
+            self._binding_id_: operation_result[self.selected_variable._binding_id_]
+        }
+        return operation_result
 
     @property
     def selected_variable(self):

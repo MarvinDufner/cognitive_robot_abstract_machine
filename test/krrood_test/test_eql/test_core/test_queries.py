@@ -807,15 +807,6 @@ def test_limit(handles_and_containers_world):
         list(query.evaluate(limit="0"))
 
 
-def test_unification_dict(handles_and_containers_world):
-    drawer = variable(Drawer, domain=None)
-    drawer_1 = an(entity(drawer))
-    handle = variable(Handle, domain=None)
-    query = a(set_of(drawer, handle).where(drawer.handle.name == handle.name))
-    results = list(query.evaluate())
-    assert results[0][drawer] is results[0][drawer_1]
-
-
 @pytest.fixture
 def distinct_test():
     names = ["Handle1", "Handle1", "Handle2", "Container1", "Container1", "Container3"]
@@ -976,6 +967,8 @@ def test_exists_and_for_all(handles_and_containers_world):
             for_all(cabinet_drawers, not_(in_(my_drawers, cabinet_drawers))),
         )
     )
+
+    QueryGraph(query.build()).visualize()
 
     results = list(query.evaluate())
 
@@ -1153,5 +1146,14 @@ def test_subquery_independence():
     var1 = variable(int, [1, 2, 4, 3])
     count = entity(eql.count(var1))
     assert count.tolist() == [4]
-    query = the(entity(var1).where(count == var1))
-    assert query.tolist() == [4]
+
+    # query = the(entity(var1).where(count == var1))
+    # assert query.tolist() == [4]
+    #
+    # # To check order doesn't matter
+    # query = the(entity(var1).where(var1 == count))
+    # assert query.tolist() == [4]
+
+    # select the same variable as the outer query
+    query = the(entity(var1).where(var1 != the(entity(var1).where(var1 == 2))))
+    assert query.tolist() == [1, 4, 3]

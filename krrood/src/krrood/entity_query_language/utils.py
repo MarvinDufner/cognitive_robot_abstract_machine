@@ -40,7 +40,7 @@ from typing_extensions import (
 )
 
 if TYPE_CHECKING:
-    from .symbolic import Bindings, SymbolicExpression
+    from .symbolic import Bindings, SymbolicExpression, OperationResult
 
 
 class IDGenerator:
@@ -123,9 +123,9 @@ def chain_evaluate_variables(
     var_val_gen = [
         (
             lambda bindings, var=var: (
-                v.bindings
-                for v in var._evaluate_(copy(bindings), parent=parent)
-                if v.is_true
+                result.bindings
+                for result in var._evaluate_(copy(bindings), parent=parent)
+                if result.is_true
             )
         )
         for var in variables
@@ -148,7 +148,7 @@ def chain_stages(
     by applying each stage in sequence to the current binding.
 
     :param stages: A list of stages where each stage is a callable that accepts
-        a Binding and produces an iterator of bindings.
+        a Binding and produces an iterator of Bindings.
     :param initial: The initial binding to start the computation with.
 
     :return: An iterator over the bindings resulting from applying all
