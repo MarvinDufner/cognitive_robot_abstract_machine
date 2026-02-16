@@ -34,6 +34,8 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Table,
     Cup,
     Cabinet,
+    Milk,
+    Cereal,
 )
 from semantic_digital_twin.spatial_types import (
     Vector3,
@@ -540,14 +542,95 @@ class TestFactories(unittest.TestCase):
             world.add_body(root)
         with world.modify_world():
             table = Table.create_with_new_body_in_world(
-                name=PrefixedName("table"), world=world
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
             )
-        table_scale = Scale(1.0, 1.0, 0.1)
-        table.root.collision = BoundingBoxCollection.from_event(
-            table.root, table_scale.to_simple_event().as_composite_set()
-        ).as_shapes()
 
         points = table.points_on_supporting_surface(amount=10)
+        self.assertEqual(len(points), 10)
+        for p in points:
+            self.assertEqual(p.reference_frame, table.root)
+            self.assertAlmostEqual(float(p.z), 0.05 + 0.01)
+
+    def test_points_on_surface_with_object_on_table(self):
+        world = World()
+        root = Body(name=PrefixedName("root"))
+        with world.modify_world():
+            world.add_body(root)
+        with world.modify_world():
+            milk = Milk.create_with_new_body_in_world(
+                name=PrefixedName("milk"), world=world, scale=Scale(0.03, 0.03, 0.1)
+            )
+            table = Table.create_with_new_body_in_world(
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
+            )
+            table.add_object(milk)
+
+        points = table.points_on_supporting_surface(amount=10)
+        self.assertEqual(len(points), 10)
+        for p in points:
+            self.assertEqual(p.reference_frame, table.root)
+            self.assertAlmostEqual(float(p.z), 0.05 + 0.01)
+
+    def test_points_on_surface_for_object_with_object_on_table(self):
+        world = World()
+        root = Body(name=PrefixedName("root"))
+        with world.modify_world():
+            world.add_body(root)
+        with world.modify_world():
+            milk = Milk.create_with_new_body_in_world(
+                name=PrefixedName("milk"), world=world, scale=Scale(0.03, 0.03, 0.1)
+            )
+            table = Table.create_with_new_body_in_world(
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
+            )
+            table.add_object(milk)
+
+            cereal_to_place = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal_to_place"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+            )
+
+        points = table.points_on_supporting_surface_for_object(
+            cereal_to_place, amount=10
+        )
+        self.assertEqual(len(points), 10)
+        for p in points:
+            self.assertEqual(p.reference_frame, table.root)
+            self.assertAlmostEqual(float(p.z), 0.05 + 0.01)
+
+    def test_points_on_surface_for_object_around_object_with_object_on_table(self):
+        world = World()
+        root = Body(name=PrefixedName("root"))
+        with world.modify_world():
+            world.add_body(root)
+        with world.modify_world():
+            milk = Milk.create_with_new_body_in_world(
+                name=PrefixedName("milk"),
+                world=world,
+                scale=Scale(0.03, 0.03, 0.1),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=0.5),
+            )
+            cereal = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=-0.5),
+            )
+            table = Table.create_with_new_body_in_world(
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
+            )
+            table.add_object(milk)
+
+            cereal_to_place = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal_to_place"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+            )
+
+        points = table.points_on_supporting_surface_for_object_around_object(
+            cereal_to_place, cereal, amount=10
+        )
         self.assertEqual(len(points), 10)
         for p in points:
             self.assertEqual(p.reference_frame, table.root)

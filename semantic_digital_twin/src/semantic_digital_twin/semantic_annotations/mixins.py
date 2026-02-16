@@ -673,13 +673,24 @@ class HasSupportingSurface(HasStorageSpace, ABC):
 
     def points_on_supporting_surface(self, amount: int = 100) -> List[Point3]:
         """
-        Get points that are on the surface.
+        Get a set of points on the supporting surface of the semantic annotation.
+        If there are any objects stored in the semantic annotation, their geometry is subtracted from the area that is sampled.
 
-        :param amount: The number of points to return.
-        :return: A list of points that are on the surface.
+        :param amount: The number of points to sample.
+
+        :return: A list of sampled points.
         """
         area_of_table = BoundingBoxCollection.from_shapes(self.root.collision)
         event = area_of_table.event
+
+        event_2d = event.marginal(SpatialVariables.xy)
+        for object in self.objects:
+            object_event = BoundingBoxCollection.from_shapes(
+                object.root.collision
+            ).event
+            object_event_2d = object_event.marginal(SpatialVariables.xy)
+            event_2d = event_2d - object_event_2d
+
         p = uniform_measure_of_event(event)
         p = p.marginal(SpatialVariables.xy)
         samples = p.sample(amount)
@@ -687,6 +698,101 @@ class HasSupportingSurface(HasStorageSpace, ABC):
             (amount, 1), max([b.max_z for b in area_of_table]) + 0.01
         )
         samples = np.concatenate((samples, z_coordinate), axis=1)
+        return [Point3(*s, reference_frame=self.root) for s in samples]
+
+    def points_on_supporting_surface_for_object(
+        self, physical_object: HasRootBody, amount: int = 100
+    ) -> List[Point3]:
+        """
+        Get a set of points on the supporting surface of the semantic annotation.
+        The largest x or y dimension value of the object is used to enlarge the area of the objects stored in
+        the semantic annotation, whose geometry is subtracted from the area that is sampled. This is to ensure the physical object
+        does not collide with any of the objects stored in the semantic annotation when placed on one of the sampled points.
+
+        :param physical_object: The physical object to sample points for.
+        :param amount: The number of points to sample.
+
+        :return: A list of sampled points.
+        """
+
+        largest_xy_dimension = physical_object.root.combined_mesh.extents[:2].max()
+
+        area_of_table = BoundingBoxCollection.from_shapes(self.root.collision)
+        event = area_of_table.event
+
+        event_2d = event.marginal(SpatialVariables.xy)
+        for object in self.objects:
+            object_event = (
+                BoundingBoxCollection.from_shapes(object.root.collision)
+                .bounding_box()
+                .enlarge_all(largest_xy_dimension)
+                .simple_event.as_composite_set()
+            )
+            object_event_2d = object_event.marginal(SpatialVariables.xy)
+            event_2d = event_2d - object_event_2d
+
+        p = uniform_measure_of_event(event)
+        p = p.marginal(SpatialVariables.xy)
+        samples = p.sample(amount)
+        z_coordinate = np.full(
+            (amount, 1), max([b.max_z for b in area_of_table]) + 0.01
+        )
+        samples = np.concatenate((samples, z_coordinate), axis=1)
+        return [Point3(*s, reference_frame=self.root) for s in samples]
+
+    def points_on_supporting_surface_for_object_around_object(
+        self,
+        physical_object: HasRootBody,
+        around_object: HasRootBody,
+        amount: int = 100,
+    ) -> List[Point3]:
+        """
+        Get a set of points on the supporting surface of the semantic annotation.
+        The largest x or y dimension value of the object is used to enlarge the area of the objects stored in
+        the semantic annotation, whose geometry is subtracted from the area that is sampled. This is to ensure the physical object
+        does not collide with any of the objects stored in the semantic annotation when placed on one of the sampled points.
+        Before returning the sampled points, they are sorted by the distance to the around_object, with the closest points first.
+
+        :param physical_object: The physical object to sample points for.
+        :param around_object: The object to place the sampled points around.
+        :param amount: The number of points to sample.
+
+        :return: A list of sampled points, sorted by distance to the around_object.
+        """
+
+        largest_xy_dimension = physical_object.root.combined_mesh.extents[:2].max()
+
+        area_of_table = BoundingBoxCollection.from_shapes(self.root.collision)
+        event = area_of_table.event
+
+        event_2d = event.marginal(SpatialVariables.xy)
+        for object in self.objects:
+            object_event = (
+                BoundingBoxCollection.from_shapes(object.root.collision)
+                .bounding_box()
+                .enlarge_all(largest_xy_dimension)
+                .simple_event.as_composite_set()
+            )
+            object_event_2d = object_event.marginal(SpatialVariables.xy)
+            event_2d = event_2d - object_event_2d
+
+        p = uniform_measure_of_event(event)
+        p = p.marginal(SpatialVariables.xy)
+        samples = p.sample(amount)
+
+        def distance_to_object(sample, around_object):
+            return np.linalg.norm(
+                sample[:2]
+                - around_object.root.parent_connection.origin.to_position()[:2]
+            )
+
+        samples = sorted(samples, key=lambda s: distance_to_object(s, around_object))
+
+        z_coordinate = np.full(
+            (amount, 1), max([b.max_z for b in area_of_table]) + 0.01
+        )
+        samples = np.concatenate((samples, z_coordinate), axis=1)
+
         return [Point3(*s, reference_frame=self.root) for s in samples]
 
 
