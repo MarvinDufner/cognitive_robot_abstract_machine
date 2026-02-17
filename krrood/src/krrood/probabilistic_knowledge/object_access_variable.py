@@ -5,6 +5,8 @@ from typing_extensions import List
 
 from random_events.variable import Variable
 
+from ..entity_query_language.symbolic import Index, Attribute
+
 
 @dataclass
 class ObjectAccessVariable:
@@ -17,10 +19,22 @@ class ObjectAccessVariable:
     The random events variable used to represent the object field.
     """
 
-    access_path: List[str | int]
+    attribute: Index | Attribute
     """
     The list of access paths used to access the object field.
     """
+
+    @property
+    def access_path(self) -> List[Index | Attribute]:
+        """
+        :return: The access path of the variable as a list of operations.
+        """
+        current = self.attribute
+        result = [current]
+        while current._child_ is not None:
+            current = current._child_
+            result.append(current)
+        return result[:-1][::-1]
 
     def set_value(self, obj: Any, value: Any):
         """
@@ -29,16 +43,12 @@ class ObjectAccessVariable:
         :param obj: The object to be updated.
         :param value: The value to set.
         """
-        current = obj
-        for access_value in self.access_path[:-1]:
-            if isinstance(access_value, int):
-                current = current[access_value]
-            elif isinstance(access_value, str):
-                current = getattr(current, access_value)
-            else:
-                assert_never(access_value)
 
-        if isinstance(self.access_path[-1], int):
-            current[self.access_path[-1]] = value
-        elif isinstance(self.access_path[-1], str):
-            setattr(current, self.access_path[-1], value)
+        current = obj
+        for domain_mapping in self.access_path[:-1]:
+            current = next(domain_mapping._apply_mapping_(current))
+
+        if isinstance(self.attribute, Index):
+            current[self.attribute._key_] = value
+        elif isinstance(self.attribute, Attribute):
+            setattr(current, self.attribute._attribute_name_, value)

@@ -884,6 +884,7 @@ def test_parameterize_pickup_navigate_place(immutable_model_world):
         NavigateActionDescription(None),
         PlaceActionDescription(None, None, None),
     )
+
     parameterization = plan.parameterize()
     variables = {v.name: v for v in parameterization.variables}
 
