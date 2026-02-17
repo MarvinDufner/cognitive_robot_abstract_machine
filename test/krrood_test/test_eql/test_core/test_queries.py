@@ -45,8 +45,8 @@ from krrood.entity_query_language.result_quantification_constraint import (
     Range,
 )
 from krrood.entity_query_language.query_graph import QueryGraph
-from krrood.entity_query_language.symbolic import Product, Union
-from krrood.entity_query_language.utils import cartesian_product_evaluation_of_expressions_while_passing_the_bindings_around
+from krrood.entity_query_language.symbolic import Union
+from krrood.entity_query_language.utils import cartesian_product_while_passing_the_bindings_around
 from ...dataset.example_classes import VectorsWithProperty
 from ...dataset.semantic_world_like_classes import (
     Handle,
@@ -1132,10 +1132,9 @@ def test_chain_evaluate_variables():
     var1 = variable(int, [1, 2])
     var2 = variable(int, [3, 4])
     values = []
-    for val in cartesian_product_evaluation_of_expressions_while_passing_the_bindings_around((var1, var2), {}):
-        values.append(tuple(val.values()))
+    for val in cartesian_product_while_passing_the_bindings_around((var1, var2), {}):
+        values.append(tuple(val.bindings.values()))
     assert values == [(1, 3), (1, 4), (2, 3), (2, 4)]
-    assert values == [(v[var1], v[var2]) for v in Product((var1, var2)).evaluate()]
 
 
 def test_subquery_independence():

@@ -9,7 +9,6 @@ from .conclusion import Conclusion
 from .conclusion_selector import ConclusionSelector
 from .symbolic import (
     ResultQuantifier,
-    Product,
     QueryObjectDescriptor,
     SymbolicExpression,
     Filter,
@@ -140,12 +139,10 @@ class QueryGraph:
         parent_expression = parent_node.data
         for child in parent_expression._children_:
             child_node = self.construct_graph(child)
-            if isinstance(parent_expression, Product) and isinstance(
-                parent_expression._parents_[0], QueryObjectDescriptor
-            ):
+            if isinstance(parent_expression, QueryObjectDescriptor):
                 if child._binding_id_ in [
                     v._binding_id_
-                    for v in parent_expression._parents_[0]._selected_variables_
+                    for v in parent_expression._selected_variables_
                 ]:
                     child_node.enclosed = True
             child_node.parent = parent_node
@@ -162,7 +159,7 @@ class ColorLegend(RXUtilsColorLegend):
         name = expression.__class__.__name__
         color = "white"
         match expression:
-            case Product() | Filter() | OrderedBy() | GroupedBy():
+            case Filter() | OrderedBy() | GroupedBy():
                 color = "#17becf"
             case Aggregator():
                 name = "Aggregator"

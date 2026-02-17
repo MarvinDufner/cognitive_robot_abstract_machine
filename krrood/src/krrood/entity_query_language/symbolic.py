@@ -75,7 +75,7 @@ from .utils import (
     merge_args_and_kwargs,
     convert_args_and_kwargs_into_a_hashable_key,
     ensure_hashable,
-    cartesian_product_evaluation_of_expressions_while_passing_the_bindings_around,
+    cartesian_product_while_passing_the_bindings_around,
 )
 from ..class_diagrams.class_diagram import WrappedClass
 from ..class_diagrams.failures import ClassIsUnMappedInClassDiagram
@@ -125,8 +125,8 @@ class OperationResult:
         :return: All the bindings from all the evaluated operations until this one, including this one.
         """
         if (
-            self.previous_operation_result is None
-            or self.previous_operation_result.bindings is self.bindings
+                self.previous_operation_result is None
+                or self.previous_operation_result.bindings is self.bindings
         ):
             return self.bindings
         return self.previous_operation_result.bindings | self.bindings
@@ -157,8 +157,11 @@ class OperationResult:
     def __setitem__(self, key, value):
         self.bindings[key] = value
 
-    def update(self, other: Bindings):
-        self.bindings.update(other)
+    def update(self, other: Bindings | OperationResult):
+        if isinstance(other, OperationResult):
+            self.bindings.update(other.bindings)
+        else:
+            self.bindings.update(other)
         return self
 
     def __hash__(self):
@@ -166,10 +169,10 @@ class OperationResult:
 
     def __eq__(self, other):
         return (
-            self.bindings == other.bindings
-            and self.is_true == other.is_true
-            and self.operand == other.operand
-            and self.previous_operation_result == other.previous_operation_result
+                self.bindings == other.bindings
+                and self.is_true == other.is_true
+                and self.operand == other.operand
+                and self.previous_operation_result == other.previous_operation_result
         )
 
 
@@ -263,8 +266,8 @@ class SymbolicExpression(ABC):
         return next(self.evaluate())
 
     def evaluate(
-        self,
-        limit: Optional[int] = None,
+            self,
+            limit: Optional[int] = None,
     ) -> Iterator[TypingUnion[T, Dict[TypingUnion[T, SymbolicExpression], T]]]:
         """
         Evaluate the query and map the results to the correct output data structure.
@@ -287,7 +290,7 @@ class SymbolicExpression(ABC):
                     return
 
     def _replace_child_(
-        self, old_child: SymbolicExpression, new_child: SymbolicExpression
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
     ):
         """
         Replace a child expression with a new child expression.
@@ -304,7 +307,7 @@ class SymbolicExpression(ABC):
 
     @abstractmethod
     def _replace_child_field_(
-        self, old_child: SymbolicExpression, new_child: SymbolicExpression
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
     ):
         """
         Replace a child field with a new child expression.
@@ -320,7 +323,7 @@ class SymbolicExpression(ABC):
             self._parent_ = None
 
     def _update_children_(
-        self, *children: SymbolicExpression
+            self, *children: SymbolicExpression
     ) -> Tuple[SymbolicExpression, ...]:
         """
         Update multiple children expressions of this symbolic expression.
@@ -350,9 +353,9 @@ class SymbolicExpression(ABC):
         )
 
     def _evaluate_(
-        self,
-        sources: Optional[Dict[int, Any]] = None,
-        parent: Optional[SymbolicExpression] = None,
+            self,
+            sources: Optional[Bindings | OperationResult] = None,
+            parent: Optional[SymbolicExpression] = None,
     ):
         """
         Wrapper for ``SymbolicExpression._evaluate__*`` methods that automatically
@@ -372,7 +375,9 @@ class SymbolicExpression(ABC):
         previous_parent = self._eval_parent_
         self._eval_parent_ = parent
         try:
-            sources = sources or {}
+            if isinstance(sources, OperationResult):
+                sources = sources.bindings
+            sources = copy(sources) if sources is not None else {}
             if self._binding_id_ in sources:
                 yield OperationResult(sources, self._is_false_, self)
             else:
@@ -384,7 +389,7 @@ class SymbolicExpression(ABC):
             self._eval_parent_ = previous_parent
 
     def _evaluate_conclusions_and_update_bindings_(
-        self, current_result: OperationResult
+            self, current_result: OperationResult
     ) -> OperationResult:
         """
         Update the bindings of the results by evaluating the conclusions using the received bindings.
@@ -414,8 +419,8 @@ class SymbolicExpression(ABC):
 
     @abstractmethod
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterator[OperationResult]:
         """
         Evaluate the symbolic expression and set the operands indices.
@@ -621,7 +626,7 @@ class UnaryExpression(SymbolicExpression, ABC):
         self._child_ = self._update_children_(self._child_)[0]
 
     def _replace_child_field_(
-        self, old_child: SymbolicExpression, new_child: SymbolicExpression
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
     ):
         if self._child_ is old_child:
             self._child_ = new_child
@@ -651,14 +656,14 @@ class MultiArityExpression(SymbolicExpression, ABC):
         self.update_children(*self._operation_children_)
 
     def _replace_child_field_(
-        self, old_child: SymbolicExpression, new_child: SymbolicExpression
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
     ):
         try:
             old_child_index = self._operation_children_.index(old_child)
             self._operation_children_ = (
-                self._operation_children_[:old_child_index]
-                + (new_child,)
-                + self._operation_children_[old_child_index + 1 :]
+                    self._operation_children_[:old_child_index]
+                    + (new_child,)
+                    + self._operation_children_[old_child_index + 1:]
             )
         except ValueError:
             pass
@@ -701,7 +706,7 @@ class BinaryExpression(SymbolicExpression, ABC):
         self.left, self.right = self._update_children_(self.left, self.right)
 
     def _replace_child_field_(
-        self, old_child: SymbolicExpression, new_child: SymbolicExpression
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
     ):
         if self.left is old_child:
             self.left = new_child
@@ -718,26 +723,48 @@ class BinaryExpression(SymbolicExpression, ABC):
 
 
 @dataclass(eq=False, repr=False)
-class Product(MultiArityExpression):
+class PerformsCartesianProduct(SymbolicExpression, ABC):
     """
     A symbolic operation that evaluates its children in nested sequence, passing bindings from one to the next such that
     each binding has a value from each child expression. It represents a cartesian product of all child expressions.
     """
 
     @property
-    def _name_(self) -> str:
-        return f"Product()"
+    @abstractmethod
+    def _product_operands_(self) -> Tuple[SymbolicExpression, ...]:
+        """
+        The operands of the cartesian product operation.
+        """
+        ...
 
-    def _evaluate__(self, sources: Bindings) -> Iterator[OperationResult]:
+
+    def _evaluate_product_(self, sources: Bindings) -> Iterator[OperationResult]:
         """
         Evaluate the symbolic expressions by generating combinations of values from their evaluation generators.
         """
-        yield from (
-            OperationResult(bindings, False, self)
-            for bindings in cartesian_product_evaluation_of_expressions_while_passing_the_bindings_around(
-                self._operation_children_, sources, parent=self
+        ordered_operands = self._optimize_operands_order_(sources)
+        return cartesian_product_while_passing_the_bindings_around(
+                ordered_operands, sources, parent=self
             )
-        )
+
+    def _optimize_operands_order_(
+            self, sources: Bindings
+    ) -> Tuple[SymbolicExpression, ...]:
+        """
+        Should be overridden by derived classes if they can optimize the operands order.
+        """
+        return self._product_operands_
+
+
+@dataclass(eq=False, repr=False)
+class MultiArityExpressionThatPerformsACartesianProduct(MultiArityExpression, PerformsCartesianProduct, ABC):
+    """
+    An abstract superclass of expressions that have multiple operands and performs a cartesian product on them.
+    """
+
+    @property
+    def _product_operands_(self) -> Tuple[SymbolicExpression, ...]:
+        return self._operation_children_
 
 
 @dataclass(eq=False, repr=False)
@@ -810,8 +837,8 @@ class Having(Filter, BinaryExpression):
         return self.left
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         yield from (
             OperationResult(
@@ -821,8 +848,8 @@ class Having(Filter, BinaryExpression):
             )
             for grouping_result in self.grouped_by._evaluate_(sources, parent=self)
             for annotated_result in self.condition._evaluate_(
-                grouping_result.bindings, parent=self
-            )
+            grouping_result.bindings, parent=self
+        )
             if annotated_result.is_true
         )
 
@@ -987,8 +1014,8 @@ class DomainMappingCacheItem:
 
     def __eq__(self, other):
         return (
-            isinstance(other, DomainMappingCacheItem)
-            and self.hashable_key == other.hashable_key
+                isinstance(other, DomainMappingCacheItem)
+                and self.hashable_key == other.hashable_key
         )
 
 
@@ -1023,7 +1050,7 @@ class CanBehaveLikeAVariable(Selectable[T], ABC):
             self._is_false_ = not is_true
 
     def _get_domain_mapping_(
-        self, type_: Type[DomainMapping], *args, **kwargs
+            self, type_: Type[DomainMapping], *args, **kwargs
     ) -> DomainMapping:
         """
         Retrieves or creates a domain mapping instance based on the provided arguments.
@@ -1131,8 +1158,8 @@ class Aggregator(UnaryExpression, CanBehaveLikeAVariable[T], ABC):
         return Entity(_selected_variables_=(self,)).grouped_by(*variables)
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         yield from (
             OperationResult(
@@ -1146,7 +1173,7 @@ class Aggregator(UnaryExpression, CanBehaveLikeAVariable[T], ABC):
 
     @abstractmethod
     def _apply_aggregation_function_and_get_bindings_(
-        self, child_result: OperationResult
+            self, child_result: OperationResult
     ) -> Bindings:
         """
         Apply the aggregation function to the results of the child.
@@ -1170,7 +1197,7 @@ class Count(Aggregator[T]):
     """
 
     def _apply_aggregation_function_and_get_bindings_(
-        self, child_result: OperationResult
+            self, child_result: OperationResult
     ) -> Bindings:
         if self._distinct_:
             return {self._binding_id_: len(set(child_result.value))}
@@ -1234,7 +1261,7 @@ class Sum(EntityAggregator[Number]):
     """
 
     def _apply_aggregation_function_and_get_bindings_(
-        self, child_result: OperationResult
+            self, child_result: OperationResult
     ) -> Dict[int, Optional[Number]]:
         return {
             self._binding_id_: self.get_aggregation_result_from_child_result(
@@ -1265,7 +1292,7 @@ class Extreme(EntityAggregator[T], ABC):
     """
 
     def _apply_aggregation_function_and_get_bindings_(
-        self, child_result: OperationResult
+            self, child_result: OperationResult
     ) -> Bindings:
         extreme_val = self.get_aggregation_result_from_child_result(child_result)
         bindings = child_result.bindings.copy()
@@ -1312,8 +1339,8 @@ class ResultQuantifier(UnaryExpression, DerivedExpression, ABC):
         return self._child_
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[T]:
 
         result_count = 0
@@ -1329,7 +1356,7 @@ class ResultQuantifier(UnaryExpression, DerivedExpression, ABC):
         )
 
     def _assert_satisfaction_of_quantification_constraints_(
-        self, result_count: int, done: bool
+            self, result_count: int, done: bool
     ):
         """
         Assert the satisfaction of quantification constraints.
@@ -1385,8 +1412,8 @@ class The(ResultQuantifier):
     )
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[TypingUnion[T, Dict[TypingUnion[T, SymbolicExpression], T]]]:
         """
         Evaluates the query object descriptor with the given bindings and yields the results.
@@ -1409,17 +1436,13 @@ A dictionary for grouped bindings which maps a group key to its corresponding bi
 
 
 @dataclass(eq=False, repr=False)
-class GroupedBy(UnaryExpression):
+class GroupedBy(MultiArityExpressionThatPerformsACartesianProduct):
     """
-    Represents a group-by operation in the entity query language. This operation groups the results of a query by
-    specific variables. This is useful for aggregating results separately for each group.
+    This operation groups the results of a query by specific variables. This is useful for aggregating results
+    separately for each group.
     """
 
-    _child_: Product
-    """
-    The child of the grouped-by operation.
-    """
-    aggregators: Tuple[Aggregator, ...]
+    aggregators: Tuple[Aggregator, ...] = field(default_factory=tuple)
     """
     The aggregators to apply to the grouped results.
     """
@@ -1448,7 +1471,7 @@ class GroupedBy(UnaryExpression):
         yield from groups.values()
 
     def get_groups_and_group_key_count(
-        self, sources: Bindings
+            self, sources: Bindings
     ) -> Tuple[GroupBindings, Dict[GroupKey, int]]:
         """
         Create a dictionary of groups and a dictionary of group keys to their corresponding counts starting from the
@@ -1462,7 +1485,7 @@ class GroupedBy(UnaryExpression):
         groups = defaultdict(lambda: OperationResult({}, False, self))
         group_key_count = defaultdict(lambda: 0)
 
-        for res in self._child_._evaluate_(sources, parent=self):
+        for res in self._evaluate_product_(sources):
 
             group_key = tuple(
                 ensure_hashable(res[var._binding_id_])
@@ -1508,9 +1531,9 @@ class GroupedBy(UnaryExpression):
     def is_already_grouped(self, var_id: int) -> bool:
         expression = self._get_expression_by_id_(var_id)
         return (
-            len(self.variables_to_group_by) == 1
-            and isinstance(expression, DomainMapping)
-            and expression._child_._binding_id_ in self.ids_of_variables_to_group_by
+                len(self.variables_to_group_by) == 1
+                and isinstance(expression, DomainMapping)
+                and expression._child_._binding_id_ in self.ids_of_variables_to_group_by
         )
 
     @cached_property
@@ -1523,7 +1546,7 @@ class GroupedBy(UnaryExpression):
 
     @cached_property
     def aggregators_of_grouped_by_variables_that_are_not_count(
-        self,
+            self,
     ) -> Tuple[Aggregator, ...]:
         """
         :return: Aggregators in the selected variables of the query descriptor that are aggregating over
@@ -1545,7 +1568,7 @@ class GroupedBy(UnaryExpression):
             var
             for var in self.aggregators
             if (var._child_ is None)
-            or (var._child_._binding_id_ in self.ids_of_variables_to_group_by)
+               or (var._child_._binding_id_ in self.ids_of_variables_to_group_by)
         ]
 
     @cached_property
@@ -1621,7 +1644,7 @@ class FilterBuilder(ExpressionBuilder, ABC):
 
     @cached_property
     def aggregators_and_non_aggregators_in_conditions(
-        self,
+            self,
     ) -> Tuple[Tuple[Aggregator, ...], Tuple[Selectable, ...]]:
         """
         :return: A tuple containing the aggregators and non-aggregators in the conditions.
@@ -1636,7 +1659,7 @@ class FilterBuilder(ExpressionBuilder, ABC):
                 if isinstance(var, Aggregator):
                     aggregators.append(var)
                 elif isinstance(var, DomainMapping) and any(
-                    isinstance(v, Aggregator) for v in var._descendants_
+                        isinstance(v, Aggregator) for v in var._descendants_
                 ):
                     aggregators.append(var)
                 elif isinstance(var, Selectable) and not isinstance(var, Literal):
@@ -1732,7 +1755,7 @@ class GroupedByBuilder(ExpressionBuilder):
             children.append(where)
         children.extend(non_aggregators)
         return GroupedBy(
-            _child_=Product(tuple(children)),
+            _operation_children_=tuple(children),
             aggregators=tuple(aggregators),
             variables_to_group_by=tuple(self.variables_to_group_by),
         )
@@ -1748,8 +1771,8 @@ class GroupedByBuilder(ExpressionBuilder):
             self.query_descriptor._aggregated_and_non_aggregated_variables_in_selection_
         )
         if aggregators and not all(
-            self.variable_is_in_or_derived_from_a_grouped_by_variable(v)
-            for v in non_aggregated_variables
+                self.variable_is_in_or_derived_from_a_grouped_by_variable(v)
+                for v in non_aggregated_variables
         ):
             raise NonAggregatedSelectedVariablesError(
                 self,
@@ -1760,7 +1783,7 @@ class GroupedByBuilder(ExpressionBuilder):
 
     @lru_cache
     def variable_is_in_or_derived_from_a_grouped_by_variable(
-        self, variable: SymbolicExpression
+            self, variable: SymbolicExpression
     ) -> bool:
         """
         Check if the variable is in or derived from a grouped by variable.
@@ -1772,16 +1795,16 @@ class GroupedByBuilder(ExpressionBuilder):
         elif variable._binding_id_ in self.ids_of_aggregated_variables:
             return False
         elif isinstance(variable, DomainMapping) and any(
-            self.variable_is_in_or_derived_from_a_grouped_by_variable(d)
-            for d in variable._descendants_
+                self.variable_is_in_or_derived_from_a_grouped_by_variable(d)
+                for d in variable._descendants_
         ):
             return True
         elif (
-            isinstance(variable, Variable)
-            and isinstance(variable._domain_source_, Selectable)
-            and self.variable_is_in_or_derived_from_a_grouped_by_variable(
-                variable._domain_source_
-            )
+                isinstance(variable, Variable)
+                and isinstance(variable._domain_source_, Selectable)
+                and self.variable_is_in_or_derived_from_a_grouped_by_variable(
+            variable._domain_source_
+        )
         ):
             return True
         else:
@@ -1807,7 +1830,7 @@ class GroupedByBuilder(ExpressionBuilder):
 
     @cached_property
     def aggregators_and_non_aggregators(
-        self,
+            self,
     ) -> Tuple[List[Aggregator], List[Selectable]]:
         """
         :return: A tuple of lists of aggregator and non-aggregator variables used in the query.
@@ -1835,7 +1858,7 @@ class GroupedByBuilder(ExpressionBuilder):
             var._child_
             for var in aggregated_variables
             if var._child_ is not None
-            and var._child_._id_ not in ids_of_non_aggregated_variables
+               and var._child_._id_ not in ids_of_non_aggregated_variables
         ]
         ids_of_non_aggregators = [v._id_ for v in all_non_aggregators]
         all_non_aggregators.extend(
@@ -1846,7 +1869,7 @@ class GroupedByBuilder(ExpressionBuilder):
 
     @cached_property
     def aggregators_and_non_aggregators_in_ordered_by(
-        self,
+            self,
     ) -> Tuple[List[Aggregator], List[Selectable]]:
         non_aggregated_variables, aggregators = [], []
         if self.query_descriptor._ordered_by_builder_:
@@ -1925,23 +1948,19 @@ class OrderedByBuilder(ExpressionBuilder):
 
 
 @dataclass(eq=False, repr=False)
-class QueryObjectDescriptor(UnaryExpression, ABC):
+class QueryObjectDescriptor(MultiArityExpressionThatPerformsACartesianProduct, ABC):
     """
     Describes the queried object(s), could be a query over a single variable or a set of variables,
     also describes the condition(s)/properties of the queried object(s).
     """
 
-    _child_: Product = field(default_factory=Product)
-    """
-    The child of the query object descriptor is the root of the conditions in the query/sub-query graph.
-    """
     _selected_variables_: Tuple[Selectable, ...] = field(
         default_factory=tuple, kw_only=True
     )
     """
     The variables that are selected by the query object descriptor.
     """
-    _distinct_on: Tuple[Selectable, ...] = field(default=(), init=False)
+    _distinct_on: Tuple[Selectable, ...] = field(default_factory=tuple, init=False)
     """
     Parameters for distinct results of the query object descriptor.
     """
@@ -1985,10 +2004,11 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
     """
 
     def __post_init__(self):
-        super().__post_init__()
         for var in self._selected_variables_:
             if isinstance(var, QueryObjectDescriptor):
                 var.build()
+        self._operation_children_ = tuple(self._selected_variables_)
+        super().__post_init__()
         self._quantifier_builder_ = QuantifierBuilder(self)
         self._expression_ = self
 
@@ -2048,10 +2068,10 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         return self
 
     def ordered_by(
-        self,
-        variable: TypingUnion[Selectable[T], Any],
-        descending: bool = False,
-        key: Optional[Callable] = None,
+            self,
+            variable: TypingUnion[Selectable[T], Any],
+            descending: bool = False,
+            key: Optional[Callable] = None,
     ) -> Self:
         """
         Order the results by the given variable, using the given key function in descending or ascending order.
@@ -2066,8 +2086,8 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         return self
 
     def distinct(
-        self,
-        *on: TypingUnion[Selectable, Any],
+            self,
+            *on: TypingUnion[Selectable, Any],
     ) -> TypingUnion[Self, T]:
         """
         Apply distinctness constraint to the query object descriptor results.
@@ -2082,7 +2102,7 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
 
     @modifies_query_structure
     def grouped_by(
-        self, *variables_to_group_by: TypingUnion[Selectable, Any]
+            self, *variables_to_group_by: TypingUnion[Selectable, Any]
     ) -> TypingUnion[Self, T]:
         """
         Specify the variables to group the results by.
@@ -2094,9 +2114,9 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         return self
 
     def _quantify_(
-        self,
-        quantifier_type: Type[ResultQuantifier] = An,
-        quantification_constraint: Optional[ResultQuantificationConstraint] = None,
+            self,
+            quantifier_type: Type[ResultQuantifier] = An,
+            quantification_constraint: Optional[ResultQuantificationConstraint] = None,
     ) -> Self:
         """
         Specify the quantifier type and constraint for the query results, also build the query.
@@ -2142,7 +2162,7 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
 
         children.extend(self._selected_variables_)
 
-        self._child_.update_children(*children)
+        self.update_children(*children)
 
         if self._ordered_by_builder_ is not None:
             self._ordered_by_builder_.data_source = self._expression_
@@ -2154,8 +2174,8 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         return self
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         """
         Evaluate the query descriptor by constraining values, updating conclusions,
@@ -2165,8 +2185,8 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         yield from (
             self._get_operation_result_(result)
             for result in self._apply_results_mapping_(
-                self._child_._evaluate_(sources, parent=self)
-            )
+            self._evaluate_product_(sources),
+        )
         )
 
         if self._seen_results is not None:
@@ -2224,7 +2244,7 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         return tuple(k._binding_id_ for k in self._distinct_on)
 
     def _get_distinct_results_(
-        self, results_gen: Iterator[OperationResult]
+            self, results_gen: Iterator[OperationResult]
     ) -> Iterator[OperationResult]:
         """
         Apply distinctness constraint to the query object descriptor results.
@@ -2258,12 +2278,12 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         :return: Whether the results should be grouped or not. Is true when an aggregator is selected.
         """
         return (
-            len(self._aggregated_and_non_aggregated_variables_in_selection_[0]) > 0
+                len(self._aggregated_and_non_aggregated_variables_in_selection_[0]) > 0
         ) or (self._grouped_by_builder_ is not None)
 
     @cached_property
     def _aggregated_and_non_aggregated_variables_in_selection_(
-        self,
+            self,
     ) -> Tuple[List[Selectable], List[Selectable]]:
         """
         :return: The aggregated and non-aggregated variables from the selected variables.
@@ -2278,7 +2298,7 @@ class QueryObjectDescriptor(UnaryExpression, ABC):
         return aggregated_variables, non_aggregated_variables
 
     def _apply_results_mapping_(
-        self, results: Iterator[OperationResult]
+            self, results: Iterator[OperationResult]
     ) -> Iterable[OperationResult]:
         """
         Process and transform an iterable of results based on predefined mappings and ordering.
@@ -2319,7 +2339,7 @@ class SetOf(QueryObjectDescriptor):
     """
 
     def __getitem__(
-        self, selected_variable: TypingUnion[CanBehaveLikeAVariable[T], T]
+            self, selected_variable: TypingUnion[CanBehaveLikeAVariable[T], T]
     ) -> TypingUnion[T, SetOfSelectable[T]]:
         """
         Select one of the set of variables, this is useful when you have another query that uses this set of and
@@ -2356,8 +2376,8 @@ class SetOfSelectable(UnaryExpression, CanBehaveLikeAVariable[T]):
         return self._child_
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterator[OperationResult]:
         for v in self._set_of_._evaluate_(sources, self):
             yield OperationResult(
@@ -2489,7 +2509,7 @@ class Variable(CanBehaveLikeAVariable[T]):
         self._update_children_(*self._child_vars_.values())
 
     def _replace_child_field_(
-        self, old_child: SymbolicExpression, new_child: SymbolicExpression
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
     ):
         for k, v in self._child_vars_.items():
             if v is old_child:
@@ -2497,8 +2517,8 @@ class Variable(CanBehaveLikeAVariable[T]):
                 break
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         """
         A variable either is already bound in sources by other constraints (Symbolic Expressions).,
@@ -2517,7 +2537,7 @@ class Variable(CanBehaveLikeAVariable[T]):
             raise VariableCannotBeEvaluated(self)
 
     def _iterator_over_domain_values_(
-        self, sources: Bindings
+            self, sources: Bindings
     ) -> Iterable[OperationResult]:
         """
         Iterate over the values in the variable's domain, yielding OperationResult instances.
@@ -2554,7 +2574,7 @@ class Variable(CanBehaveLikeAVariable[T]):
             yield self._build_operation_result_and_update_truth_value_(bindings)
 
     def _instantiate_using_child_vars_and_yield_results_(
-        self, sources: Bindings
+            self, sources: Bindings
     ) -> Iterable[OperationResult]:
         """
         Create new instances of the variable type and using as keyword arguments the child variables values.
@@ -2573,7 +2593,7 @@ class Variable(CanBehaveLikeAVariable[T]):
         )
 
     def _process_output_and_update_values_(
-        self, instance: Any, kwargs: Dict[str, OperationResult]
+            self, instance: Any, kwargs: Dict[str, OperationResult]
     ) -> OperationResult:
         """
         Process the predicate/variable instance and get the results.
@@ -2590,7 +2610,7 @@ class Variable(CanBehaveLikeAVariable[T]):
         return self._build_operation_result_and_update_truth_value_(values)
 
     def _build_operation_result_and_update_truth_value_(
-        self, bindings: Bindings
+            self, bindings: Bindings
     ) -> OperationResult:
         """
         Build an OperationResult instance and update the truth value based on the bindings.
@@ -2624,11 +2644,11 @@ class Literal(Variable[T]):
     """
 
     def __init__(
-        self,
-        data: Any,
-        name: Optional[str] = None,
-        type_: Optional[Type] = None,
-        wrap_in_iterator: bool = True,
+            self,
+            data: Any,
+            name: Optional[str] = None,
+            type_: Optional[Type] = None,
+            wrap_in_iterator: bool = True,
     ):
         original_data = data
         if wrap_in_iterator:
@@ -2672,8 +2692,8 @@ class DomainMapping(UnaryExpression, CanBehaveLikeAVariable[T], ABC):
         return self._child_._type_
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         """
         Apply the domain mapping to the child's values.
@@ -2688,7 +2708,7 @@ class DomainMapping(UnaryExpression, CanBehaveLikeAVariable[T], ABC):
         )
 
     def _build_operation_result_and_update_truth_value_(
-        self, child_result: OperationResult, current_value: Any
+            self, child_result: OperationResult, current_value: Any
     ) -> OperationResult:
         """
         Set the current truth value of the operation result, and build the operation result to be yielded.
@@ -2878,7 +2898,7 @@ def not_contains(container, item) -> bool:
 
 
 @dataclass(eq=False, repr=False)
-class Comparator(BinaryExpression):
+class Comparator(BinaryExpression, PerformsCartesianProduct):
     """
     A symbolic equality check that can be used to compare symbolic variables using a provided comparison operation.
     """
@@ -2896,53 +2916,54 @@ class Comparator(BinaryExpression):
     }
 
     @property
+    def _product_operands_(self) -> Tuple[SymbolicExpression, ...]:
+        return self.left, self.right
+
+    @property
     def _name_(self):
         if self.operation in self.operation_name_map:
             return self.operation_name_map[self.operation]
         return self.operation.__name__
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         """
         Compares the left and right symbolic variables using the "operation".
         """
 
-        first_operand, second_operand = self.get_first_second_operands(sources)
-
         yield from (
-            self.get_operation_result(bindings)
-            for bindings in cartesian_product_evaluation_of_expressions_while_passing_the_bindings_around(
-                [first_operand, second_operand], sources, parent=self
-            )
+            self.get_operation_result(result)
+            for result in self._evaluate_product_(sources)
         )
 
-    def get_operation_result(self, bindings: Bindings) -> OperationResult:
+    def get_operation_result(self, child_result: OperationResult) -> OperationResult:
         """
         Evaluate the comparator operation and return the result.
 
-        :param bindings: The current bindings that has the values for the first and second operands.
+        :param child_result: The current result that has the values for the first and second operands.
         :return: The result of the operation.
         """
         left_value, right_value = (
-            bindings[self.left._binding_id_],
-            bindings[self.right._binding_id_],
+            child_result[self.left._binding_id_],
+            child_result[self.right._binding_id_],
         )
         if (
-            self.operation in [operator.eq, operator.ne]
-            and is_iterable(left_value)
-            and is_iterable(right_value)
+                self.operation in [operator.eq, operator.ne]
+                and is_iterable(left_value)
+                and is_iterable(right_value)
         ):
             left_value = make_set(left_value)
             right_value = make_set(right_value)
         res = self.operation(left_value, right_value)
         self._is_false_ = not res
+        bindings = copy(child_result.bindings)
         bindings[self._binding_id_] = res
-        return OperationResult(bindings, self._is_false_, self)
+        return OperationResult(bindings, self._is_false_, self, child_result)
 
-    def get_first_second_operands(
-        self, sources: Bindings
+    def _optimize_operands_order_(
+            self, sources: Bindings
     ) -> Tuple[SymbolicExpression, SymbolicExpression]:
         left_has_the = any(isinstance(desc, The) for desc in self.left._descendants_)
         right_has_the = any(isinstance(desc, The) for desc in self.right._descendants_)
@@ -2951,7 +2972,7 @@ class Comparator(BinaryExpression):
         elif not left_has_the and right_has_the:
             return self.right, self.left
         if sources and any(
-            v._binding_id_ in sources for v in self.right._unique_variables_
+                v._binding_id_ in sources for v in self.right._unique_variables_
         ):
             return self.right, self.left
         else:
@@ -2984,8 +3005,8 @@ class Not(LogicalOperator, UnaryExpression):
         super().__post_init__()
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
 
         for v in self._child_._evaluate_(sources, parent=self):
@@ -3010,8 +3031,8 @@ class AND(LogicalBinaryOperator):
     """
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
 
         left_values = self.left._evaluate_(sources, parent=self)
@@ -3036,8 +3057,8 @@ class OR(LogicalBinaryOperator):
     """
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         """
         Evaluate the left operand, if it is False, then evaluate the right operand.
@@ -3075,15 +3096,14 @@ class Union(MultiArityExpression):
     """
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
-
         yield from (
             self.get_result_and_update_truth_value(child_result)
             for child_result in itertools.chain(
-                *(var._evaluate_(sources, self) for var in self._operation_children_)
-            )
+            *(var._evaluate_(sources, self) for var in self._operation_children_)
+        )
         )
 
     def get_result_and_update_truth_value(self, child_result: OperationResult) -> OperationResult:
@@ -3104,7 +3124,7 @@ class Concatenate(Union, CanBehaveLikeAVariable[T]):
 
     def __post_init__(self):
         if not all(
-            isinstance(child, Selectable) for child in self._operation_children_
+                isinstance(child, Selectable) for child in self._operation_children_
         ):
             raise ValueError(
                 f"All children of Concatenate must be Selectable instances."
@@ -3167,8 +3187,8 @@ class ForAll(QuantifiedConditional):
         ]
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         solution_set = None
 
@@ -3222,8 +3242,8 @@ class Exists(QuantifiedConditional):
     """
 
     def _evaluate__(
-        self,
-        sources: Bindings,
+            self,
+            sources: Bindings,
     ) -> Iterable[OperationResult]:
         seen_var_values = []
         for val in self.condition._evaluate_(sources, parent=self):
@@ -3240,7 +3260,7 @@ OperatorOptimizer = Callable[[SymbolicExpression, SymbolicExpression], LogicalOp
 
 
 def chained_logic(
-    operator: TypingUnion[Type[LogicalOperator], OperatorOptimizer], *conditions
+        operator: TypingUnion[Type[LogicalOperator], OperatorOptimizer], *conditions
 ) -> LogicalOperator:
     """
     A chian of logic operation over multiple conditions, e.g. cond1 | cond2 | cond3.
