@@ -168,6 +168,9 @@ class Scale:
         max_point = Point3(self.x / 2, self.y / 2, self.z / 2)
         return BoundingBox.from_min_max(min_point, max_point)
 
+    def to_np(self) -> np.ndarray:
+        return np.array([self.x, self.y, self.z])
+
 
 @dataclass
 class Shape(ABC, SubclassJSONSerializer, HasSimulatorProperties):
@@ -268,7 +271,7 @@ class Mesh(Shape, ABC):
         Returns the local bounding box of the mesh.
         The bounding box is axis-aligned and centered at the origin.
         """
-        return BoundingBox.from_mesh(self.mesh, self.origin, scale=self.scale)
+        return BoundingBox.from_mesh(self.mesh, self.origin)
 
     def to_json(self) -> Dict[str, Any]:
         return {
@@ -306,6 +309,17 @@ class Mesh(Shape, ABC):
         mesh.visual.material = SimpleMaterial(name=material_name, image=image)
         return mesh
 
+    def scale_mesh(self, scale: Scale) -> trimesh.Trimesh:
+        """
+        Scales the mesh according to the given scale.
+
+        :param scale: The scale of the mesh.
+        :return: A scaled mesh object.
+        """
+        copy_mesh = deepcopy(self.mesh)
+        copy_mesh.apply_scale(scale.to_np())
+        return copy_mesh
+
 
 @dataclass(eq=False)
 class FileMesh(Mesh):
@@ -324,6 +338,7 @@ class FileMesh(Mesh):
         The mesh object.
         """
         mesh = trimesh.load_mesh(self.filename)
+        mesh.apply_scale(self.scale.to_np())
         mesh.visual.vertex_colors = trimesh.visual.color.to_rgba(self.color.to_rgba())
         return mesh
 
@@ -377,6 +392,9 @@ class TriangleMesh(Mesh):
     """
     The loaded mesh object.
     """
+
+    def __post_init__(self):
+        self.mesh.apply_scale(self.scale.to_np())
 
     @property
     def file_name(self) -> str:
@@ -868,7 +886,6 @@ class BoundingBox:
         cls,
         mesh: trimesh.Trimesh,
         origin: HomogeneousTransformationMatrix,
-        scale: Optional[Scale] = None,
     ) -> Self:
         """
         Create a bounding box from a trimesh object.
@@ -876,19 +893,16 @@ class BoundingBox:
         :param origin: The origin of the bounding box.
         :return: The bounding box.
         """
-        if scale is None:
-            scale = Scale()
+
         bounds = mesh.bounds
-        min_bound = bounds[0] * np.array([scale.x, scale.y, scale.z])
-        max_bound = bounds[1] * np.array([scale.x, scale.y, scale.z])
         return cls(
-            min_bound[0],
-            min_bound[1],
-            min_bound[2],
-            max_bound[0],
-            max_bound[1],
-            max_bound[2],
-            origin,
+            bounds[0][0],
+            bounds[0][1],
+            bounds[0][2],
+            bounds[1][0],
+            bounds[1][1],
+            bounds[1][2],
+            origin=origin,
         )
 
     def get_points(self) -> List[Point3]:
