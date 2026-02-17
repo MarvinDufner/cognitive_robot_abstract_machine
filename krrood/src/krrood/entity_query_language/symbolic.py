@@ -570,6 +570,14 @@ class SymbolicExpression(ABC):
 
 
 @dataclass(eq=False, repr=False)
+class TruthValueOperator(SymbolicExpression, ABC):
+    """
+    An abstract superclass for operators that work with truth values of operations, thus requiring its children expressions to update
+    their truth value when yielding results.
+    """
+
+
+@dataclass(eq=False, repr=False)
 class DerivedExpression(SymbolicExpression, ABC):
     """
     A symbolic expression that has its results derived from another symbolic expression, and thus it's value is the
@@ -732,7 +740,7 @@ class Product(MultiArityExpression):
 
 
 @dataclass(eq=False, repr=False)
-class Filter(DerivedExpression, ABC):
+class Filter(DerivedExpression, TruthValueOperator, ABC):
     """
     Data source that evaluates the truth value for each data point according to a condition expression and filters out
     the data points that do not satisfy the condition.
@@ -754,23 +762,6 @@ class Filter(DerivedExpression, ABC):
     @property
     def _name_(self):
         return self.__class__.__name__
-
-    def evaluate_conclusions_and_update_bindings(
-        self, condition_result: OperationResult
-    ) -> OperationResult:
-        """
-        Update the bindings of the results by evaluating the conclusions using the received bindings from the condition
-         expression as sources.
-
-        :param condition_result: The result of the condition expression.
-        """
-        if condition_result.is_false:
-            return condition_result
-        for conclusion in self.condition._conclusion_:
-            condition_result.bindings = next(
-                conclusion._evaluate_(condition_result.bindings, parent=self)
-            ).bindings
-        return condition_result
 
 
 @dataclass(eq=False, repr=False)
@@ -1020,7 +1011,9 @@ class CanBehaveLikeAVariable(Selectable[T], ABC):
 
         :param current_value: The current value of the variable.
         """
-        if isinstance(self._parent_, (LogicalOperator, Filter)):
+        # Calculating the truth value is not always done for efficiency. The truth value is updated only when this
+        # operation is a child of a TruthValueOperator.
+        if isinstance(self._parent_, TruthValueOperator):
             is_true = (
                 len(current_value) > 0
                 if is_iterable(current_value)
@@ -2965,7 +2958,7 @@ class Comparator(BinaryExpression):
 
 
 @dataclass(eq=False, repr=False)
-class LogicalOperator(SymbolicExpression, ABC):
+class LogicalOperator(TruthValueOperator, ABC):
     """
     A symbolic operation that can be used to combine multiple symbolic expressions using logical constraints on their
     truth values. Examples are conjunction (AND), disjunction (OR), negation (NOT), and conditional quantification

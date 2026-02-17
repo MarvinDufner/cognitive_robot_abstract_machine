@@ -3,7 +3,7 @@ from __future__ import annotations
 import typing
 from abc import ABC
 from dataclasses import dataclass, field
-from typing_extensions import Dict, Optional, Iterable, Any
+from typing_extensions import Dict, Optional, Iterable, Any, Self
 
 from .cache_data import SeenSet
 from .conclusion import Conclusion
@@ -16,14 +16,14 @@ from .symbolic import (
     LogicalBinaryOperator,
     Bindings,
     LogicalOperator,
-    BinaryExpression,
+    BinaryExpression, Filter, TruthValueOperator,
 )
 
 
 @dataclass(eq=False)
-class ConclusionSelector(LogicalOperator, ABC):
+class ConclusionSelector(TruthValueOperator, ABC):
     """
-    Base class for logical operators that selects the conclusions to pass through from it's operands' conclusions.
+    Base class for operators that selects the conclusions to pass through from it's operands' conclusions.
     """
 
 
@@ -86,8 +86,7 @@ class Alternative(OR, ConclusionSelector):
         self,
         sources: Bindings,
     ) -> Iterable[OperationResult]:
-        outputs = super()._evaluate__(sources)
-        for output in outputs:
+        for output in OR._evaluate__(self, sources):
             if output.is_true:
                 self._conclusion_.update(
                     output.previous_operation_result.operand._conclusion_
@@ -106,8 +105,7 @@ class Next(EQLUnion, ConclusionSelector):
         self,
         sources: Bindings,
     ) -> Iterable[OperationResult]:
-        outputs = super()._evaluate__(sources)
-        for output in outputs:
+        for output in EQLUnion._evaluate__(self, sources):
             self._conclusion_.update(
                 output.previous_operation_result.operand._conclusion_
             )
