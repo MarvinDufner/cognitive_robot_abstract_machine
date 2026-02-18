@@ -5,21 +5,20 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, MISSING, is_dataclass, fields
 from functools import cached_property
 
-from typing_extensions import Generic, Type, Tuple, Any, Dict, Optional, Iterable, List, Union as TypingUnion
+from typing_extensions import Generic, Type, Tuple, Any, Dict, Optional, Iterable, List, Union as TypingUnion, Union, \
+    Callable
 
+from .base_expressions import Bindings, OperationResult, SymbolicExpression, TruthValueOperator, UnaryExpression
+from ..cache_data import ReEnterableLazyIterable
+from ..failures import VariableCannotBeEvaluated
+from ..operators.comparator import Comparator
+from ..operators.set_operations import MultiArityExpressionThatPerformsACartesianProduct
+from ..utils import T, merge_args_and_kwargs, convert_args_and_kwargs_into_a_hashable_key, \
+    is_iterable, make_list
 from ...class_diagrams.class_diagram import WrappedClass
 from ...class_diagrams.failures import ClassIsUnMappedInClassDiagram
 from ...class_diagrams.wrapped_field import WrappedField
-
-from ..cache_data import ReEnterableLazyIterable
-from ..operators.comparator import Comparator
-from ..enums import PredicateType
-from ..failures import VariableCannotBeEvaluated
 from ...symbol_graph.symbol_graph import SymbolGraph
-
-from .base_expressions import Bindings, OperationResult, SymbolicExpression, TruthValueOperator, UnaryExpression
-from ..utils import T, merge_args_and_kwargs, convert_args_and_kwargs_into_a_hashable_key, \
-    is_iterable, generate_combinations, make_list
 
 
 @dataclass(eq=False, repr=False)
@@ -229,17 +228,13 @@ class Variable(CanBehaveLikeAVariable[T]):
     A Variable that queries will assign. The Variable produces results of type `T`.
     """
 
-    _type_: Type = field(default=MISSING)
+    _type_: Union[Type, Callable] = field(default=MISSING)
     """
     The result type of the variable. (The value of `T`)
     """
     _name__: str
     """
     The name of the variable.
-    """
-    _kwargs_: Dict[str, Any] = field(default_factory=dict)
-    """
-    The properties of the variable as keyword arguments.
     """
     _domain_source_: Optional[DomainType] = field(
         default=None, kw_only=True, repr=False
@@ -255,23 +250,9 @@ class Variable(CanBehaveLikeAVariable[T]):
     """
     The iterable domain of values for this variable.
     """
-    _predicate_type_: Optional[PredicateType] = field(default=None, repr=False)
-    """
-    If this symbol is an instance of the Predicate class.
-    """
     _is_inferred_: bool = field(default=False, repr=False)
     """
-    Whether this variable should be inferred.
-    """
-    _is_instantiated_: bool = field(default=False, repr=False)
-    """
-    Whether this variable should be instantiated from it's type.
-    """
-    _child_vars_: Optional[Dict[str, SymbolicExpression]] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    """
-    A dictionary mapping child variable names to variables, these are from the _kwargs_ dictionary. 
+    Whether this variable domain is inferred or not.
     """
 
     def __post_init__(self):
@@ -281,11 +262,6 @@ class Variable(CanBehaveLikeAVariable[T]):
             self._update_domain_(self._domain_source_)
 
         self._var_ = self
-
-        self._update_child_vars_from_kwargs_()
-
-        if self._child_vars_ or self._predicate_type_:
-            self._is_instantiated_ = True
 
     def _update_domain_(self, domain):
         """
@@ -300,25 +276,6 @@ class Variable(CanBehaveLikeAVariable[T]):
             domain = [domain]
         self._domain_.set_iterable(domain)
 
-    def _update_child_vars_from_kwargs_(self):
-        """
-        Set the child variables from the kwargs dictionary.
-        """
-        for k, v in self._kwargs_.items():
-            if isinstance(v, SymbolicExpression):
-                self._child_vars_[k] = v
-            else:
-                self._child_vars_[k] = Literal(v, name=k)
-        self._update_children_(*self._child_vars_.values())
-
-    def _replace_child_field_(
-            self, old_child: SymbolicExpression, new_child: SymbolicExpression
-    ):
-        for k, v in self._child_vars_.items():
-            if v is old_child:
-                self._child_vars_[k] = new_child
-                break
-
     def _evaluate__(
             self,
             sources: Bindings,
@@ -331,8 +288,6 @@ class Variable(CanBehaveLikeAVariable[T]):
 
         if self._domain_source_ is not None:
             yield from self._iterator_over_domain_values_(sources)
-        elif self._is_instantiated_:
-            yield from self._instantiate_using_child_vars_and_yield_results_(sources)
         elif self._is_inferred_:
             # Means that the variable gets its values from conclusions only.
             return
@@ -376,42 +331,6 @@ class Variable(CanBehaveLikeAVariable[T]):
             bindings = {**sources, self._binding_id_: v}
             yield self._build_operation_result_and_update_truth_value_(bindings)
 
-    def _instantiate_using_child_vars_and_yield_results_(
-            self, sources: Bindings
-    ) -> Iterable[OperationResult]:
-        """
-        Create new instances of the variable type and using as keyword arguments the child variables values.
-        """
-        for kwargs in self._generate_combinations_for_child_vars_values_(sources):
-            # Build once: unwrapped hashed kwargs for already provided child vars
-            bound_kwargs = {
-                k: v[self._child_vars_[k]._binding_id_] for k, v in kwargs.items()
-            }
-            instance = self._type_(**bound_kwargs)
-            yield self._process_output_and_update_values_(instance, kwargs)
-
-    def _generate_combinations_for_child_vars_values_(self, sources: Bindings):
-        yield from generate_combinations(
-            {k: var._evaluate_(sources, self) for k, var in self._child_vars_.items()}
-        )
-
-    def _process_output_and_update_values_(
-            self, instance: Any, kwargs: Dict[str, OperationResult]
-    ) -> OperationResult:
-        """
-        Process the predicate/variable instance and get the results.
-
-        :param instance: The created instance.
-        :param kwargs: The keyword arguments of the predicate/variable, which are a mapping kwarg_name: {var_id: value}.
-        :return: The results' dictionary.
-        """
-        # kwargs is a mapping from name -> {var_id: value};
-        # we need a single dict {var_id: value}
-        values = {self._binding_id_: instance}
-        for d in kwargs.values():
-            values.update(d.bindings)
-        return self._build_operation_result_and_update_truth_value_(values)
-
     def _build_operation_result_and_update_truth_value_(
             self, bindings: Bindings
     ) -> OperationResult:
@@ -424,16 +343,18 @@ class Variable(CanBehaveLikeAVariable[T]):
         self._update_truth_value_(bindings[self._binding_id_])
         return OperationResult(bindings, self._is_false_, self)
 
+    def _replace_child_field_(
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
+    ):
+        raise ValueError(f"class {self.__class__} does not have children")
+
     @property
     def _name_(self):
         return self._name__
 
     @cached_property
     def _all_variable_instances_(self) -> List[Variable]:
-        variables = [self]
-        for v in self._child_vars_.values():
-            variables.extend(v._all_variable_instances_)
-        return variables
+        return [self]
 
     @property
     def _is_iterable_(self):
@@ -469,6 +390,97 @@ class Literal(Variable[T]):
                 else:
                     name = type(original_data).__name__
         super().__init__(_name__=name, _type_=type_, _domain_source_=data)
+
+
+@dataclass(eq=False, repr=False)
+class InstantiatedVariable(MultiArityExpressionThatPerformsACartesianProduct, Variable[T]):
+    """
+    A variable which does not have an explicit domain, but creates new instances using the `_type_` and `_kwargs_`
+    that are provided. The `_kwargs_` are variables that can be used to generate combinations of bindings to create
+    instances for each combination. By definition this variable is inferred. It also represents Predicates and symbolic
+    functions.
+    """
+    _kwargs_: Dict[str, Any] = field(default_factory=dict)
+    """
+    The properties of the variable as keyword arguments.
+    """
+    _child_vars_: Dict[str, SymbolicExpression] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    """
+    A dictionary mapping child variable names to variables, these are from the _kwargs_ dictionary. 
+    """
+    _child_var_id_name_map_: Dict[int, str] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    """
+    A dictionary mapping child variable ids to their names. 
+    """
+
+    def __post_init__(self):
+        self._is_inferred_ = True
+        Variable.__post_init__(self)
+        self._update_child_vars_from_kwargs_()
+        self._operation_children_ = tuple(self._child_vars_.values())
+        # This is done here as it uses `_operation_children_`
+        MultiArityExpressionThatPerformsACartesianProduct.__post_init__(self)
+
+    def _update_child_vars_from_kwargs_(self):
+        """
+        Set the child variables from the kwargs dictionary.
+        """
+        for k, v in self._kwargs_.items():
+            self._child_vars_[k] = v if isinstance(v, SymbolicExpression) else Literal(v, name=k)
+            self._child_var_id_name_map_[self._child_vars_[k]._binding_id_] = k
+
+    def _evaluate__(
+            self,
+            sources: Bindings,
+    ) -> Iterable[OperationResult]:
+        yield from self._instantiate_using_child_vars_and_yield_results_(sources)
+
+    def _instantiate_using_child_vars_and_yield_results_(
+            self, sources: Bindings
+    ) -> Iterable[OperationResult]:
+        """
+        Create new instances of the variable type and using as keyword arguments the child variables values.
+        """
+        for result in self._evaluate_product_(sources):
+            # Build once: unwrapped hashed kwargs for already provided child vars
+            kwargs = {
+                self._child_var_id_name_map_[id_]: v for id_, v in result.bindings.items() if
+                id_ in self._child_var_id_name_map_
+            }
+            instance = self._type_(**kwargs)
+            yield self._process_output_and_update_values_(instance, result.bindings)
+
+    def _process_output_and_update_values_(
+            self, instance: Any, bindings: Bindings
+    ) -> OperationResult:
+        """
+        Process the predicate/variable instance and get the results.
+
+        :param instance: The created instance.
+        :param bindings: The bindings from the child variables.
+        :return: The results' dictionary.
+        """
+        values = {self._binding_id_: instance} | bindings
+        return self._build_operation_result_and_update_truth_value_(values)
+
+    def _replace_child_field_(
+            self, old_child: SymbolicExpression, new_child: SymbolicExpression
+    ):
+        for k, v in self._child_vars_.items():
+            if v is old_child:
+                self._child_vars_[k] = new_child
+                break
+
+    @cached_property
+    def _all_variable_instances_(self) -> List[Variable]:
+        variables = [self]
+        for v in self._child_vars_.values():
+            variables.extend(v._all_variable_instances_)
+        return variables
 
 
 @dataclass(eq=False, repr=False)
@@ -697,4 +709,4 @@ def _any_of_the_kwargs_is_a_variable(bindings: Dict[str, Any]) -> bool:
     return any(isinstance(binding, Selectable) for binding in bindings.values())
 
 
-DomainType = TypingUnion[Iterable, None]
+DomainType = TypingUnion[Iterable[T], None]

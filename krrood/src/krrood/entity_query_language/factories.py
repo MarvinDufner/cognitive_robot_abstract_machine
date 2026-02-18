@@ -278,12 +278,10 @@ def inference(
     :param type_: The type of the variable (i.e., The class you want to instantiate).
     :return: The factory function for creating a new variable.
     """
-    return lambda **kwargs: Variable(
+    return lambda **kwargs: InstantiatedVariable(
         _type_=type_,
         _name__=type_.__name__,
         _kwargs_=kwargs,
-        _is_inferred_=True,
-        _is_instantiated_=True,
     )
 
 def refinement(*conditions: ConditionType) -> SymbolicExpression:

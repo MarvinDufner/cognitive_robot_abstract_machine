@@ -15,7 +15,7 @@ from typing_extensions import (
 
 from .enums import PredicateType
 from .utils import T, merge_args_and_kwargs
-from .core.variable import Variable, _any_of_the_kwargs_is_a_variable
+from .core.variable import Variable, _any_of_the_kwargs_is_a_variable, InstantiatedVariable
 from ..symbol_graph.symbol_graph import Symbol
 
 
@@ -37,11 +37,10 @@ def symbolic_function(
     def wrapper(*args, **kwargs) -> Optional[Any]:
         all_kwargs = merge_args_and_kwargs(function, args, kwargs)
         if _any_of_the_kwargs_is_a_variable(all_kwargs):
-            return Variable(
+            return InstantiatedVariable(
                 _name__=function.__name__,
                 _type_=function,
                 _kwargs_=all_kwargs,
-                _predicate_type_=PredicateType.DecoratedMethod,
             )
         return function(*args, **kwargs)
 
@@ -64,11 +63,10 @@ class Predicate(Symbol, ABC):
             cls.__init__, args, kwargs, ignore_first=True
         )
         if _any_of_the_kwargs_is_a_variable(all_kwargs):
-            return Variable(
+            return InstantiatedVariable(
                 _type_=cls,
                 _name__=cls.__name__,
                 _kwargs_=all_kwargs,
-                _predicate_type_=PredicateType.SubClassOfPredicate,
             )
         return super().__new__(cls)
 
