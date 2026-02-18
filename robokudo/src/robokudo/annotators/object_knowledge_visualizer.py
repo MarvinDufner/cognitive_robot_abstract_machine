@@ -75,7 +75,7 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
                                  transform: npt.NDArray) -> bool:
         """Insert into a given ParthoodHypothesis the information that can be extracted from the object knowledge
 
-        :param ph: A ParthoodHypothesis or one of its childs.
+        :param ph: A ParthoodHypothesis or one of its children.
         :type ph: ParthoodHypothesis
         :param object_knowledge: Knowledge about the object and its parts
         :type object_knowledge: ObjectKnowledge
@@ -108,7 +108,7 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
         roi.roi.height = corner_points[3]
         ph.roi = roi
         # Generate a full mask for now. There shouldn't be too much background on Parthood Images.
-        # Otherwise, TODO: look into a precision-mode optimization like in the yolo annotator.
+        # Otherwise, TODO: Use SegmentAnything?
         ph.roi.mask = np.ones((roi.roi.height, roi.roi.width), dtype=np.uint8) * 255
         return True
 
@@ -183,7 +183,6 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
                     continue
 
             if classification and pose:
-                # self.rk_logger.info(f"Adding information for {classification.classname}")
                 object_knowledge = self.object_kb.entries[classification.classname]
                 object_transform = robokudo.utils.type_conversion.get_transform_matrix_from_pose_annotation(pose)
                 object_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
@@ -205,7 +204,6 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
         # Visualization has two steps:
         # 1) Visualize the object with the estimated pose
         # 2) Visualize components and features
-        # mug_kb = self.object_kb.entries["Mug"]
 
         visualized_geometries = [cloud, object_frame]
         visualized_geometries.extend(obbs_list)

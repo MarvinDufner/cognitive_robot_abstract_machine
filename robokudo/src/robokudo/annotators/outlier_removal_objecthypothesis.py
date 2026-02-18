@@ -90,7 +90,6 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
                 self.dbscan_epsilon = 0.02
                 self.stat_neighbors = 200
                 self.stat_std = 0.5
-                self.test = "bruh"
 
                 # If you want to skip the complete outlier removal process on certain classes, you can
                 # add a list of strings here.
@@ -110,6 +109,7 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
         super().__init__(name, descriptor)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
+        # TODO Implement new Parameter update method without using ROS
         # self.node = Node(self.name)
         #
         # for param_name, default_value in vars(self.descriptor.parameters).items():
@@ -126,13 +126,13 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
 
         # self.node.get_logger().info("OutlierRemovalNode initialized with current parameters")
 
-    def parameters_callback(self, params):
-        for param in params:
-            if hasattr(self.descriptor.parameters, param.name):
-                setattr(self.descriptor.parameters, param.name, param.value)
+    #def parameters_callback(self, params):
+    #    for param in params:
+    #        if hasattr(self.descriptor.parameters, param.name):
+    #            setattr(self.descriptor.parameters, param.name, param.value)
 
-        # self.node.get_logger().info("Received reconf call: " + str(params))
-        return SetParametersResult(successful=True)
+    #    # self.node.get_logger().info("Received reconf call: " + str(params))
+    #    return SetParametersResult(successful=True)
 
     @robokudo.utils.error_handling.catch_and_raise_to_blackboard
     def update(self) -> py_trees.common.Status:
@@ -147,6 +147,7 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
         pcd_cluster = self.cluster_statistical_outlierremoval_pcd()
 
         if not pcd_cluster:
+            # TODO This should not be decided by this Annotator, but by the Result Generator - Refactor and test AEs
             self.rk_logger.warning(f"No Clusters have been found.")
             self.feedback_message = f"No clusters have been found"
             raise Exception("No Clusters have been found.")
