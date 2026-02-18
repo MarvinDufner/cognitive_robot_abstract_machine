@@ -18,6 +18,7 @@ The pipeline implements the following functionality:
 
 import robokudo.analysis_engine
 import robokudo.descriptors.camera_configs.config_kinect_robot_wo_transform
+import robokudo.descriptors.camera_configs.config_kinect_robot
 import robokudo.descriptors.camera_configs.config_orbbec
 import robokudo.idioms
 import robokudo.io.camera_interface
@@ -84,8 +85,8 @@ class AnalysisEngine(robokudo.analysis_engine.AnalysisEngineInterface):
             The pipeline includes commented-out options for adding triggers
             and slow processing simulation, which can be useful for debugging.
         """
-        # kinect_camera_config = robokudo.descriptors.camera_configs.config_kinect_robot_wo_transform.CameraConfig()
-        kinect_camera_config = robokudo.descriptors.camera_configs.config_orbbec.CameraConfig()
+        kinect_camera_config = robokudo.descriptors.camera_configs.config_kinect_robot_wo_transform.CameraConfig()
+        # kinect_camera_config = robokudo.descriptors.camera_configs.config_kinect_robot.CameraConfig()
         kinect_config = CollectionReaderAnnotator.Descriptor(
             camera_config=kinect_camera_config,
             camera_interface=robokudo.io.camera_interface.KinectCameraInterface(kinect_camera_config))
@@ -95,10 +96,10 @@ class AnalysisEngine(robokudo.analysis_engine.AnalysisEngineInterface):
             robokudo.idioms.pipeline_init(),
             CollectionReaderAnnotator(descriptor=kinect_config),
             ImagePreprocessorAnnotator("ImagePreprocessor"),
-            # PointcloudCropAnnotator(),
-            # PlaneAnnotator(),
+            PointcloudCropAnnotator(),
+            PlaneAnnotator(),
             # SlowAnnotator(sleep_in_s=3),
-            # PointCloudClusterExtractor(),
+            PointCloudClusterExtractor(),
 
             # ClusterColorAnnotator(),
             # ClusterColorHistogramAnnotator(),
