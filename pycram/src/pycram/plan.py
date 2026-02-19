@@ -648,9 +648,8 @@ class Plan:
         parameterization = Parameterization()
 
         for index, node in enumerate(designator_nodes):
-            prefix = f"{node.designator_type.__name__}_{index}"
             new_parameterization = self.parameterizer.parameterize(
-                node.designator_type(**node.kwargs), prefix=prefix
+                node.designator_type(**node.kwargs),
             )
             parameterization.merge_parameterization(new_parameterization)
 

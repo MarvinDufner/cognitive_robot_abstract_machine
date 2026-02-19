@@ -669,7 +669,7 @@ def test_pause_plan(immutable_model_world):
     )
 
 
-def test_algebra_sequentialplan(immutable_model_world):
+def test_algebra_sequential_plan(immutable_model_world):
     """
     Parameterize a SequentialPlan using krrood parameterizer, create a fully-factorized distribution and
     assert the correctness of sampled values after conditioning and truncation.

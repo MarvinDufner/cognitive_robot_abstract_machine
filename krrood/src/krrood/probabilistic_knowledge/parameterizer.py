@@ -96,9 +96,21 @@ class Parameterization:
 @dataclass
 class Parameterizer:
     """
-    A class that can be used to parameterize a DataAccessObject into random event variables and a simple event
+    A class that can be used to parameterize an object into object access variables and a simple event
     containing the values of the variables.
-    The resulting variables and simple event can then be used to create a probabilistic circuit.
+
+    For this, the target object first is converted into a DataAccessObject. Use the Ellipsis (...) to signal that a
+    field should be parameterized. Use None to signal that a field should not be parameterized.
+
+    For example
+
+    .. code-block:: python
+        parameterization = Parameterizer().parameterize(Orientation(..., 3.14, ..., None))
+
+    will create 3 variables for the `x, y,` and `z` fields of the Orientation class and a simple event containing the
+    assignment of `y` to 3.14. `w` will not be parameterized.
+
+    The resulting variables and simple event can then be used to create probabilistic models.
     """
 
     parameterization: Parameterization = field(default_factory=Parameterization)
