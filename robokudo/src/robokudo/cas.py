@@ -74,10 +74,6 @@ class CASViews:
     VIEWPOINT_WORLD_TO_CAM: str = "viewpoint_world_to_cam"
     """World to camera transform"""
 
-    # TODO this should rather be a plane annotation. We might have multiple planes.
-    PLANE: str = "plane"
-    """Plane information"""
-
     OBJECT_IMAGE: str = "object_image"
     """Object image data"""
 
