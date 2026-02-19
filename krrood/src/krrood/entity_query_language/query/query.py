@@ -51,6 +51,7 @@ from ..core.base_expressions import (
 from ..cache_data import (
     SeenSet,
 )
+from ..core.variable import InstantiatedVariable, Variable
 from ..failures import (
     UnsupportedNegation,
     TryingToModifyAnAlreadyBuiltQuery,
@@ -424,6 +425,10 @@ class Query(MultiArityExpressionThatPerformsACartesianProduct, ABC):
         for variable in self._selected_variables_:
             if isinstance(variable, Aggregator):
                 aggregated_variables.append(variable)
+            elif isinstance(variable, InstantiatedVariable):
+                non_aggregated_variables.extend(variable._operation_children_)
+            elif isinstance(variable, Variable) and variable._is_inferred_:
+                continue
             else:
                 non_aggregated_variables.append(variable)
         return aggregated_variables, non_aggregated_variables
