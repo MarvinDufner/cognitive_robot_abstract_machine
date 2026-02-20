@@ -756,7 +756,7 @@ class HasSupportingSurface(HasStorageSpace, ABC):
 
         surface_circuit = self._build_surface_circuit(
             category_of_interest=category_of_interest,
-            object_bloat_and_standard_deviation=largest_xy_object_dimension
+            object_bloat_and_standard_deviation=largest_xy_object_dimension,
         )
 
         if surface_circuit is None:
