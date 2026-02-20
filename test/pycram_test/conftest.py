@@ -42,7 +42,7 @@ def immutable_simple_pr2_world(simple_pr2_world_setup):
     world, robot_view, context = simple_pr2_world_setup
     state = deepcopy(world.state.data)
     yield world, robot_view, context
-    world.state.data = state
+    world.state.data[:] = state
 
 
 @pytest.fixture
