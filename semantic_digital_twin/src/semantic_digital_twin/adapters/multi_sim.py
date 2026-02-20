@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
 from types import NoneType
-from typing_extensions import Dict, List, Any, ClassVar, Type, Optional, Union, Self
+from typing_extensions import Dict, List, Any, ClassVar, Type, Optional, Union
 
 import numpy
 from mujoco_connector import MultiverseMujocoConnector
@@ -47,6 +47,7 @@ from ..world_description.geometry import (
     FileMesh,
     TriangleMesh,
     Mesh,
+    Color,
 )
 from ..world_description.world_entity import (
     Region,
@@ -920,7 +921,7 @@ class MujocoTendon(SimulatorAdditionalProperty):
     Range of allowed tendon lengths.
     """
 
-    rgba: List[float] = field(default_factory=lambda: [0.5, 0.5, 0.5, 1])
+    rgba: Color = Color(0.5, 0.5, 0.5, 1.0)
     """
     Color and transparency of the tendon.
     """
@@ -968,7 +969,7 @@ class MujocoTendon(SimulatorAdditionalProperty):
     joints: Dict[str, float] = field(default_factory=dict)
     """
     This element adds a joint to the computation of the fixed tendon length.
-    The position or angle of each included joint is multiplied by the corresponding coef value, 
+    The position or angle of each included joint is multiplied by the corresponding coefficient value,
     and added up to obtain the tendon length.
     """
 

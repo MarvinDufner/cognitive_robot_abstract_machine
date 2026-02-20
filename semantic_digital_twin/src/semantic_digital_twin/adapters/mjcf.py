@@ -643,7 +643,7 @@ class MJCFParser:
                     margin=tendon.margin,
                     material=tendon.material,
                     range=tendon.range.tolist(),
-                    rgba=tendon.rgba.tolist(),
+                    rgba=Color(*tendon.rgba),
                     solver_impedance_friction=tendon.solimp_friction.tolist(),
                     solver_impedance_limit=tendon.solimp_limit.tolist(),
                     solver_reference_friction=tendon.solref_friction.tolist(),
