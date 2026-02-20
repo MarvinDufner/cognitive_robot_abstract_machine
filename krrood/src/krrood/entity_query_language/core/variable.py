@@ -52,6 +52,10 @@ class CanHaveDomainSource(CanBehaveLikeAVariable[T], ABC):
     """
     The source type of the domain (e.g., EXPLICIT, DEDUCED, ...etc.).
     """
+    
+    def __post_init__(self):
+        self._var_ = self
+        super().__post_init__()
 
 
 @dataclass(eq=False, repr=False)
@@ -77,8 +81,6 @@ class HasDomain(CanHaveDomainSource[T], ABC):
         super().__post_init__()
 
         self._update_domain_(self._domain_)
-
-        self._var_ = self
 
     def _update_domain_(self, domain):
         """
@@ -263,7 +265,8 @@ class ExternallySetVariable(CanHaveDomainSource[T]):
         raise ValueError(f"class {self.__class__} does not have children")
 
     def _evaluate__(self, sources: Bindings) -> Iterable[OperationResult]:
-        raise ValueError(f"Variable {self._name_} should be externally set.")
+        yield from []
+        # raise ValueError(f"Variable {self._name_} should be externally set.")
 
 
 
