@@ -1,7 +1,7 @@
 Parametrization of Objects
 ==========================
 
-The ``Parameterizer`` class allows you work with underspecified python objects.
+The ``Parameterizer`` class allows you to work with underspecified python objects.
 
 The ``Parameterizer`` first converts the input object into a ``DataAccessObject`` (DAO) and then recursively traverses
 its attributes and relationships to create a ``Parameterization``. Make sure that a corresponding DAO exists for the

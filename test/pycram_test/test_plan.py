@@ -694,7 +694,9 @@ def test_algebra_sequential_plan(immutable_model_world):
 
     for action, parameters in parameterization:
         distribution = parameters.create_fully_factorized_distribution()
-        distribution, _ = distribution.conditional(parameters.assignments_for_pm)
+        distribution, _ = distribution.conditional(
+            parameters.assignments_for_conditioning
+        )
         sample = distribution.sample(1)[0]
 
         sample_dict = parameters.create_assignment_from_variables_and_sample(

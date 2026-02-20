@@ -1,13 +1,12 @@
-from dataclasses import dataclass, field
-from typing import Any, assert_never, Never
-
-from typing_extensions import List
+from dataclasses import dataclass
+from typing_extensions import List, Any, Union
 
 from random_events.variable import Variable
 
+
 from ..entity_query_language.symbolic import Index, Attribute
 
-AttributeAccessLike = Index | Attribute
+AttributeAccessLike = Union[Index, Attribute]
 
 
 @dataclass

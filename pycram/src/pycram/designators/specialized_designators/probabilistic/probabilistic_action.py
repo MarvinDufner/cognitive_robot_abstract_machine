@@ -96,7 +96,7 @@ class MoveAndPickUpVariables(Variables):
 @dataclass
 class MoveAndPickUpParameterizer(ProbabilisticAction):
     """
-    Action that moves the agent to an object and picks it up using probability tools to generate_parameterizations.
+    Action that moves the agent to an object and picks it up using probability tools to generate parameterizations.
     """
 
     variables = MoveAndPickUpVariables
@@ -163,9 +163,7 @@ class MoveAndPickUpParameterizer(ProbabilisticAction):
         free_space = free_space.marginal(xy)
 
         # create floor level
-        z_event = SimpleEvent(
-            {SpatialVariables.z.value: singleton(0.0)}
-        ).as_composite_set()
+        z_event = SimpleEvent({SpatialVariables.z.value: 0.0}).as_composite_set()
         z_event.fill_missing_variables(xy)
         free_space.fill_missing_variables(SortedSet([SpatialVariables.z.value]))
         free_space &= z_event

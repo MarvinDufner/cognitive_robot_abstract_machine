@@ -57,7 +57,7 @@ class Parameterization:
         return [v.variable for v in self.variables]
 
     @property
-    def assignments_for_pm(self) -> Dict[Variable, Any]:
+    def assignments_for_conditioning(self) -> Dict[Variable, Any]:
         return {v.variable: value for v, value in self.assignments.items()}
 
     def extend_variables(self, variables: List[ObjectAccessVariable]):
@@ -82,7 +82,7 @@ class Parameterization:
             },
         )
 
-    def parameterize_data_access_object_with_sample(
+    def _parameterize_data_access_object_with_sample(
         self, dao: DataAccessObject, sample: Dict[ObjectAccessVariable, Any]
     ):
         """
@@ -106,12 +106,12 @@ class Parameterization:
         :return: A new copy of the object with the parameters.
         """
         dao = to_dao(obj)
-        self.parameterize_data_access_object_with_sample(dao, sample)
+        self._parameterize_data_access_object_with_sample(dao, sample)
         result = dao.from_dao()
         return result
 
     def get_variable_by_name(self, name: str):
-        return [v for v in self.variables if v.variable.name == name][0]
+        return next((v for v in self.variables if v.variable.name == name), None)
 
     def create_assignment_from_variables_and_sample(
         self, variables: Iterable[Variable], sample: np.ndarray
@@ -139,7 +139,7 @@ class Parameterization:
 @dataclass
 class Parameterizer:
     """
-    A class that can be used to generate parameterizations an object into object access variables and an assignment event
+    A class that can be used to parameterize an object into object access variables and an assignment event
     containing the values of the variables.
 
     For this, the target object first is converted into a DataAccessObject. Use the Ellipsis (...) to signal that a
@@ -148,12 +148,13 @@ class Parameterizer:
     For example
 
     .. code-block:: python
-        parameterization = Parameterizer().generate_parameterizations(Orientation(..., 3.14, ..., None))
 
-    will create 3 variables for the `x, y,` and `z` fields of the Orientation class and a simple event containing the
-    assignment of `y` to 3.14. `w` will not be parameterized.
+        parameterization = Parameterizer().parameterize(Position(x=..., y=0.69, z=None))
 
-    The resulting variables and simple event can then be used to create probabilistic models.
+    will create 2 variables for the `x` and `y` fields of the Position class and an assignment containing ``{y: 0.69}``.
+    `z` will not be parameterized as its set to `None`.
+
+    The resulting variables and assignments can then be used to create probabilistic models.
     """
 
     parameterization: Parameterization = field(default_factory=Parameterization)
@@ -165,7 +166,7 @@ class Parameterizer:
         """
         Create variables for all fields of an object.
 
-        :param obj: The object to generate_parameterizations.
+        :param obj: The object to generate the parametrization from.
 
         :return: Parameterization containing the variables and simple event.
         """
@@ -188,7 +189,7 @@ class Parameterizer:
         """
         Create variables for all fields of a DataAccessObject.
 
-        :param dao: The DataAccessObject to generate_parameterizations.
+        :param dao: The DataAccessObject to extract the parameters from.
         :param dao_variable: The EQL variable corresponding to the DataAccessObject for symbolic access.
 
         :return: A Parameterization containing the variables and simple event.
