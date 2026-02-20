@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Tuple
 
 import numpy as np
 import trimesh
 from probabilistic_model.probabilistic_circuit.rx.helper import (
     uniform_measure_of_event,
-    fully_factorized,
 )
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,
@@ -82,6 +82,18 @@ class HasRootKinematicStructureEntity(SemanticAnnotation, ABC):
     """
     The root kinematic structure entity of the semantic annotation.
     """
+
+    @property
+    def scale(self) -> Scale:
+        return Scale(
+            *(self.root.combined_mesh.bounds[1] - self.root.combined_mesh.bounds[0])
+        )
+
+    @property
+    def min_max_points(self) -> Tuple[Point3, Point3]:
+        min = Point3.from_iterable(self.root.combined_mesh.bounds[0])
+        max = Point3.from_iterable(self.root.combined_mesh.bounds[1])
+        return min, max
 
     @classproperty
     def _parent_connection_type(self) -> Type[Connection]:
@@ -711,6 +723,9 @@ class HasSupportingSurface(HasStorageSpace, ABC):
         Samples points from a surface considering constraints such as object collisions, object
         dimensions, and specified categories of interest.
 
+        ..warning:: Calling this method when the self.supporting_surface is None will cause the method to calculate the
+            surface and add it to the world, resulting in model updates being published if the synchronizer is running.
+
         :param body_to_sample_for: The physical object to sample points for.
         :param category_of_interest: The object to place the sampled points around.
         :param amount: The number of points to sample.
@@ -718,35 +733,86 @@ class HasSupportingSurface(HasStorageSpace, ABC):
         :return: A list of sampled points, sorted by distance to the around_object.
         """
         if self.supporting_surface is None:
-            raise ValueError(
-                "No known supporting surface for this object. To dynamically calculate a supporting surface, call "
-                "self.calculate_supporting_surface() first, and add the resulting region to self."
-            )
-        largest_xy_object_dimension = body_to_sample_for.root.combined_mesh.extents[
-            :2
-        ].max()
-        z_object_dimension = body_to_sample_for.root.combined_mesh.extents[2]
+            with self._world.modify_world():
+                supporting_surface = self.calculate_supporting_surface()
+                self.add_supporting_surface(supporting_surface)
 
-        area_of_table = BoundingBoxCollection.from_shapes(self.supporting_surface.area)
-        area_of_table.transform_all_shapes_to_own_frame()
-        event = area_of_table.event
+        largest_xy_object_dimension = 0.1
+        z_object_dimension = 0.0
+        if body_to_sample_for:
+            largest_xy_object_dimension = body_to_sample_for.root.combined_mesh.extents[
+                :2
+            ].max()
+            z_object_dimension = body_to_sample_for.root.combined_mesh.extents[2]
+
+        self_max_z = self.supporting_surface.combined_mesh.bounds[1][2]
+        z_coordinate = np.full(
+            (amount, 1),
+            self_max_z + (z_object_dimension / 2),
+        )
+
+        truncated_event_2d = self._2d_event_truncated_by_objects(
+            largest_xy_object_dimension
+        )
+
+        objects_of_interest = (
+            self.get_objects_of_type(category_of_interest)
+            if category_of_interest
+            else []
+        )
+        if objects_of_interest:
+
+            surface_circuit = self._gaussian_mixture_from_points_truncated_by_event(
+                world_P_obj_list=[
+                    obj.root.global_pose.to_position() for obj in objects_of_interest
+                ],
+                standard_deviation=largest_xy_object_dimension,
+                event=truncated_event_2d,
+            )
+
+            if surface_circuit is None:
+                return []
+
+        else:
+            surface_circuit = uniform_measure_of_event(truncated_event_2d)
+
+        samples = surface_circuit.sample(amount)
+
+        samples = samples[np.argsort(surface_circuit.log_likelihood(samples))[::-1]]
+
+        samples = np.concatenate((samples, z_coordinate), axis=1)
+
+        return [Point3(*s, reference_frame=self.root) for s in samples]
+
+    def _2d_event_truncated_by_objects(self, object_event_bloat: float) -> Event:
+        area_of_self = BoundingBoxCollection.from_shapes(self.supporting_surface.area)
+        area_of_self.transform_all_shapes_to_own_frame()
+        event = area_of_self.event
 
         event_2d = event.marginal(SpatialVariables.xy)
         for obj in self.objects:
             object_event = (
                 BoundingBoxCollection.from_shapes(obj.root.collision)
                 .bounding_box()
-                .enlarge_all(largest_xy_object_dimension)
+                .enlarge_all(object_event_bloat)
                 .simple_event.as_composite_set()
             )
             object_event_2d = object_event.marginal(SpatialVariables.xy)
             event_2d = event_2d - object_event_2d
 
+        return event_2d
+
+    def _gaussian_mixture_from_points_truncated_by_event(
+        self, world_P_obj_list: List[Point3], standard_deviation: float, event: Event
+    ) -> Optional[ProbabilisticCircuit]:
+        """
+        Create a Gaussian mixture model from a list of points, truncated by an event.
+        """
+
         surface_circuit = ProbabilisticCircuit()
         surface_circuit_root = SumUnit(probabilistic_circuit=surface_circuit)
 
-        for obj in self.get_objects_of_type(category_of_interest):
-            world_P_obj = obj.global_pose.to_position()
+        for world_P_obj in world_P_obj_list:
 
             p_object_root = ProductUnit(probabilistic_circuit=surface_circuit)
             surface_circuit_root.add_subcircuit(p_object_root, 1.0)
@@ -754,29 +820,19 @@ class HasSupportingSurface(HasStorageSpace, ABC):
             x_p = GaussianDistribution(
                 SpatialVariables.x.value,
                 float(world_P_obj[0]),
-                largest_xy_object_dimension,
+                standard_deviation,
             )
             y_p = GaussianDistribution(
                 SpatialVariables.y.value,
                 float(world_P_obj[1]),
-                largest_xy_object_dimension,
+                standard_deviation,
             )
             p_object_root.add_subcircuit(leaf(x_p, surface_circuit))
             p_object_root.add_subcircuit(leaf(y_p, surface_circuit))
 
-        surface_circuit.truncated(event_2d)
+        surface_circuit.log_truncated_in_place(event)
 
-        samples = surface_circuit.sample(amount)
-
-        samples = samples[np.argsort(surface_circuit.log_likelihood(samples))[::-1]]
-
-        z_coordinate = np.full(
-            (amount, 1),
-            max([b.max_z for b in area_of_table]) + (z_object_dimension / 2),
-        )
-        samples = np.concatenate((samples, z_coordinate), axis=1)
-
-        return [Point3(*s, reference_frame=self.root) for s in samples]
+        return surface_circuit
 
 
 @dataclass(eq=False)

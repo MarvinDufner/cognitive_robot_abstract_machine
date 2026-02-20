@@ -532,7 +532,6 @@ class TestFactories(unittest.TestCase):
 
         self.assertIsNotNone(surface)
         self.assertEqual(len(world.regions), 1)
-        self.assertEqual(table.supporting_surface, surface)
         self.assertTrue(len(surface.area.combined_mesh.vertices) > 0)
 
     def test_sample_points_from_surface(self):
@@ -557,6 +556,7 @@ class TestFactories(unittest.TestCase):
                 name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
             )
             table.add_object(milk)
+            table.add_object(cereal)
 
             cereal_to_place = Cereal.create_with_new_body_in_world(
                 name=PrefixedName("cereal_to_place"),
@@ -564,9 +564,130 @@ class TestFactories(unittest.TestCase):
                 scale=Scale(0.1, 0.03, 0.2),
             )
 
-            surface_region = table.calculate_supporting_surface()
+        points = table.sample_points_from_surface(
+            amount=10,
+        )
+        self.assertEqual(len(points), 10)
+
+        min_point, max_point = table.min_max_points
+        assert all(p.reference_frame == table.root for p in points)
+        assert all(p.x >= min_point.x for p in points)
+        assert all(p.x <= max_point.x for p in points)
+        assert all(p.y >= min_point.y for p in points)
+        assert all(p.y <= max_point.y for p in points)
+        assert np.allclose([p.z for p in points], 0.0025)
+
+    def test_sample_points_from_surface_with_category_of_interest(self):
+        world = World()
+        root = Body(name=PrefixedName("root"))
         with world.modify_world():
-            table.add_supporting_surface(surface_region)
+            world.add_body(root)
+        with world.modify_world():
+            milk = Milk.create_with_new_body_in_world(
+                name=PrefixedName("milk"),
+                world=world,
+                scale=Scale(0.03, 0.03, 0.1),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=0.5),
+            )
+            cereal = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=-0.5),
+            )
+            table = Table.create_with_new_body_in_world(
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
+            )
+            table.add_object(milk)
+            table.add_object(cereal)
+
+        points = table.sample_points_from_surface(
+            category_of_interest=type(cereal),
+            amount=10,
+        )
+        self.assertEqual(len(points), 10)
+
+        min_point, max_point = table.min_max_points
+        assert all(p.reference_frame == table.root for p in points)
+        assert all(p.x >= min_point.x for p in points)
+        assert all(p.x <= max_point.x for p in points)
+        assert all(p.y >= min_point.y for p in points)
+        assert all(p.y <= max_point.y for p in points)
+        assert np.allclose([p.z for p in points], 0.0025)
+
+    def test_sample_points_from_surface_with_object(self):
+        world = World()
+        root = Body(name=PrefixedName("root"))
+        with world.modify_world():
+            world.add_body(root)
+        with world.modify_world():
+            milk = Milk.create_with_new_body_in_world(
+                name=PrefixedName("milk"),
+                world=world,
+                scale=Scale(0.03, 0.03, 0.1),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=0.5),
+            )
+            cereal = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=-0.5),
+            )
+            table = Table.create_with_new_body_in_world(
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
+            )
+            table.add_object(milk)
+            table.add_object(cereal)
+
+            cereal_to_place = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal_to_place"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+            )
+
+        points = table.sample_points_from_surface(
+            cereal_to_place,
+            amount=10,
+        )
+        self.assertEqual(len(points), 10)
+
+        min_point, max_point = table.min_max_points
+        assert all(p.reference_frame == table.root for p in points)
+        assert all(p.x >= min_point.x for p in points)
+        assert all(p.x <= max_point.x for p in points)
+        assert all(p.y >= min_point.y for p in points)
+        assert all(p.y <= max_point.y for p in points)
+        assert np.allclose([p.z for p in points], 0.1025)
+
+    def test_sample_points_from_surface_with_object_and_category_of_interest(self):
+        world = World()
+        root = Body(name=PrefixedName("root"))
+        with world.modify_world():
+            world.add_body(root)
+        with world.modify_world():
+            milk = Milk.create_with_new_body_in_world(
+                name=PrefixedName("milk"),
+                world=world,
+                scale=Scale(0.03, 0.03, 0.1),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=0.5),
+            )
+            cereal = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(x=-0.5),
+            )
+            table = Table.create_with_new_body_in_world(
+                name=PrefixedName("table"), world=world, scale=Scale(1.0, 1.0, 0.1)
+            )
+            table.add_object(milk)
+            table.add_object(cereal)
+
+            cereal_to_place = Cereal.create_with_new_body_in_world(
+                name=PrefixedName("cereal_to_place"),
+                world=world,
+                scale=Scale(0.1, 0.03, 0.2),
+            )
 
         points = table.sample_points_from_surface(
             cereal_to_place,
@@ -574,9 +695,14 @@ class TestFactories(unittest.TestCase):
             amount=10,
         )
         self.assertEqual(len(points), 10)
-        for p in points:
-            self.assertEqual(p.reference_frame, table.root)
-            self.assertAlmostEqual(float(p.z), 0.05 + 0.01)
+
+        min_point, max_point = table.min_max_points
+        assert all(p.reference_frame == table.root for p in points)
+        assert all(p.x >= min_point.x for p in points)
+        assert all(p.x <= max_point.x for p in points)
+        assert all(p.y >= min_point.y for p in points)
+        assert all(p.y <= max_point.y for p in points)
+        assert np.allclose([p.z for p in points], 0.1025)
 
     def test_floor_polytope(self):
         world = World()
