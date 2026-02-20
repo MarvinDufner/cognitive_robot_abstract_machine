@@ -15,7 +15,7 @@ class PoseTrajectory:
 
     poses: Tuple[PoseStamped, ...]
     """
-    Ordered TCP waypoints.
+    Ordered waypoint poses.
     """
 
     def __post_init__(self):
