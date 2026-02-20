@@ -140,7 +140,7 @@ def test_create_fully_factorized_distribution():
 
 def test_parameterize_object_with_given_values():
     """
-    Test parameterization of a single object via generate_parameterizations.
+    Test parameterization of a single object via Parameterizer.parameterize.
     """
     position = Position(x=1.0, y=2.0, z=3.0)
     parameterizer = Parameterizer()
@@ -152,12 +152,12 @@ def test_parameterize_object_with_given_values():
         Continuous("PositionDAO.z"): 3.0,
     }
 
-    assert parameterization.assignments_for_pm == result_by_hand
+    assert parameterization.assignments_for_conditioning == result_by_hand
 
 
 def test_parameterize_nested_object():
     """
-    Test parameterization of a nested object via generate_parameterizations.
+    Test parameterization of a nested object via Parameterizer.parameterize.
     """
     pose = Pose(
         position=Position(x=1.0, y=2.0, z=3.0),
@@ -175,7 +175,7 @@ def test_parameterize_nested_object():
         Continuous("PoseDAO.orientation.z"): 0.0,
         Continuous("PoseDAO.orientation.w"): 1.0,
     }
-    assert parameterization.assignments_for_pm == result_by_hand
+    assert parameterization.assignments_for_conditioning == result_by_hand
 
 
 def test_one_to_many_and_collection_of_builtins():
@@ -191,7 +191,7 @@ def test_one_to_many_and_collection_of_builtins():
         Continuous("PositionsDAO.positions[1].target.z"): 6.0,
     }
 
-    assert parameters.assignments_for_pm == result_by_hand
+    assert parameters.assignments_for_conditioning == result_by_hand
 
 
 def test_symbolic_variables():
@@ -205,7 +205,7 @@ def test_symbolic_variables():
         Symbolic("ListOfEnumDAO.list_of_enum[0]", test_enum_set),
         Symbolic("ListOfEnumDAO.list_of_enum[1]", test_enum_set),
     ]
-    assert parameterization.assignments_for_pm == {}
+    assert parameterization.assignments_for_conditioning == {}
 
 
 def test_not_follow_none_relationships():

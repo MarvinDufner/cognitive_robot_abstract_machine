@@ -101,7 +101,7 @@ class Plan:
     """
     parameterizer: Parameterizer = field(init=False)
     """
-    Parameterizer used to generate_parameterizations the plan.
+    Parameterizer used to generate parameterizations the plan.
     """
 
     def __init__(self, root: PlanNode, context: Context):
