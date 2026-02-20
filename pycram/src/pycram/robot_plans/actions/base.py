@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os.path
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 import logging
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, Field
 from enum import Enum
 from functools import cached_property
 from itertools import product
@@ -18,6 +18,7 @@ from typing_extensions import (
     List,
     Union,
     Iterable,
+    Generator,
 )
 
 from krrood.entity_query_language.entity import (
@@ -46,13 +47,9 @@ T = TypeVar("T")
 
 
 @dataclass
-class ActionDescription(DesignatorDescription):
+class ActionDescription(DesignatorDescription, ABC):
     _pre_perform_callbacks = []
     _post_perform_callbacks = []
-
-    def __post_init__(self):
-        pass
-        # self._pre_perform_callbacks.append(self._update_robot_params)
 
     def perform(self) -> Any:
         """
@@ -63,7 +60,8 @@ class ActionDescription(DesignatorDescription):
         for pre_cb in self._pre_perform_callbacks:
             pre_cb(self)
 
-        self.pre_condition()
+        if self.plan.context.evaluate_conditions:
+            self.evaluate_pre_condition()
 
         result = None
         try:
@@ -74,8 +72,9 @@ class ActionDescription(DesignatorDescription):
             pass
             # for post_cb in self._post_perform_callbacks:
             #     post_cb(self)
-            #
-            # self.validate_postcondition(result)
+
+        if self.plan.context.evaluate_conditions:
+            self.evaluate_post_condition()
 
         return result
 
@@ -86,13 +85,11 @@ class ActionDescription(DesignatorDescription):
         """
         pass
 
-    @abstractmethod
     def pre_condition(self, bound=True) -> SymbolicExpression:
-        pass
+        return True
 
-    @abstractmethod
     def post_condition(self, bound=True) -> SymbolicExpression:
-        pass
+        return True
 
     @classmethod
     def pre_perform(cls, func) -> Callable:
@@ -105,15 +102,20 @@ class ActionDescription(DesignatorDescription):
         return func
 
     @cached_property
-    def bound_variables(self):
+    def bound_variables(self) -> Dict[Any, Variable]:
         return self._create_variables(True)
 
     @cached_property
-    def unbound_variables(self):
+    def unbound_variables(self) -> Dict[Any, Variable]:
         return self._create_variables(False)
 
     @property
-    def fields(self):
+    def fields(self) -> List[Field]:
+        """
+        The fields of this action, returns only the fields defined in the class and not inherit fields of parents
+
+        :return: The fields of this action
+        """
         self_fields = list(fields(self))
         [self_fields.remove(parent_field) for parent_field in fields(ActionDescription)]
         return self_fields
@@ -149,6 +151,14 @@ class ActionDescription(DesignatorDescription):
         raise ConditionNotSatisfied(False, self.__class__, self.post_condition())
 
     def _find_domain_for_value(self, value: Any, world: World) -> List:
+        """
+        Given a value finds the possible domain of values for in the world. A domain of values is a list of all values
+        that could be used.
+
+        :param value: The value to find a domain for
+        :param world: The world in which should be searched
+        :return: A list of possible values
+        """
         value_type = type(value)
         if issubclass(value_type, SemanticAnnotation):
             return [
@@ -174,7 +184,13 @@ class ActionDescription(DesignatorDescription):
         logger.warning(f"There is no domain for type {value_type}")
         return []
 
-    def find_possible_parameter(self):
+    def find_possible_parameter(self) -> Generator[Dict[str, Any]]:
+        """
+        Queries the world using the pre_condition and yields possible parameters for this action which satisfy the
+        precondition.
+
+        :return: A dict that maps the name of the parameter to a possible value
+        """
         unbound_condition = self.pre_condition(False)
         query = a(set_of(*self.unbound_variables.values()).where(unbound_condition))
         var_to_field = dict(zip(self.unbound_variables.values(), self.fields))

@@ -64,9 +64,6 @@ class ReachAction(ActionDescription):
 
     reverse_reach_order: bool = False
 
-    def __post_init__(self):
-        super().__post_init__()
-
     def execute(self) -> None:
 
         target_pre_pose, target_pose, _ = self.grasp_description._pose_sequence(
@@ -153,9 +150,6 @@ class PickUpAction(ActionDescription):
     List to save the callbacks which should be called before performing the action.
     """
 
-    def __post_init__(self):
-        super().__post_init__()
-
     def execute(self) -> None:
         SequentialPlan(
             self.context,
@@ -193,11 +187,10 @@ class PickUpAction(ActionDescription):
 
     def pre_condition(self, bound=True) -> SymbolicExpression:
         variables = self.bound_variables if bound else self.unbound_variables
-
+        manipulator = ViewManager.get_end_effector_view(
+            variables[self.arm], self.robot_view
+        )
         return and_(
-            manipulator := ViewManager.get_end_effector_view(
-                variables[self.arm], self.robot_view
-            ),
             GripperIsFree(manipulator),
             reachable(
                 self.object_designator.global_pose,
@@ -208,11 +201,11 @@ class PickUpAction(ActionDescription):
 
     def post_condition(self, bound=True) -> SymbolicExpression:
         variables = self.bound_variables if bound else self.unbound_variables
+        manipulator = ViewManager.get_end_effector_view(
+            variables[self.arm], self.robot_view
+        )
         return or_(
-            manipulator := ViewManager.get_end_effector_view(
-                variables[self.arm], self.robot_view
-            ),
-            GripperIsNotFree(manipulator),
+            not_(GripperIsFree(manipulator)),
             is_body_in_gripper(self.object_designator, manipulator) > 0.9,
         )
 

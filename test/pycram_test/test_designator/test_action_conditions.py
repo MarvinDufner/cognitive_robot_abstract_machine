@@ -9,7 +9,7 @@ from krrood.entity_query_language.entity import (
 )
 from pycram.datastructures.enums import Arms, ApproachDirection, VerticalAlignment
 from pycram.datastructures.grasp import GraspDescription
-from pycram.failures import ConditionNotSatisfied
+from pycram.failures import ConditionNotSatisfied, PlanFailure
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
 from pycram.robot_plans import PickUpAction, PickUpActionDescription
@@ -69,13 +69,11 @@ def test_get_unbound_variables(immutable_model_world):
     assert len(unbound_variables) == 3
     assert list(unbound_variables[arm]._domain_) == [Arms.LEFT, Arms.RIGHT, Arms.BOTH]
     assert len(list(unbound_variables[grasp_desc]._domain_)) == 12
-    assert len(list(unbound_variables[kse]._domain_)) == len(
-        world.kinematic_structure_entities
-    )
+    assert len(list(unbound_variables[kse]._domain_)) == 1
 
 
-def test_pick_up_pre_conditions(immutable_model_world):
-    world, view, context = immutable_model_world
+def test_pick_up_pre_conditions(mutable_model_world):
+    world, view, context = mutable_model_world
 
     pick_action = PickUpAction(
         world.get_body_by_name("milk.stl"),
@@ -133,20 +131,20 @@ def test_pick_up_pre_condition_find_parameter(immutable_model_world):
 
     plan = SequentialPlan(context, pick_action)
 
-    pre_condition = pick_action.pre_condition()
-    post_condition = pick_action.post_condition()
-
     view.root.parent_connection.origin = HomogeneousTransformationMatrix.from_xyz_rpy(
         1.8,
         1.4,
-        0,  # yaw=-np.pi / 2
+        0,
     )
 
     with pytest.raises(ConditionNotSatisfied):
         pick_action.evaluate_pre_condition()
 
     possible = list(pick_action.find_possible_parameter())
-    print(len(possible))
+    assert len(possible) == 24
+    assert Arms.RIGHT not in [p["arm"] for p in possible]
+    assert list(possible[0].keys()) == ["object_designator", "arm", "grasp_description"]
+    assert len(set([p["object_designator"] for p in possible])) == 1
 
 
 def test_pick_up_post_condition(mutable_model_world):
@@ -178,3 +176,32 @@ def test_pick_up_post_condition(mutable_model_world):
     )
 
     assert pick_action.evaluate_post_condition()
+
+
+def test_context_evaluate_condition(mutable_model_world):
+    world, view, context = mutable_model_world
+
+    pick_action = PickUpAction(
+        world.get_body_by_name("milk.stl"),
+        Arms.LEFT,
+        GraspDescription(
+            ApproachDirection.FRONT,
+            VerticalAlignment.NoAlignment,
+            view.left_arm.manipulator,
+        ),
+    )
+    # Make action impossible
+    view.root.parent_connection.origin = HomogeneousTransformationMatrix.from_xyz_rpy(
+        1.0, 2, 0
+    )
+
+    plan = SequentialPlan(context, pick_action)
+    with pytest.raises(ConditionNotSatisfied):
+        with simulated_robot:
+            plan.perform()
+
+    context.evaluate_conditions = False
+
+    with pytest.raises(TimeoutError):
+        with simulated_robot:
+            plan.perform()
