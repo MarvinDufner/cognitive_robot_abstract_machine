@@ -183,4 +183,4 @@ class OpenCVCameraWithoutDepthInterface(CameraInterface):
         cas.set(CASViews.CAM_INFO, cam_info)
         cas.set(CASViews.CAM_INTRINSIC, cam_intrinsic)
         cas.set(CASViews.COLOR2DEPTH_RATIO, color2depth_ratio)
-        cas.set(CASViews.VIEWPOINT_CAM_TO_WORLD, viewpoint_cam_to_world)
+        # cas.set(CASViews.VIEWPOINT_CAM_TO_WORLD, viewpoint_cam_to_world) # This shouldn't be set if it's not available
