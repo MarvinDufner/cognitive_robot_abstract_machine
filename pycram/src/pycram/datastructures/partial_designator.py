@@ -105,6 +105,7 @@ class PartialDesignator(Iterable[T]):
         :yields: A list with a possible permutation of the given arguments
         """
         iter_list = [
+            # x if isinstance(x, (list, tuple)) else [x]
             x if is_iterable(x) and not type(x) == str else [x]
             for x in self.kwargs.values()
         ]

@@ -4,6 +4,7 @@ from typing import List, Any, ClassVar
 
 from typing_extensions import Callable
 
+from giskardpy.executor import SimulationPacer
 from giskardpy.motion_statechart.data_types import LifeCycleValues
 from giskardpy.motion_statechart.goals.templates import Sequence
 from giskardpy.motion_statechart.graph_node import EndMotion
@@ -77,6 +78,7 @@ class MotionExecutor:
             controller_config=QPControllerConfig(
                 target_frequency=50, prediction_horizon=4, verbose=False
             ),
+            # pacer=SimulationPacer(real_time_factor=2),
             ros_node=self.ros_node,
         )
         executor.compile(self.motion_state_chart)
