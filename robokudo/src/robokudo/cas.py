@@ -73,12 +73,9 @@ class CASViews:
     """Query information"""
 
     VIEWPOINT_CAM_TO_WORLD: str = "viewpoint_cam_to_world"
-    """DEPRECATED: Use CAM_TO_WORLD_TRANSFORM or CAM_TO_WORLD_POSE instead.
-    Camera to world transform"""
-
-    VIEWPOINT_WORLD_TO_CAM: str = "viewpoint_world_to_cam"
-    """DEPRECATED: Use WORLD_TO_CAM_TRANSFORM or WORLD_TO_CAM_POSE instead.
-    World to camera transform"""
+    """DEPRECATED: Use CAM_TO_WORLD_TRANSFORM instead.
+    Camera to world transform.
+    Type: robokudo.types.tf.StampedTransform"""
 
     CAM_TO_WORLD_TRANSFORM: str = "cam_to_world_transform"
     """Camera to world. 
