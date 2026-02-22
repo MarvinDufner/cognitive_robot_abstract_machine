@@ -11,12 +11,11 @@ import rustworkx as rx
 from typing_extensions import Any
 
 
-# ---- rustworkx-backed node wrapper to mimic needed anytree.Node API ----
 @dataclass
 class RWXNode:
     name: str
     graph: rx.PyDAG
-    weight: str = field(default='')
+    weight: str = field(default="")
     data: Optional[Any] = field(default=None)
     _primary_parent_id: Optional[int] = None
     color: ColorLegend = field(default_factory=ColorLegend)
@@ -27,7 +26,7 @@ class RWXNode:
     wrap_alpha: float = field(default=0.08)
     # Visual emphasis options
     enclosed: bool = field(default=False)
-    enclosed_name: ClassVar[str] = 'enclosed'
+    enclosed_name: ClassVar[str] = "enclosed"
 
     def __post_init__(self):
         # store self as node data to keep a 1:1 mapping
@@ -42,7 +41,9 @@ class RWXNode:
         if self.graph.has_edge(parent.id, self.id):
             return
         # Avoid creating cycles: PyDAG will raise if creates a cycle
-        self.graph.add_edge(parent.id, self.id, edge_weight if edge_weight is not None else self.weight)
+        self.graph.add_edge(
+            parent.id, self.id, edge_weight if edge_weight is not None else self.weight
+        )
 
     def remove(self):
         self.graph.remove_node(self.id)
@@ -95,7 +96,9 @@ class RWXNode:
 
     @property
     def leaves(self) -> List["RWXNode"]:
-        return [n for n in [self] + self.descendants if self.graph.out_degree(n.id) == 0]
+        return [
+            n for n in [self] + self.descendants if self.graph.out_degree(n.id) == 0
+        ]
 
     @property
     def root(self) -> "RWXNode":
@@ -107,10 +110,20 @@ class RWXNode:
     def __str__(self):
         return self.name
 
-    def visualize(self, figsize=(35, 30), node_size=7000, font_size=25, spacing_x: float = 4, spacing_y: float = 4,
-                  curve_scale: float = 0.5, layout: str = 'tidy', edge_style: str = 'orthogonal',
-                  label_max_chars_per_line: Optional[int] = 13,
-                  filename: str = "pdf_graph.pdf", title: str = "Directed Query Graph (Top to Bottom)"):
+    def visualize(
+        self,
+        figsize=(35, 30),
+        node_size=7000,
+        font_size=25,
+        spacing_x: float = 4,
+        spacing_y: float = 4,
+        curve_scale: float = 0.5,
+        layout: str = "tidy",
+        edge_style: str = "orthogonal",
+        label_max_chars_per_line: Optional[int] = 13,
+        filename: str = "pdf_graph.pdf",
+        title: str = "Directed Query Graph (Top to Bottom)",
+    ):
         """Render a rooted, top-to-bottom directed graph.
         Delegates to a dedicated visualizer class to keep this method small and reusable.
         """

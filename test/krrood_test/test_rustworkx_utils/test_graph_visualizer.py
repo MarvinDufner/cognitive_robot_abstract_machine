@@ -1,7 +1,7 @@
 import os
 
-from rustworkx_utils.rxnode import RWXNode
-from rustworkx_utils.utils import ColorLegend
+from krrood.rustworkx_utils.rxnode import RWXNode
+from krrood.rustworkx_utils.utils import ColorLegend
 import rustworkx as rx
 
 
@@ -26,9 +26,15 @@ def test_create_and_visualize_graph(tmp_path):
     cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
-        fig, ax = root.visualize(figsize=(10, 10), node_size=1500, font_size=15,
-                                  spacing_x=2.0, spacing_y=2.0,
-                                  layout='tidy', edge_style='orthogonal')
+        fig, ax = root.visualize(
+            figsize=(10, 10),
+            node_size=1500,
+            font_size=15,
+            spacing_x=2.0,
+            spacing_y=2.0,
+            layout="tidy",
+            edge_style="orthogonal",
+        )
         assert fig is not None and ax is not None
         out_file = tmp_path / "pdf_graph.pdf"
         assert out_file.exists(), "Visualization did not produce expected output file"
