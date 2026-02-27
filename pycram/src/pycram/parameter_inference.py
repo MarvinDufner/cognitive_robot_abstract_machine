@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 from abc import abstractmethod, ABC
 from dataclasses import dataclass, field
-from enum import Enum
-from itertools import product
 
 from typing_extensions import (
     Any,
@@ -14,17 +12,12 @@ from typing_extensions import (
     Type,
     TYPE_CHECKING,
     Dict,
+    Optional,
+    Generator,
 )
 
-from pycram.datastructures.enums import ApproachDirection, VerticalAlignment
-from pycram.datastructures.grasp import GraspDescription
-from pycram.datastructures.pose import PoseStamped
-from pycram.utils import get_all_values_in_enum
-from semantic_digital_twin.world import World
-from semantic_digital_twin.world_description.world_entity import (
-    SemanticAnnotation,
-    KinematicStructureEntity,
-)
+from krrood.entity_query_language.entity import variable
+from krrood.entity_query_language.symbolic import Variable
 from .datastructures.dataclasses import Context
 
 if TYPE_CHECKING:
@@ -36,71 +29,32 @@ logger = logging.getLogger("pycram")
 T = TypeVar("T")
 
 
-def find_domain_for_value(value: Any, world: World) -> List:
-    """
-    Given a value finds the possible domain of values for in the world. A domain of values is a list of all values
-    that could be used.
-
-    :param value: The value to find a domain for
-    :param world: The world in which should be searched
-    :return: A list of possible values
-    """
-    value_type = type(value)
-    if issubclass(value_type, SemanticAnnotation):
-        return [
-            sa
-            for sa in world.semantic_annotations
-            if issubclass(type(sa), (value_type, SemanticAnnotation))
-        ]
-    elif issubclass(value_type, KinematicStructureEntity):
-        # return world.kinematic_structure_entities
-        return [value]
-    elif issubclass(value_type, Enum):
-        return get_all_values_in_enum(value_type)
-    elif issubclass(value_type, PoseStamped):
-        return [value]
-    elif issubclass(value_type, GraspDescription):
-        return [
-            GraspDescription(approach, align, value.manipulator)
-            for approach, align in product(
-                get_all_values_in_enum(ApproachDirection),
-                get_all_values_in_enum(VerticalAlignment),
-            )
-        ]
-    logger.warning(f"There is no domain for type {value_type}")
-    return []
-
-
-def find_domain_for_type(value_type, world: World):
-    pass
-
-
 @dataclass
-class ParameterInferrer:
+class ParameterInferer:
     """
-    Central module to manage the infeerence of domains and parameter.
+    Central module to manage the inference of domains and parameter.
 
     Principle:
         Domains define general space of values for a type and are defined per type
         Rules: restrict the domain and are defined for certain parameters
     """
 
-    parameter_rules: List[ParameterInferenceRule] = field(
-        init=False, default_factory=list
-    )
+    parameter_rules: List[InferenceRule] = field(init=False, default_factory=list)
     """
     A set of rules that restrict the domain
     """
 
-    type_domains: List[DomainSpecification] = field(init=False, default_factory=list)
-    """
-    Domains for all defined types
-    """
+    inference_systems: List[InferenceSystem] = field(init=False, default_factory=list)
+
+    plan_domain: PlanDomain = field(init=False)
 
     plan: Plan = None
     """
-    Back-reference to the plan to which this infeerer belongs 
+    Back-reference to the plan to which this parameterizer belongs 
     """
+
+    def __post_init__(self):
+        self.plan_domain = PlanDomain(self.plan)
 
     def add_rule(self, inference_rule: InferenceRule):
         """
@@ -117,7 +71,12 @@ class ParameterInferrer:
 
         :param domain: The domain to add
         """
-        self.type_domains.append(domain)
+        self.plan_domain.add_domain(domain)
+        self.plan_domain.create_plan_domain()
+
+    def add_infer_system(self, sys: InferenceSystem):
+        self.inference_systems.append(sys)
+        sys.assign_parameterizer(self)
 
     def add_domains(self, *domains: DomainSpecification[Type[T]]):
         """
@@ -126,51 +85,8 @@ class ParameterInferrer:
         for domain in domains:
             self.add_domain(domain)
 
-    def get_domain_for_type(self, type_):
-        """
-        Finds the domain specification for a given type. The domain is the union of all Domains that are specified for
-        the given type.
-
-        :param type_: Type for which to find the domain
-        :return: The domain
-        """
-        result = set()
-        for domain in self.type_domains:
-            if domain.domain_type == type_:
-                result.update(domain.domain(self.plan.context))
-        return list(result)
-
-    def get_rules_for_parameter(self, parameter_identifier: ParameterIdentifier):
-        """
-        Finds all rules that are applicable for a parameter
-
-        :param parameter_identifier: Identification for the parameter
-        :return: A list of rules
-        """
-        return [
-            rule
-            for rule in self.parameter_rules
-            if rule.action_description == parameter_identifier.action_description
-            and rule.parameter_name == parameter_identifier.parameter_name
-        ]
-
-    def infer_domain_for_parameter(self, parameter_identifier: ParameterIdentifier):
-        """
-        Finds the domain for the type and then applies rules and their effects.
-
-        :param parameter_identifier: Identification for the parameter
-        :return: Domain for the parameter
-        """
-        domain = self.get_domain_for_type(parameter_identifier.type_)
-        if domain == [] and parameter_identifier.parameter is not Ellipsis:
-            domain = [parameter_identifier.parameter]
-        rules = self.get_rules_for_parameter(parameter_identifier)
-        for rule in rules:
-            domain = rule.apply(domain, self.plan.context)
-        return domain
-
-    def sample_value(self, value_type: Type[T]) -> T:
-        pass
+    def parameterize(self, description: PartialDesignator):
+        return self.inference_systems[0].infer_bindings_for_designator(description)
 
 
 @dataclass
@@ -179,7 +95,7 @@ class InferenceRule(Generic[T], ABC):
     Rule that restricts a domain
     """
 
-    parameter_infeerer: ParameterInferrer = field(init=False)
+    parameter_infeerer: ParameterInferer = field(init=False)
 
     @abstractmethod
     def _apply(self, domain: List[T], context: Context) -> List[T]: ...
@@ -284,6 +200,12 @@ class PlanDomain:
         for domain in domains:
             self.add_domain(domain)
 
+    def get_domain_for_type(self, type_) -> Optional[DomainSpecification]:
+        for domain in self.domain_specifications:
+            if domain.domain_type == type_:
+                return domain
+        return None
+
 
 @dataclass
 class DesignatorDomain:
@@ -327,8 +249,27 @@ class ValueDomainSpecification(DomainSpecification):
 
 
 @dataclass
-class ParameterInferenceRule(ParameterIdentifier, InferenceRule, ABC): ...
+class InferenceSystem(ABC):
 
+    plan: Plan = field(init=False)
 
-@dataclass
-class TypeInferenceRule(InferenceRule, ABC): ...
+    plan_domain: PlanDomain = field(init=False)
+
+    @abstractmethod
+    def infer_bindings_for_designator(
+        self, designator: PartialDesignator
+    ) -> Generator[Dict[str, Any]]:
+        pass
+
+    def create_variables(
+        self, designator_description: PartialDesignator
+    ) -> Dict[str, Variable]:
+        designator_domain = self.plan_domain.designator_domains[designator_description]
+        return {
+            k: variable(v.domain_type, v.domain(self.plan.context))
+            for k, v in designator_domain.parameter_domains.items()
+        }
+
+    def assign_parameterizer(self, parameterizer: ParameterInferer):
+        self.plan_domain = parameterizer.plan_domain
+        self.plan = parameterizer.plan

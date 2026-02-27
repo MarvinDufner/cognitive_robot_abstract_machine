@@ -41,6 +41,7 @@ from .datastructures.enums import TaskStatus
 from .datastructures.pose import PoseStamped
 from .failures import PlanFailure
 from .motion_executor import MotionExecutor
+from .parameter_inference import ParameterInferer
 
 if TYPE_CHECKING:
     from .robot_plans import ActionDescription
@@ -94,6 +95,8 @@ class Plan:
     Callbacks to be called when a node of the given type is ended.
     """
 
+    parameter_infeerer: ParameterInferer = field(init=False, default=None)
+
     def __init__(self, root: PlanNode, context: Context):
         super().__init__()
         self.plan_graph = rx.PyDiGraph()
@@ -109,6 +112,8 @@ class Plan:
         self.current_node: PlanNode = self.root
         if self.super_plan:
             self.super_plan.add_edge(self.super_plan.current_node, self.root)
+
+        self.parameter_infeerer = ParameterInferer(plan=self)
 
     @property
     def nodes(self) -> List[PlanNode]:
@@ -638,7 +643,7 @@ class Plan:
             all_classes.add(node.designator_type)
 
         class_diagram = ClassDiagram(list(all_classes))
-        parameterizer = Parameterizer()
+        parameterizer = ParameterInferer()
 
         all_variables = []
 
