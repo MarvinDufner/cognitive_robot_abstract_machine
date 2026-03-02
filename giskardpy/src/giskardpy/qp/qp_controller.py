@@ -266,6 +266,8 @@ class QPControllerDebugger:
         self.p_b = self.p_b[["lb", "xdot", "ub"]]
         self.p_pure_xdot = deepcopy(self.p_xdot)
         self.p_pure_xdot[-num_constr:] = 0
+        self.p_xdot_slack = deepcopy(self.p_xdot)
+        self.p_xdot_slack[:-num_constr] = 0
         if len(self.p_A) > 0:
             self.p_Ax = pd.DataFrame(
                 self.p_A.dot(self.p_pure_xdot),
@@ -273,7 +275,7 @@ class QPControllerDebugger:
                 ["data"],
                 dtype=float,
             )
-            bA_slack = self.p_xdot[len(self.p_xdot) - num_neq_constr - num_vel_constr :]
+            bA_slack = self.p_A.dot(self.p_xdot_slack)
             self.p_bA_raw.insert(1, "Ax", self.p_Ax)
             self.p_bA_raw.insert(2, "slack", bA_slack.values)
         else:
@@ -285,6 +287,9 @@ class QPControllerDebugger:
                 ["data"],
                 dtype=float,
             )
+            bA_slack = self.p_E.dot(self.p_xdot_slack)
+            self.p_bE_raw.insert(1, "Ex w/o slack", self.p_Ex)
+            self.p_bE_raw.insert(2, "slack", bA_slack)
         else:
             self.p_Ex = pd.DataFrame()
 
@@ -455,6 +460,7 @@ class QPController:
                 self.xdot_full = self.qp_solver.solver_call(qp_data.filtered)
             except InfeasibleException as e:
                 self.config.retries_with_relaxed_constraints -= 1
+                self.xdot_full = self.qp_solver.solver_call(qp_data.filtered)
                 relaxed_solution = self.qp_solver.solver_call(qp_data.relaxed())
                 if self.config.retries_with_relaxed_constraints < 0:
                     raise HardConstraintsViolatedException(
@@ -463,6 +469,8 @@ class QPController:
                 self.xdot_full = self.qp_solver.solver_call(
                     qp_data.partially_relaxed(relaxed_solution)
                 )
+            # qp_data.filtered.analyze_well_posedness()
+            self.debugger.update(self.xdot_full)
             return self.xdot_to_control_commands(self.xdot_full)
 
         except InfeasibleException as e_original:
