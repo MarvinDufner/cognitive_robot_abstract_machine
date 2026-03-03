@@ -9,7 +9,12 @@ from typing import List, Optional, TYPE_CHECKING
 import numpy as np
 import pandas
 import pandas as pd
-from giskardpy.qp.qp_data import QPData, ZeroWeightQPDataFilter, QPDataFilter
+from giskardpy.qp.qp_data import (
+    QPData,
+    ZeroWeightQPDataFilter,
+    QPDataFilter,
+    HessianOneConditioning,
+)
 from line_profiler import profile
 
 import krrood.symbolic_math.symbolic_math as sm
@@ -463,15 +468,22 @@ class QPController:
             num_neq_slack_variables=self.qp_adapter.num_neq_slack_variables,
         )
         filtered_qp_data = zero_weight_filter.apply_filters(qp_data_raw)
+        conditioner = HessianOneConditioning.from_qp_data(filtered_qp_data)
+        filtered_qp_data_conditioned = conditioner.apply(filtered_qp_data)
         try:
             try:
-                self.xdot_full = self.qp_solver.solver_call(filtered_qp_data)
+                xdot_full = self.qp_solver.solver_call(filtered_qp_data_conditioned)
+                self.xdot_full = conditioner.unapply(xdot_full)
             except InfeasibleException as e:
                 print(filtered_qp_data.pretty_print_problem())
-                self.xdot_full = self.qp_solver.solver_call(filtered_qp_data)
+                self.xdot_full = self.qp_solver.solver_call(
+                    filtered_qp_data_conditioned
+                )
 
                 self.config.retries_with_relaxed_constraints -= 1
-                self.xdot_full = self.qp_solver.solver_call(filtered_qp_data)
+                self.xdot_full = self.qp_solver.solver_call(
+                    filtered_qp_data_conditioned
+                )
                 relaxed_solution = self.qp_solver.solver_call(qp_data_raw.relaxed())
                 if self.config.retries_with_relaxed_constraints < 0:
                     raise HardConstraintsViolatedException(

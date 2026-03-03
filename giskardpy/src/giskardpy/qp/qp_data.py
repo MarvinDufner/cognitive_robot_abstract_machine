@@ -31,14 +31,24 @@ class Conditioning:
                 self.C @ new_qp_data.quadratic_weights @ self.C
             )
             new_qp_data.linear_weights = self.C @ new_qp_data.linear_weights
+
+            # Since x = C @ x_hat, the box constraints L <= x <= U become L <= C @ x_hat <= U.
+            # For a diagonal matrix C with positive entries, this is equivalent to
+            # C_inv @ L <= x_hat <= C_inv @ U.
+            diagonal_C = self.C.diagonal()
+            diagonal_C_inv = np.zeros_like(diagonal_C)
+            mask = diagonal_C != 0
+            diagonal_C_inv[mask] = 1.0 / diagonal_C[mask]
+            C_inv = sp.diags(diagonal_C_inv)
             new_qp_data.box_lower_constraints = (
-                self.C @ new_qp_data.box_lower_constraints
+                C_inv @ new_qp_data.box_lower_constraints
             )
             new_qp_data.box_upper_constraints = (
-                self.C @ new_qp_data.box_upper_constraints
+                C_inv @ new_qp_data.box_upper_constraints
             )
             new_qp_data.eq_matrix = new_qp_data.eq_matrix @ self.C
-            new_qp_data.neq_matrix = new_qp_data.neq_matrix @ self.C
+            if new_qp_data.neq_matrix.shape[0] * new_qp_data.neq_matrix.shape[1] != 0:
+                new_qp_data.neq_matrix = new_qp_data.neq_matrix @ self.C
         if self.R_eq is not None:
             new_qp_data.eq_matrix = self.R_eq @ new_qp_data.eq_matrix
             new_qp_data.eq_bounds = self.R_eq @ new_qp_data.eq_bounds
@@ -88,7 +98,7 @@ class HessianOneConditioning(Conditioning):
     @classmethod
     def from_qp_data(cls, qp_data: QPData) -> Self:
         diagonal = 1 / np.sqrt(qp_data.quadratic_weights)
-        diagonal[qp_data.quadratic_weights == 0] = 0
+        diagonal[qp_data.quadratic_weights == 0] = 1.0
         return cls(C=sp.diags(diagonal))
 
 
