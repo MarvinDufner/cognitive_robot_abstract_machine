@@ -411,6 +411,18 @@ class HasRootRegion(HasRootKinematicStructureEntity, ABC):
 
 
 @dataclass(eq=False)
+class HasGraspPose(HasRootBody, ABC):
+    """
+    A mixin class for semantic annotations that have a grasp pose.
+    """
+
+    grasp_pose: HomogeneousTransformationMatrix = field(kw_only=True)
+    """
+    The grasp pose of the semantic annotation in its root body frame.
+    """
+
+
+@dataclass(eq=False)
 class HasApertures(HasRootBody, ABC):
     """
     A mixin class for semantic annotations that have apertures.
@@ -878,18 +890,6 @@ class HasSupportingSurface(HasStorageSpace, ABC):
         surface_circuit.log_truncated_in_place(sample_space)
 
         return surface_circuit
-
-
-@dataclass(eq=False)
-class HasGraspPose(HasRootBody, ABC):
-    """
-    A mixin class for semantic annotations that have a grasp pose.
-    """
-
-    grasp_pose: HomogeneousTransformationMatrix = field(kw_only=True)
-    """
-    The grasp pose of the semantic annotation in its root body frame.
-    """
 
 
 @dataclass(eq=False)
