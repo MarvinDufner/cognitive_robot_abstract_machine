@@ -1,5 +1,5 @@
 import numpy as np
-from isort.literal import assignments
+
 from krrood.entity_query_language.factories import (
     variable,
     entity,

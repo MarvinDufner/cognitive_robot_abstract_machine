@@ -12,18 +12,16 @@ from krrood.entity_query_language.core.base_expressions import SymbolicExpressio
 from krrood.entity_query_language.core.mapped_variable import MappedVariable
 from krrood.entity_query_language.factories import variable, and_
 from krrood.entity_query_language.query.match import UnderspecifiedVariable
-from krrood.probabilistic_knowledge.object_access_variable import (
-    AttributeAccessLike,
-)
+
 from krrood.probabilistic_knowledge.probable_variable import (
     QueryToRandomEventTranslator,
 )
 from random_events.set import Set
 from random_events.variable import Symbolic
-from sphinx.util.inspect import isclass
+
 from typing_extensions import Any
 
-from random_events.src.random_events.variable import variable_from_name_and_type
+from random_events.variable import variable_from_name_and_type
 
 
 @dataclass

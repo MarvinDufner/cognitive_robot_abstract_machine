@@ -1,7 +1,6 @@
 from abc import abstractmethod
 
-from random_events.variable import Variable
-from typing_extensions import Dict, Any, Self, Type
+from typing_extensions import Dict, Any, Self
 
 
 def get_full_class_name(cls):
