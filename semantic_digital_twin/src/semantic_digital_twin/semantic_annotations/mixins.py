@@ -881,6 +881,18 @@ class HasSupportingSurface(HasStorageSpace, ABC):
 
 
 @dataclass(eq=False)
+class HasGraspPose(HasRootBody, ABC):
+    """
+    A mixin class for semantic annotations that have a grasp pose.
+    """
+
+    grasp_pose: HomogeneousTransformationMatrix = field(kw_only=True)
+    """
+    The grasp pose of the semantic annotation in its root body frame.
+    """
+
+
+@dataclass(eq=False)
 class HasCaseAsRootBody(HasSupportingSurface, ABC):
     """
     A mixin class for semantic annotations that have a case as root body.
