@@ -14,7 +14,7 @@ from functools import cached_property
 from typing import assert_never
 
 import rustworkx as rx
-from sphinx.util.inspect import ismethod, isclass
+from inspect import ismethod, isclass
 from typing_extensions import (
     Optional,
     Type,
