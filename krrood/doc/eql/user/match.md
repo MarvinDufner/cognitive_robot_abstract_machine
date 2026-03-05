@@ -56,7 +56,7 @@ fixed_connection = match_variable(FixedConnection, domain=world.connections)(
 
 ```{note}
 `match_variable` is syntactic sugar. Under the hood, it creates a {py:func}`~krrood.entity_query_language.factories.variable`,
- selects it using {py:meth}`~krrood.entity_query_language.factories.entity` and automatically adds the corresponding {py:meth}`~krrood.entity_query_language.query.query.Query.where` clauses.
+ selects it using {py:func}`~krrood.entity_query_language.factories.entity` and automatically adds the corresponding {py:meth}`~krrood.entity_query_language.query.query.Query.where` clauses.
 ```
 
 ## Full Example: Finding Connected Parts
