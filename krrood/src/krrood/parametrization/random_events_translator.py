@@ -47,6 +47,8 @@ class WhereExpressionToRandomEventTranslator:
     @cached_property
     def variables(self) -> Dict[MappedVariable, random_events.variable.Variable]:
         result = {}
+        if self.conditions_root is None:
+            return result
         for comparator in itertools.chain(
             [self.conditions_root], self.conditions_root._descendants_
         ):

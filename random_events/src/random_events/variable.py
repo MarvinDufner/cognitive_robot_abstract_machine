@@ -10,6 +10,13 @@ from random_events.set import Set, SetElement
 from random_events.sigma_algebra import AbstractCompositeSet
 from random_events.utils import SubclassJSONSerializer, CPPWrapper
 
+compatible_types = (
+    int,
+    float,
+    bool,
+    enum.Enum,
+)  # types that can be expressed variable
+
 
 class Variable(SubclassJSONSerializer, CPPWrapper):
     """

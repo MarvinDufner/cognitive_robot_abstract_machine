@@ -704,7 +704,9 @@ def test_algebra_sequential_plan(mutable_model_world):
         keep_joint_states=...,
     )
 
+    navigate_action.expression.build()
     parameters = UnderspecifiedParameters(navigate_action)
+
     model = fully_factorized(parameters.variables.values())
 
     registry = DictRegistry({NavigateAction: model})
@@ -736,6 +738,7 @@ def test_parameterization_of_pick_up(mutable_model_world):
             manipulator=variable(Manipulator, world.semantic_annotations),
         ),
     )
+    pick_up_description.expression.build()
 
     parameters = UnderspecifiedParameters(pick_up_description)
 
@@ -743,11 +746,11 @@ def test_parameterization_of_pick_up(mutable_model_world):
 
     [manipulator_offset] = [
         v
-        for v in parameters.factory.flat_variables
+        for v in parameters.variables.values()
         if v.name.endswith("manipulation_offset")
     ]
 
-    assert manipulator_offset.value == 0.05
+    assert parameters.assignments_for_conditioning[manipulator_offset] == 0.05
 
     model = fully_factorized(parameters.variables.values())
     registry = DictRegistry({PickUpAction: model})

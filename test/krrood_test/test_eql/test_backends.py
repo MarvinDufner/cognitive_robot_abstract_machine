@@ -10,11 +10,14 @@ from krrood.entity_query_language.factories import (
     entity,
     an,
     underspecified,
+    variable_from,
 )
 from krrood.ormatic.dao import to_dao
 from krrood.parametrization.model_registries import DictRegistry
 from krrood.parametrization.parameterizer import UnderspecifiedParameters
 from probabilistic_model.probabilistic_circuit.rx.helper import fully_factorized
+from random_events.set import Set
+from random_events.variable import Symbolic
 from ..dataset.example_classes import Pose, Position, Orientation
 
 
@@ -64,3 +67,13 @@ def test_same_query_multiple_backends(session, database):
         assert value.position.x > 0.5
 
     assert pm_backend.number_of_samples == len({v.position for v in values})
+
+
+def test_probabilistic_backend_with_symbolic_expression():
+
+    prob_q = underspecified(Position)(x=..., y=..., z=variable_from([1, 2, 3]))
+    prob_q.expression.build()
+    parameters = UnderspecifiedParameters(prob_q)
+    assert parameters.variables["Position.z"] == Symbolic(
+        "Position.z", Set.from_iterable([1, 2, 3])
+    )

@@ -9,13 +9,14 @@ import numpy as np
 from typing_extensions import Any
 
 import random_events.variable
-from krrood.adapters.json_serializer import leaf_types
+from krrood.entity_query_language.core.base_expressions import SymbolicExpression
 from krrood.entity_query_language.factories import and_
 from krrood.entity_query_language.query.match import MatchVariable
 from krrood.parametrization.random_events_translator import (
     WhereExpressionToRandomEventTranslator,
 )
 from random_events.product_algebra import Event
+from random_events.set import Set
 
 
 @dataclass
@@ -61,7 +62,19 @@ class UnderspecifiedParameters:
         result = {v.name: v for v in self._random_event_compiler.variables.values()}
 
         for literal in self.statement.literals:
-            if literal.assigned_variable._type_ not in leaf_types:
+
+            if isinstance(literal.assigned_value, SymbolicExpression):
+                random_events_variable = random_events.variable.Symbolic(
+                    literal.assigned_variable._name_,
+                    Set.from_iterable(literal.assigned_value.tolist()),
+                )
+                result[random_events_variable.name] = random_events_variable
+                continue
+
+            if not issubclass(
+                literal.assigned_variable._type_,
+                random_events.variable.compatible_types,
+            ):
                 continue
 
             random_events_variable = random_events.variable.variable_from_name_and_type(
@@ -83,9 +96,10 @@ class UnderspecifiedParameters:
         for literal in self.statement.literals:
             variable = self.variables.get(literal.assigned_variable._name_, None)
             if variable is None or isinstance(
-                literal.assigned_variable._value_, type(Ellipsis)
+                literal.assigned_variable._value_, (type(Ellipsis), SymbolicExpression)
             ):
                 continue
+
             result[variable] = literal.assigned_variable._value_
         return result
 
