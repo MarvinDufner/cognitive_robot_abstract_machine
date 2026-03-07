@@ -9,7 +9,6 @@ import numpy as np
 from typing_extensions import Any
 
 import random_events.variable
-from krrood.adapters.json_serializer import leaf_types
 from krrood.entity_query_language.core.base_expressions import SymbolicExpression
 from krrood.entity_query_language.factories import and_
 from krrood.entity_query_language.query.match import MatchVariable
@@ -72,7 +71,10 @@ class UnderspecifiedParameters:
                 result[random_events_variable.name] = random_events_variable
                 continue
 
-            if literal.assigned_variable._type_ not in leaf_types:
+            if not issubclass(
+                literal.assigned_variable._type_,
+                random_events.variable.compatible_types,
+            ):
                 continue
 
             random_events_variable = random_events.variable.variable_from_name_and_type(
