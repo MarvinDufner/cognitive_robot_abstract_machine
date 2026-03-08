@@ -40,9 +40,10 @@ class RetractDirection(Enum):
     """Retract along the gripper's negative Z axis (pull back)."""
 
 
-def make_allow_collision_rule(
+def make_rule_for_allowing_collision_between_two_groups(
     bodies1: List[Body], bodies2: List[Body]
 ) -> UpdateTemporaryCollisionRules:
+    """Create a temporary collision rule that allows collisions between two groups of bodies."""
     return UpdateTemporaryCollisionRules(
         temporary_rules=[
             AllowCollisionBetweenGroups(
@@ -96,7 +97,9 @@ class CollisionAwareArmMotion(BaseMotion):
             if len(tasks) == 1:
                 return tasks[0]
             return Parallel(tasks, minimum_success=minimum_success)
-        allow_rule = make_allow_collision_rule(self._hand_bodies, self.object_bodies)
+        allow_rule = make_rule_for_allowing_collision_between_two_groups(
+            self._hand_bodies, self.object_bodies
+        )
         motion = Parallel(
             [*tasks, ExternalCollisionAvoidance(), SelfCollisionAvoidance()],
             minimum_success=minimum_success,
@@ -154,10 +157,6 @@ class RetractMotion(CollisionAwareArmMotion):
     """
     Motion that retracts the gripper with collision avoidance.
     Keeps the orientation of the gripper fixed while moving.
-
-    Supports two directions:
-    - WORLD_Z: lift along the world root's positive Z axis
-    - GRIPPER_Z: retract along the gripper's negative Z axis (pull back)
     """
 
     distance: float

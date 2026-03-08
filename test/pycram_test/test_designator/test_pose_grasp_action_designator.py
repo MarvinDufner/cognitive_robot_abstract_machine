@@ -91,7 +91,7 @@ def test_pose_grasp_precondition_fails_without_grasp_pose(pose_grasp_world):
     box_body = world.get_body_by_name("grasp_box")
 
     obj = GraspableBox(root=box_body, _world=world, grasp_pose="")
-    action = PoseGraspActionDescription(object=obj, arm=Arms.LEFT).resolve()
+    action = PoseGraspActionDescription(target=obj, arm=Arms.LEFT).resolve()
 
     with pytest.raises(PlanFailure):
         action.validate_precondition()
@@ -102,7 +102,7 @@ def test_pose_grasp_and_lift_precondition_fails_without_grasp_pose(pose_grasp_wo
     box_body = world.get_body_by_name("grasp_box")
 
     obj = GraspableBox(root=box_body, _world=world, grasp_pose="")
-    action = PoseGraspAndLiftActionDescription(object=obj, arm=Arms.LEFT).resolve()
+    action = PoseGraspAndLiftActionDescription(target=obj, arm=Arms.LEFT).resolve()
 
     with pytest.raises(PlanFailure):
         action.validate_precondition()
@@ -124,7 +124,7 @@ def test_pose_grasp_action(pose_grasp_world, rclpy_node):
     plan = SequentialPlan(
         context,
         ParkArmsActionDescription(Arms.BOTH),
-        PoseGraspActionDescription(object=obj, arm=Arms.LEFT),
+        PoseGraspActionDescription(target=obj, arm=Arms.LEFT),
     )
     with simulated_robot:
         plan.perform()
@@ -149,7 +149,7 @@ def test_pose_grasp_and_lift_action(pose_grasp_world, rclpy_node):
     plan = SequentialPlan(
         context,
         ParkArmsActionDescription(Arms.BOTH),
-        PoseGraspAndLiftActionDescription(object=obj, arm=Arms.LEFT),
+        PoseGraspAndLiftActionDescription(target=obj, arm=Arms.LEFT),
     )
     with simulated_robot:
         plan.perform()

@@ -27,7 +27,7 @@ class PoseGraspAction(ActionDescription):
     Requires the object to carry a HasGraspPose semantic annotation.
     """
 
-    object: HasGraspPose
+    target: HasGraspPose
     """The object to grasp."""
 
     arm: Arms
@@ -45,8 +45,8 @@ class PoseGraspAction(ActionDescription):
             MoveGripperMotion(gripper=self.arm, motion=GripperState.OPEN),
             PoseGraspMotion(
                 arm=self.arm,
-                grasp_pose=self.object.grasp_pose,
-                object_bodies=list(self.object.bodies),
+                grasp_pose=self.target.grasp_pose,
+                object_bodies=list(self.target.bodies),
                 pre_grasp_distance=self.pre_grasp_distance,
                 use_collision_avoidance=self.use_collision_avoidance,
             ),
@@ -54,29 +54,29 @@ class PoseGraspAction(ActionDescription):
         ).perform()
 
     def validate_precondition(self):
-        if not isinstance(self.object.grasp_pose, HomogeneousTransformationMatrix):
+        if not isinstance(self.target.grasp_pose, HomogeneousTransformationMatrix):
             raise PlanFailure(
-                f"Cannot perform PoseGraspAction: {self.object} has no grasp pose set."
+                f"Cannot perform PoseGraspAction: {self.target} has no grasp pose set."
             )
 
     def validate_postcondition(self, result: Optional[Any] = None):
         # TODO change when validate_postcondition() actually is called after base motions are finished
         pass
-        # if not robot_holds_body(self.robot_view, self.object.root):
-        #     raise ObjectNotGraspedError(self.object.root, self.robot_view, self.arm)
+        # if not robot_holds_body(self.robot_view, self.target.root):
+        #     raise ObjectNotGraspedError(self.target.root, self.robot_view, self.arm)
 
     @classmethod
     def description(
         cls,
         arm: Union[Iterable[Arms], Arms],
-        object: HasGraspPose,
+        target: HasGraspPose,
         pre_grasp_distance: Union[Iterable[float], float] = 0.15,
         use_collision_avoidance: Union[Iterable[bool], bool] = True,
     ) -> PartialDesignator["PoseGraspAction"]:
         return PartialDesignator[PoseGraspAction](
             PoseGraspAction,
             arm=arm,
-            object=object,
+            target=target,
             pre_grasp_distance=pre_grasp_distance,
             use_collision_avoidance=use_collision_avoidance,
         )
@@ -90,7 +90,7 @@ class PoseGraspAndLiftAction(ActionDescription):
     Requires the object to carry a HasGraspPose semantic annotation
     """
 
-    object: HasGraspPose
+    target: HasGraspPose
     """The object to grasp and lift."""
 
     arm: Arms
@@ -117,7 +117,7 @@ class PoseGraspAndLiftAction(ActionDescription):
         SequentialPlan(
             self.context,
             PoseGraspActionDescription(
-                object=self.object,
+                target=self.target,
                 arm=self.arm,
                 pre_grasp_distance=self.pre_grasp_distance,
                 use_collision_avoidance=self.use_collision_avoidance,
@@ -126,14 +126,14 @@ class PoseGraspAndLiftAction(ActionDescription):
 
         with self.world.modify_world():
             self.world.move_branch_with_fixed_connection(
-                self.object.root, hand.tool_frame
+                self.target.root, hand.tool_frame
             )
 
         SequentialPlan(
             self.context,
             RetractMotion(
                 arm=self.arm,
-                object_bodies=list(self.object.bodies),
+                object_bodies=list(self.target.bodies),
                 distance=self.retract_distance,
                 direction=self.retract_direction,
                 reference_velocity=self.max_retract_velocity,
@@ -142,23 +142,23 @@ class PoseGraspAndLiftAction(ActionDescription):
         ).perform()
 
     def validate_precondition(self):
-        if not isinstance(self.object.grasp_pose, HomogeneousTransformationMatrix):
+        if not isinstance(self.target.grasp_pose, HomogeneousTransformationMatrix):
             raise PlanFailure(
-                f"Cannot perform PoseGraspAndLiftAction: {self.object} has no grasp pose set."
+                f"Cannot perform PoseGraspAndLiftAction: {self.target} has no grasp pose set."
             )
 
     def validate_postcondition(self, result: Optional[Any] = None):
         # TODO change when validate_postcondition() actually is called after base motions are finished
-        # if not robot_holds_body(self.robot_view, self.object.root):
+        # if not robot_holds_body(self.robot_view, self.target.root):
         hand = ViewManager.get_end_effector_view(self.arm, self.robot_view)
-        if self.world.get_connection(hand.tool_frame, self.object.root) is None:
-            raise ObjectNotGraspedError(self.object.root, self.robot_view, self.arm)
+        if self.world.get_connection(hand.tool_frame, self.target.root) is None:
+            raise ObjectNotGraspedError(self.target.root, self.robot_view, self.arm)
 
     @classmethod
     def description(
         cls,
         arm: Union[Iterable[Arms], Arms],
-        object: HasGraspPose,
+        target: HasGraspPose,
         pre_grasp_distance: Union[Iterable[float], float] = 0.15,
         retract_distance: Union[Iterable[float], float] = 0.1,
         retract_direction: Union[
@@ -170,7 +170,7 @@ class PoseGraspAndLiftAction(ActionDescription):
         return PartialDesignator[PoseGraspAndLiftAction](
             PoseGraspAndLiftAction,
             arm=arm,
-            object=object,
+            target=target,
             pre_grasp_distance=pre_grasp_distance,
             retract_distance=retract_distance,
             retract_direction=retract_direction,
