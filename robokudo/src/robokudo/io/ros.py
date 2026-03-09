@@ -3,10 +3,10 @@ import rclpy
 import rclpy.node
 from typing_extensions import Optional
 
-rk_node = None
+_rk_node = None
 """Central RoboKudo ROS node."""
 
-rk_node_lock = threading.Lock()
+_rk_node_lock = threading.Lock()
 """Lock for safe creation of the central ROS node."""
 
 
@@ -19,11 +19,11 @@ def init_node(node_name: str, *args, **kwargs) -> rclpy.node.Node:
     :param node_name: Name of the ROS node
     :return: The newly created ROS node
     """
-    global rk_node
-    with rk_node_lock:
-        if rk_node is None:
-            rk_node = rclpy.create_node(node_name, *args, **kwargs)
-    return rk_node
+    global _rk_node
+    with _rk_node_lock:
+        if _rk_node is None:
+            _rk_node = rclpy.create_node(node_name, *args, **kwargs)
+    return _rk_node
 
 
 def get_node() -> Optional[rclpy.node.Node]:
@@ -32,9 +32,9 @@ def get_node() -> Optional[rclpy.node.Node]:
     :return: The central ROS node instance
     :raises RuntimeError: If the node has not been initialized yet
     """
-    global rk_node
-    with rk_node_lock:
-        if rk_node is None:
+    global _rk_node
+    with _rk_node_lock:
+        if _rk_node is None:
             raise RuntimeError("RoboKudo ROS node not initialized yet!")
         else:
-            return rk_node
+            return _rk_node
