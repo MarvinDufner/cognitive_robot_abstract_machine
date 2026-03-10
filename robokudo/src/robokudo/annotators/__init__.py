@@ -18,5 +18,6 @@ The package contains:
 * Testing annotators for debugging
 * Utility annotators for common tasks
 """
-from . import core
-from . import outputs
+
+# from . import core
+# from . import outputs

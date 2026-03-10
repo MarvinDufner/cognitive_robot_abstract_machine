@@ -18,6 +18,8 @@ The module is used for:
 * Output type safety
 """
 
+from __future__ import annotations
+
 import logging
 
 import numpy as np

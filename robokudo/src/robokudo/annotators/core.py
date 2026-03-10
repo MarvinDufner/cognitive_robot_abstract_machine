@@ -197,7 +197,7 @@ class BaseAnnotator(py_trees.behaviour.Behaviour):
         """
         return self.get_parent_pipeline().cas
 
-    def get_parent_pipeline(self) -> Optional[robokudo.pipeline.Pipeline]:
+    def get_parent_pipeline(self) -> Optional["robokudo.pipeline.Pipeline"]:
         """Get the pipeline containing this annotator.
 
         :return: The parent pipeline instance or None if not found
