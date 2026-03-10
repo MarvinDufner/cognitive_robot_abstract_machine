@@ -27,6 +27,7 @@ import rclpy
 import robokudo.annotators
 import robokudo.cas
 import robokudo.io
+from robokudo.world import world_instance
 
 
 class CollectionReaderAnnotator(robokudo.annotators.core.BaseAnnotator):
@@ -152,6 +153,9 @@ class CollectionReaderAnnotator(robokudo.annotators.core.BaseAnnotator):
 
             # Create a fresh CAS for the pipeline
             pipeline.create_new_cas()
+
+            # Create a fresh world
+            robokudo.world.clear_world()
 
             # Restore any existing queries
             if query:
