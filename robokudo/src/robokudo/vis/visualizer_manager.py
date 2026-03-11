@@ -52,11 +52,11 @@ class VisualizationManager(Behaviour):
     * Visualization timing and performance monitoring
 
     .. note::
-    The manager operates in three phases:
+        The manager operates in three phases:
 
-    1. Pre-tick: Prepare visualizers for new data
-    2. Tick: Update visualizations
-    3. Post-tick: Cleanup and synchronization
+        1. Pre-tick: Prepare visualizers for new data
+        2. Tick: Update visualizations
+        3. Post-tick: Cleanup and synchronization
     """
 
     def __init__(self, name: str) -> None:
@@ -91,8 +91,8 @@ class VisualizationManager(Behaviour):
         :param pipeline: Pipeline to create visualizers for
 
         .. note::
-        Creates one instance of each visualizer type and associates them
-        with the pipeline. All visualizers share a common visualization state.
+            Creates one instance of each visualizer type and associates them
+            with the pipeline. All visualizers share a common visualization state.
         """
         # TODO Handle shared visualization context - Not all Visualizers need one!
         shared_state = robokudo.vis.visualizer.Visualizer.SharedState()
@@ -122,8 +122,8 @@ class VisualizationManager(Behaviour):
         * Stores references to found pipelines
 
         .. note::
-        The VisualizationManager should be placed one level below the top node
-        (Parallel) in the behavior tree.
+            The VisualizationManager should be placed one level below the top node
+            (Parallel) in the behavior tree.
         """
         self.rk_logger.debug("%s.initialise()" % self.__class__.__name__)
         self.pipelines = {}
@@ -147,8 +147,8 @@ class VisualizationManager(Behaviour):
         :returns: FAILURE if any visualizer indicates termination, RUNNING otherwise
 
         .. note::
-        The update cycle ensures synchronized visualization across all backends
-        while maintaining separation between data buffers and visualization state.
+            The update cycle ensures synchronized visualization across all backends
+            while maintaining separation between data buffers and visualization state.
         """
         self.rk_logger.debug("%s.update()" % self.__class__.__name__)
         start_timer = default_timer()

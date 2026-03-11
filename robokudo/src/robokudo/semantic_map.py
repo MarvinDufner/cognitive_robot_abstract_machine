@@ -55,7 +55,7 @@ class BaseSemanticMap:
         Initialize an empty semantic map with visualization support.
         """
 
-        self.entries: Dict = dict()
+        self.entries: Dict[str, SemanticMapEntry] = dict()
         """Dictionary mapping region names to SemanticMapEntry objects."""
 
         self.node: Node = Node("base_semantic_map")

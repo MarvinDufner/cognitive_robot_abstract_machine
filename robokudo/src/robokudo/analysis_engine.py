@@ -55,4 +55,4 @@ class SubtreeInterface(AnalysisEngineInterface):
     To provide semantic difference,
     """
 
-    top_level = False
+    top_level: bool = False

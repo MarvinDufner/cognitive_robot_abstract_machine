@@ -199,7 +199,7 @@ def generate_pydot_graph(
         visibility_level: VisibilityLevel,
         collapse_decorators: bool,
         timing_info_dict: Optional[Dict],
-    ):
+    ) -> None:
         """
         Add edges to the dot graph recursively.
 
