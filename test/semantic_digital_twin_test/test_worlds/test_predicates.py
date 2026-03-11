@@ -465,7 +465,7 @@ def test_region_is_occupied(pr2_world_state_reset):
     assert is_region_occupied(target_region, pr2_world_state_reset)
 
     assert not is_region_occupied(
-        target_region, pr2_world_state_reset, view.bodies_with_enabled_collision
+        target_region, pr2_world_state_reset, view.bodies_with_collision
     )
 
 

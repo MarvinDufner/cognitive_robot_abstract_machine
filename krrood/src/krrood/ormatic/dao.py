@@ -5,6 +5,8 @@ import inspect
 import logging
 import threading
 from dataclasses import dataclass, field, is_dataclass, fields, MISSING
+from functools import lru_cache
+
 from krrood.utils import memoize
 from typing import _GenericAlias
 
@@ -1281,7 +1283,7 @@ def _get_clazz_by_original_clazz(
     return None
 
 
-@memoize
+@lru_cache
 def get_dao_class(
     original_clazz: Type, expected_type: Optional[Type] = None
 ) -> Optional[Type[DataAccessObject]]:
