@@ -251,6 +251,21 @@ def test_perform_desig(immutable_model_world):
     assert len(plan.edges) == len(plan.all_nodes) - 1
 
 
+def test_perform_parallel_desig(immutable_model_world):
+    world, robot_view, context = immutable_model_world
+    plan = ParallelPlan(
+        context,
+        ParkArmsActionDescription(Arms.BOTH),
+        MoveTorsoActionDescription(TorsoState.HIGH),
+    )
+
+    with simulated_robot:
+        plan.perform()
+
+    for node in plan.nodes:
+        assert node.status == TaskStatus.SUCCEEDED
+
+
 def test_perform_single_designator(immutable_model_world):
     world, robot_view, context = immutable_model_world
 
@@ -279,6 +294,9 @@ def test_perform_parallel(immutable_model_world):
     plan = ParallelPlan(context, act, act2, act3)
     with simulated_robot:
         plan.perform()
+
+    for node in plan.nodes:
+        assert node.status == TaskStatus.SUCCEEDED
 
 
 def test_perform_repeat(immutable_model_world):

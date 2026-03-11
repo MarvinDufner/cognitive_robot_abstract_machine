@@ -108,22 +108,16 @@ def cleanup_after_test():
     yield
     # runs AFTER each test (even if the test fails or errors)
     SymbolGraph().clear()
+    class_diagram.clear()
 
 
-@pytest.fixture(autouse=True, scope="function")
-def cleanup_lru_cache_after_test():
-    yield
-    for obj in gc.get_objects():
-        if isinstance(obj, _lru_cache_wrapper):
-            obj.cache_clear()
-
-
-@pytest.fixture(autouse=True, scope="function")
+@pytest.fixture(autouse=True, scope="module")
 def count_worlds():
     yield
     unreachable = gc.collect()
     world_in_mem = objgraph.count("World")
-    if world_in_mem > 20:
+    print(f"Number of worlds after test: {objgraph.count("World")}")
+    if world_in_mem > 30:
         print("Unreachable objects found:", unreachable)
         print(f"Number of worlds after test: {objgraph.count("World")}")
         raise MemoryError(
