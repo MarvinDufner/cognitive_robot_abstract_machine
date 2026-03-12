@@ -7,7 +7,6 @@ from giskardpy.qp.qp_data import (
     QPDataExplicit,
 )
 from giskardpy.qp.solvers.qp_solver_piqp import QPSolverPIQP
-from giskardpy.qp.solvers.qp_solver_qpSWIFT import QPSolverQPSwift
 
 
 @pytest.fixture()
@@ -7828,57 +7827,57 @@ def sadness_qp21():
 
 def test_qp_data_inequality(simple_inequality_qp):
     qp_data, expected = simple_inequality_qp
-    result = QPSolverQPSwift().solver_call(qp_data)
+    result = QPSolverPIQP().solver_call(qp_data)
     assert np.allclose(result, expected)
 
 
 def test_qp_data_simple_eq_as_inequality_qp(simple_eq_as_inequality_qp):
     qp_data, expected = simple_eq_as_inequality_qp
-    result = QPSolverQPSwift().solver_call(qp_data)
+    result = QPSolverPIQP().solver_call(qp_data)
     assert np.allclose(result, expected)
 
 
 def test_pretty_print(simple_inequality_qp):
     qp_data, expected = simple_inequality_qp
     qp = eval(qp_data.pretty_print_problem())
-    result = QPSolverQPSwift().solver_call(qp)
+    result = QPSolverPIQP().solver_call(qp)
     assert np.allclose(result, expected)
 
 
 def test_qp_data_equality(simple_equality_qp):
     qp_data, expected = simple_equality_qp
-    result = QPSolverQPSwift().solver_call(qp_data)
+    result = QPSolverPIQP().solver_call(qp_data)
     assert np.allclose(result, expected)
 
 
 def test_qp_data_box_constraints(box_constraints_qp):
     qp_data, expected = box_constraints_qp
-    result = QPSolverQPSwift().solver_call(qp_data)
+    result = QPSolverPIQP().solver_call(qp_data)
     assert np.allclose(result, expected)
 
 
 def test_qp_data_linear_weights(linear_weights_qp):
     qp_data, expected = linear_weights_qp
-    result = QPSolverQPSwift().solver_call(qp_data)
+    result = QPSolverPIQP().solver_call(qp_data)
     assert np.allclose(result, expected)
 
 
 def test_qp_data_larger_qp(larger_qp):
     qp_data, expected = larger_qp
-    result = QPSolverQPSwift().solver_call(qp_data)
+    result = QPSolverPIQP().solver_call(qp_data)
     assert np.allclose(result, expected, atol=1e-5)
 
 
-def test_sadness_qp_qpswift_raw(sadness_qp_raw):
+def test_sadness_qp_raw(sadness_qp_raw):
     qp_data = sadness_qp_raw
     QPSolverPIQP().solver_call(qp_data)
 
 
-def test_sadness_qp_qpswift17(sadness_qp17):
+def test_sadness_qp17(sadness_qp17):
     qp_data = sadness_qp17
     QPSolverPIQP().solver_call(qp_data)
 
 
-def test_sadness_qp_qpswift21(sadness_qp21):
+def test_sadness_qp21(sadness_qp21):
     qp_data = sadness_qp21
     QPSolverPIQP().solver_call(qp_data)
