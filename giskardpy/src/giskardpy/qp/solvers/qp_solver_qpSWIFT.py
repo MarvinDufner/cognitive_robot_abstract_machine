@@ -54,7 +54,7 @@ class QPSolverQPSwift(QPSolver[QPDataExplicit]):
         )
         exit_flag = result.exit_flag
         if not self.big_ball_mode:
-            if exit_flag != 1:
+            if exit_flag != QPSWIFTExitFlags.Optimal:
                 error_code = QPSWIFTExitFlags(exit_flag)
                 raise QPSolverException(f"Failed to solve qp: {str(error_code)}")
         return result.x

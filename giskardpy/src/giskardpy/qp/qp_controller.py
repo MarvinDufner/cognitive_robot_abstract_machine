@@ -19,8 +19,8 @@ from giskardpy.qp.exceptions import (
 )
 from giskardpy.qp.qp_data import (
     QPDataExplicit,
-    QPDataFactory,
 )
+from giskardpy.qp.qp_data_factories import QPDataFactory
 from giskardpy.qp.solvers.qp_solver import QPSolver
 from giskardpy.utils.utils import create_path
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
@@ -386,9 +386,10 @@ class QPController:
             config=self.config,
         )
 
-        self.qp_data_factory = self.qp_solver.qp_data_type.factory(
-            generic_qp_data_symbolic
+        qp_data_factory_class = QPDataFactory.get_factory_from_qp_data_type(
+            self.qp_solver.qp_data_type
         )
+        self.qp_data_factory = qp_data_factory_class(generic_qp_data_symbolic)
         self.qp_data_factory.compile(
             world_state_symbols=self.world_state_symbols,
             life_cycle_symbols=self.life_cycle_variables,

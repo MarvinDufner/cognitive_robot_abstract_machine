@@ -6,9 +6,16 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse import issparse
-from typing_extensions import Self, TYPE_CHECKING, Generic, TypeVar, get_args
+from typing_extensions import (
+    Self,
+    TYPE_CHECKING,
+    Generic,
+    TypeVar,
+    get_args,
+    assert_never,
+)
 
-from giskardpy.qp.qp_data import QPData
+from giskardpy.qp.qp_data import QPData, QPDataExplicit, QPDataTwoSidedInequality
 from krrood.symbolic_math.symbolic_math import (
     CompiledFunctionWithViews,
     VariableParameters,
@@ -44,6 +51,18 @@ class QPDataFactory(Generic[T], ABC):
         The semDT type for which this converter handles conversion.
         """
         return get_args(cls.__orig_bases__[0])[0]
+
+    @classmethod
+    def get_factory_from_qp_data_type(
+        cls, qp_data_type: type[QPData]
+    ) -> type[QPDataFactory]:
+        """
+        Returns the factory that handles conversion for the given QPData type.
+        """
+        for subclass in cls.__subclasses__():
+            if subclass.qp_data_type == qp_data_type:
+                return subclass
+        assert_never(qp_data_type)
 
     @abstractmethod
     def compile(

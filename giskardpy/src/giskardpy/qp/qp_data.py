@@ -204,8 +204,8 @@ class QPDataExplicit(QPData):
             f"    neq_matrix={self._sparse_matrix_to_str(self.inequality_matrix)},\n"
             f"    neq_lower_bounds={self._np_array_to_str(self.inequality_lower_bounds)},\n"
             f"    neq_upper_bounds={self._np_array_to_str(self.inequality_upper_bounds)},\n"
-            f"    num_eq_slack_variables={self.num_equality_slack_variables},\n"
-            f"    num_neq_slack_variables={self.num_inequality_slack_variables},\n"
+            f"    num_equality_slack_variables={self.num_equality_slack_variables},\n"
+            f"    num_inequality_slack_variables={self.num_inequality_slack_variables},\n"
             ")"
         )
 
@@ -332,7 +332,9 @@ class QPDataTwoSidedInequality(QPData):
 
     @property
     def bA_start(self) -> int:
-        return self.inequality_lower_bounds.shape[0] - self.num_neq_slack_variables
+        return (
+            self.inequality_lower_bounds.shape[0] - self.num_inequality_slack_variables
+        )
 
     def apply_filters(self) -> Self:
         b_bE_bA_filter = np.ones(
@@ -348,11 +350,11 @@ class QPDataTwoSidedInequality(QPData):
         zero_quadratic_weight_filter[: -self.num_slack_variables] = True
 
         slack_part = zero_quadratic_weight_filter[-(self.num_slack_variables) :]
-        bE_part = slack_part[: self.num_eq_slack_variables]
+        bE_part = slack_part[: self.num_equality_slack_variables]
         if len(bE_part) > 0:
             bE_filter_view[-len(bE_part) :] = bE_part
 
-        bA_part = slack_part[self.num_eq_slack_variables :]
+        bA_part = slack_part[self.num_equality_slack_variables :]
         if len(bA_part) > 0:
             bA_filter_view[-len(bA_part) :] = bA_part
 
