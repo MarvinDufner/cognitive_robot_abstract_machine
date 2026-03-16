@@ -47,6 +47,7 @@ class CannotConvertToStringError(SymbolicMathError):
     """
     Raised when a symbolic math expression cannot be converted to a string.
     """
+
     expression: SymbolicMathType
 
     def __post_init__(self):
