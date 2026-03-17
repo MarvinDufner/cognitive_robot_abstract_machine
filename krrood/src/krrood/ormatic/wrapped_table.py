@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
@@ -110,6 +111,17 @@ class AssociationObject:
     """
     The name of the primary key column, if any.
     """
+
+    @property
+    def table_name(self):
+        """
+        :return: The table name encoded as a hash that is stable across different python processes.
+        This needs to happen this way as it is very likely that association table names will get too long for common SQL
+        dialects.
+        """
+        number = int(hashlib.sha256(str(self.name).encode("utf-8")).hexdigest(), 16)
+        short_number = str(number)[:62]
+        return f"_{short_number}"
 
 
 @dataclass
