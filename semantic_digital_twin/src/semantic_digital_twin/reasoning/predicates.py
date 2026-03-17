@@ -492,8 +492,8 @@ class ContainsType(Predicate):
 
 
 @symbolic_function
-def is_region_occupied(
-    region: BoundingBox, world: World, allowed_bodies: List[Body] = None
+def is_place_occupied(
+    box: BoundingBox, world: World, allowed_bodies: List[Body] = None
 ) -> bool:
     """
     Checks if the given region (as a box at its pose) intersects with any collidable
@@ -502,7 +502,7 @@ def is_region_occupied(
     The region is converted to a box mesh at the region pose and tested against
     each body's world-aligned collision mesh using trimesh's collision manager.
 
-    :param region: The region (axis-aligned box in its own local frame with pose in `region.origin`).
+    :param box: The region (axis-aligned box in its own local frame with pose in `region.origin`).
     :param world: The world providing bodies with enabled collisions.
     :param allowed_bodies: Bodies to ignore during the check.
     :return: True if any collision is found, False otherwise.
@@ -510,7 +510,7 @@ def is_region_occupied(
     allowed_bodies = set(allowed_bodies or [])
 
     # Build a mesh for the region box at its current pose
-    region_box_shape = region.as_shape()  # returns a Box centered at the region
+    region_box_shape = box.as_shape()  # returns a Box centered at the region
     region_mesh = region_box_shape.mesh.copy()
     # region_mesh.apply_transform(region_box_shape.origin.to_np())
     region_mesh.apply_transform(
@@ -543,4 +543,7 @@ def is_region_occupied(
 
 @symbolic_function
 def allclose(array1: np.ndarray, array2: np.ndarray, atol=1e-3) -> bool:
+    """
+    Symbolic wrapper around `np.allclose`.
+    """
     return np.allclose(array1, array2, atol=atol)

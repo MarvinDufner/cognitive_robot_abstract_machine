@@ -14,7 +14,7 @@ from krrood.entity_query_language.factories import (
     the,
 )
 from krrood.entity_query_language.predicate import symbolic_function
-from .predicates import is_region_occupied
+from .predicates import is_place_occupied
 
 from semantic_digital_twin.collision_checking.collision_detector import (
     ClosestPoints,
@@ -213,4 +213,4 @@ def is_pose_free_for_robot(
         robot_bb.max_z,
         pose,
     )
-    return not is_region_occupied(target_bb, robot._world, robot.bodies_with_collision)
+    return not is_place_occupied(target_bb, robot._world, robot.bodies_with_collision)

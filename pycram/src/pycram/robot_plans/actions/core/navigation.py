@@ -7,7 +7,7 @@ import numpy as np
 from typing_extensions import Union, Optional, Type, Any, Iterable, Dict
 
 from krrood.entity_query_language.core.base_expressions import SymbolicExpression
-from krrood.entity_query_language.factories import and_
+from krrood.entity_query_language.factories import and_, variable_from
 from semantic_digital_twin.reasoning.predicates import allclose
 from semantic_digital_twin.reasoning.robot_predicates import is_pose_free_for_robot
 from semantic_digital_twin.robots.abstract_robot import Camera
@@ -49,17 +49,24 @@ class NavigateAction(ActionDescription):
     def pre_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
+        """
+        The robot needs to have a drive and the target location needs to be free from obstacles
+        """
+        drive_variable = variable_from(context.robot.drive is not None)
         return and_(
             is_pose_free_for_robot(
                 context.robot, variables["target_location"].to_spatial_type()
             ),
-            context.robot.drive is not None,
+            drive_variable,
         )
 
     @staticmethod
     def post_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
+        """
+        The robot needs to be within 3 cm of the target location
+        """
         return allclose(
             context.robot.root.global_pose,
             kwargs["target_location"].to_spatial_type(),

@@ -53,6 +53,9 @@ class MoveTorsoAction(ActionDescription):
     def post_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression | bool:
+        """
+        The target joint state for the torso needs to be archived
+        """
         joint_state = context.robot.torso.get_joint_state_by_type(kwargs["torso_state"])
         return joint_state.is_achieved()
 

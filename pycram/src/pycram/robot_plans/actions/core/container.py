@@ -76,6 +76,9 @@ class OpenAction(ActionDescription):
     def pre_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
+        """
+        The gripper with which to open the container has to be free and the handle has to be reachable.
+        """
         manipulator = ViewManager.get_end_effector_view(variables["arm"], context.robot)
         test_world = deepcopy(context.world)
 
@@ -94,6 +97,9 @@ class OpenAction(ActionDescription):
     def post_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression | bool:
+        """
+        The handle has to be in the gripper of the robot and the container has to be open.
+        """
         manipulator = ViewManager.get_end_effector_view(kwargs["arm"], context.robot)
         parent_connection = kwargs[
             "object_designator"
@@ -170,6 +176,9 @@ class CloseAction(ActionDescription):
     def post_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression | bool:
+        """
+        The container has to be closed
+        """
         close_connection = kwargs[
             "object_designator"
         ].get_first_parent_connection_of_type(ActiveConnection1DOF)

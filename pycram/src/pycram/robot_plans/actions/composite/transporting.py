@@ -164,6 +164,9 @@ class TransportAction(ActionDescription):
     def pre_condition(
         variables: Dict, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
+        """
+        The gripper with which to transport needs to be free
+        """
         manipulator = ViewManager.get_end_effector_view(variables["arm"], context.robot)
         return GripperIsFree(manipulator)
 
@@ -171,6 +174,9 @@ class TransportAction(ActionDescription):
     def post_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression | bool:
+        """
+        The object needs to be at the target location
+        """
         return allclose(
             kwargs["object_designator"].global_pose,
             kwargs["target_location"].to_spatial_type(),

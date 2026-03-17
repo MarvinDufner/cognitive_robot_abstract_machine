@@ -135,7 +135,7 @@ class DesignatorDescription:
         return self_fields
 
     @property
-    def slots(self) -> Dict[str, Any]:
+    def action_parameter(self) -> Dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in self.fields}
 
     def resolve(self):

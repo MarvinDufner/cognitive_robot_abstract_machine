@@ -496,7 +496,3 @@ def translate_pose_along_local_axis(
     return PoseStamped.from_list(
         list(scaled_translation_vector), pose.orientation.to_list(), pose.frame_id
     )
-
-
-def get_all_values_in_enum(enum: Type[Enum]) -> List[Any]:
-    return [enum(e.value) for e in enum]

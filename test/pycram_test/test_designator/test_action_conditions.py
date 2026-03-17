@@ -62,7 +62,7 @@ def test_pick_up_pre_conditions(mutable_model_world):
         pick_action.evaluate_pre_condition()
 
     pre_condition = pick_action.pre_condition(
-        pick_action.bound_variables, context, pick_action.slots
+        pick_action.bound_variables, context, pick_action.action_parameter
     )
 
     false_statements = get_false_statements(pre_condition)
@@ -78,7 +78,7 @@ def test_pick_up_pre_conditions(mutable_model_world):
     )
 
     pre_condition = pick_action.pre_condition(
-        pick_action.bound_variables, context, pick_action.slots
+        pick_action.bound_variables, context, pick_action.action_parameter
     )
 
     assert evaluate_condition(pre_condition) == True

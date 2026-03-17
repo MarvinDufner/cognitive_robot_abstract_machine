@@ -111,7 +111,7 @@ class ActionDescription(DesignatorDescription, ABC):
         condition = self.pre_condition(
             self.bound_variables,
             self.context,
-            self.slots,
+            self.action_parameter,
         )
         evaluation = evaluate_condition(condition)
         if evaluation:
@@ -122,7 +122,7 @@ class ActionDescription(DesignatorDescription, ABC):
         condition = self.post_condition(
             self.bound_variables,
             self.context,
-            self.slots,
+            self.action_parameter,
         )
         evaluation = evaluate_condition(condition)
         if evaluation:

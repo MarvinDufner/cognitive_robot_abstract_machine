@@ -101,6 +101,9 @@ class PlaceAction(ActionDescription):
     def pre_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
+        """
+        The object needs to be in the gripper frame
+        """
         manipulator = ViewManager.get_end_effector_view(variables["arm"], context.robot)
         return or_(
             not_(GripperIsFree(manipulator)),
@@ -111,6 +114,9 @@ class PlaceAction(ActionDescription):
     def post_condition(
         variables, context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
+        """
+        the gripper must be free again and the object needs to be at the target location
+        """
         manipulator = ViewManager.get_end_effector_view(variables["arm"], context.robot)
         return and_(
             GripperIsFree(manipulator),
