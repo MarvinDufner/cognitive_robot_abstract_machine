@@ -116,7 +116,7 @@ class StaticObjectDetectorAnnotator(robokudo.annotators.core.BaseAnnotator):
                 self.object_knowledge_base_ros_package: str = "robokudo"
                 """If you use SDT object knowledge to generate the detection, provide the knowledge base package name here"""
 
-                self.object_knowledge_base_name: str = "object_knowledge_iai_kitchen"
+                self.object_knowledge_base_name: str = "object_knowledge_iai_kitchen20"
                 """If you use SDT object knowledge to generate the detection, provide the knowledge base name here"""
 
                 self.object_knowledge_instance: Optional[Body] = None
