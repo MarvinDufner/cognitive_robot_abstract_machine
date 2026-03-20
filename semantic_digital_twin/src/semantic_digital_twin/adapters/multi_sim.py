@@ -2203,11 +2203,10 @@ class MultiSimSynchronizer(ModelChangeCallback, ABC):
 
     def _notify(self, **kwargs):
         for modification in self._world._model_manager.model_modification_blocks[-1]:
-            if isinstance(modification, AddKinematicStructureEntityModification):
-                entity = modification.to_domain_object(self._world)
-                entity = self._world.get_world_entity_with_id_by_id(entity.id)
-                self.entity_spawner.spawn(simulator=self.simulator, entity=entity)
-            elif isinstance(modification, AddActuatorModification):
+            if isinstance(
+                modification,
+                (AddKinematicStructureEntityModification, AddActuatorModification),
+            ):
                 entity = modification.to_domain_object(self._world)
                 entity = self._world.get_world_entity_with_id_by_id(entity.id)
                 self.entity_spawner.spawn(simulator=self.simulator, entity=entity)

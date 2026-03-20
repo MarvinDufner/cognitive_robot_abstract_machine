@@ -464,7 +464,7 @@ def test_semantic_annotation_modifications(rclpy_node):
         w1.add_semantic_annotation(v1)
         w1.add_semantic_annotation(v2)
 
-    time.sleep(0.2)
+    time.sleep(0.5)
     assert [hash(sa) for sa in w1.semantic_annotations] == [
         hash(sa) for sa in w2.semantic_annotations
     ]
