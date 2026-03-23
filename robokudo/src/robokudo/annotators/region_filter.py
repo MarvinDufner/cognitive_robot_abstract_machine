@@ -13,7 +13,7 @@ This module provides an annotator for:
 from timeit import default_timer
 
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 
 import robokudo.annotators
 import robokudo.annotators.core
@@ -21,19 +21,23 @@ import robokudo.types.scene
 import robokudo.utils.annotator_helper
 import robokudo.utils.error_handling
 import robokudo.utils.world_descriptor
+from robokudo.annotators.core import ThreadedAnnotator, BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.scene import RegionHypothesis
+from robokudo.utils.annotator_helper import get_world_to_cam_transform_matrix
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 from robokudo.utils.region import region_obb_in_cam_coordinates, region_pose_annotation
 from semantic_digital_twin.world_description.world_entity import Region
 
 
-class RegionFilter(robokudo.annotators.core.ThreadedAnnotator):
+class RegionFilter(ThreadedAnnotator):
     """Point cloud filtering using world regions.
 
     The RegionFilter can be used to filter point clouds based on an environment model
     that provides semantic_digital_twin Regions via a shared World.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for region filtering."""
 
         class Parameters:
@@ -61,9 +65,9 @@ class RegionFilter(robokudo.annotators.core.ThreadedAnnotator):
         parameters = Parameters()
 
     def __init__(
-            self,
-            name: str = "RegionFilter",
-            descriptor: "RegionFilter.Descriptor" = Descriptor(),
+        self,
+        name: str = "RegionFilter",
+        descriptor: "RegionFilter.Descriptor" = Descriptor(),
     ) -> None:
         """Initialize the region filter.
 
@@ -89,9 +93,9 @@ class RegionFilter(robokudo.annotators.core.ThreadedAnnotator):
             self
         )
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def compute(self) -> py_trees.common.Status:
-        """Filter point cloud using world regions.
+    @catch_and_raise_to_blackboard
+    def compute(self) -> Status:
+        """Filter point cloud using semantic map regions.
 
         The method:
 
@@ -143,21 +147,17 @@ class RegionFilter(robokudo.annotators.core.ThreadedAnnotator):
         self.rk_logger.debug(f"Analyzing {len(active_regions.keys())}")
 
         try:
-            world_to_cam_transform = (
-                robokudo.utils.annotator_helper.get_world_to_cam_transform_matrix(
-                    self.get_cas()
-                )
-            )
+            world_to_cam_transform = get_world_to_cam_transform_matrix(self.get_cas())
         except KeyError as err:
             self.rk_logger.warning(f"Couldn't find viewpoint in the CAS: {err}")
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         for key, region in active_regions.items():
             assert isinstance(region, Region)
             # Will be used for saving the indices of the cloud for this specific region
             filtered_indices_for_this_region = set()
             # RegionHypothetis for this specific region
-            region_hypothesis = robokudo.types.scene.RegionHypothesis()
+            region_hypothesis = RegionHypothesis()
 
             obb = region_obb_in_cam_coordinates(
                 self.world_descriptor.world, region, world_to_cam_transform
@@ -199,4 +199,4 @@ class RegionFilter(robokudo.annotators.core.ThreadedAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

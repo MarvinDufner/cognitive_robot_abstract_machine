@@ -4,16 +4,17 @@ from timeit import default_timer
 import cv2
 import numpy as np
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 
-import robokudo.annotators
-import robokudo.types.annotation
-import robokudo.types.cv
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.transform
-import robokudo.annotators.core
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.cv import BoundingBox3D
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.annotator_helper import (
+    transform_cloud_from_cam_to_world,
+    get_world_to_cam_transform_matrix,
+)
+from robokudo.utils.transform import get_transform_matrix
 
 """
 Robokudo Size Annotator on Bounding Boxes 3D
@@ -35,7 +36,7 @@ Processing steps:
 """
 
 
-class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
+class SizeBBAnnotator(BaseAnnotator):
     """A class to analyze 3D point clouds and compute oriented bounding box sizes.
 
     This annotator processes object hypotheses by computing their oriented 3D bounding boxes
@@ -48,7 +49,7 @@ class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
         super().__init__(name)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Process object hypotheses to compute and annotate their 3D bounding box sizes.
 
         For each object hypothesis with sufficient points:
@@ -64,12 +65,10 @@ class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
         """
         start_timer = default_timer()
         vis_geometries = [self.get_cas().get_copy(CASViews.CLOUD)]
-        object_hypotheses = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
-        )
+        object_hypotheses = self.get_cas().filter_annotations_by_type(ObjectHypothesis)
         visualization_img = self.get_cas().get_copy(CASViews.COLOR_IMAGE)
         for oh in object_hypotheses:
-            if not isinstance(oh, robokudo.types.scene.ObjectHypothesis):
+            if not isinstance(oh, ObjectHypothesis):
                 continue
             if oh.points is None or len(oh.points.points) <= 10:
                 continue
@@ -77,16 +76,14 @@ class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
             pcd = oh.points
             cluster_cloud = copy.deepcopy(pcd)
             try:
-                cluster_cloud_in_world = (
-                    robokudo.utils.annotator_helper.transform_cloud_from_cam_to_world(
-                        self.get_cas(), cluster_cloud, transform_inplace=True
-                    )
+                cluster_cloud_in_world = transform_cloud_from_cam_to_world(
+                    self.get_cas(), cluster_cloud, transform_inplace=True
                 )
             except Exception as e:
                 self.rk_logger.warning(
                     f"Couldn't find camera viewpoint in the CAS." f"Fail. Error: {e}"
                 )
-                return py_trees.common.Status.FAILURE
+                return Status.FAILURE
 
             # Project cluster points to 2d (onto the world plane with z as the normal)
             min_x, min_y, min_z = np.asarray(cluster_cloud_in_world.points).min(axis=0)
@@ -123,15 +120,11 @@ class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
                 [0, 0, 1],
             ]
 
-            cluster_transform_in_world = robokudo.utils.transform.get_transform_matrix(
+            cluster_transform_in_world = get_transform_matrix(
                 rotation_matrix_in_world, translation_in_world
             )
 
-            world_to_cam_transform = (
-                robokudo.utils.annotator_helper.get_world_to_cam_transform_matrix(
-                    self.get_cas()
-                )
-            )
+            world_to_cam_transform = get_world_to_cam_transform_matrix(self.get_cas())
 
             cluster_transform_in_cam = np.matmul(
                 world_to_cam_transform, cluster_transform_in_world
@@ -153,7 +146,7 @@ class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
             min_bound = cluster_obb.get_min_bound().reshape(3, 1)
             max_bound = cluster_obb.get_max_bound().reshape(3, 1)
             x, y, z = np.linalg.norm(max_bound - min_bound, axis=1)
-            size_annotation = robokudo.types.cv.BoundingBox3D()
+            size_annotation = BoundingBox3D()
             size_annotation.x_length = x
             size_annotation.y_length = y
             size_annotation.z_length = z
@@ -192,4 +185,4 @@ class SizeBBAnnotator(robokudo.annotators.core.BaseAnnotator):
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
         self.get_annotator_output_struct().set_image(visualization_img)
         self.get_annotator_output_struct().set_geometries(vis_geometries)
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

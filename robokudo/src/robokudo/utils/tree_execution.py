@@ -16,8 +16,6 @@ Dependencies:
 
 from __future__ import annotations
 
-import threading
-
 import rclpy
 from py_trees.blackboard import Blackboard
 from py_trees.common import Status
@@ -26,10 +24,9 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from typing_extensions import TYPE_CHECKING, Optional
 
-import robokudo
-import robokudo.garden
-import robokudo.identifier
-import robokudo.utils.tree
+from robokudo.garden import grow_tree
+from robokudo.utils.tree import setup_with_descendants_rk
+from robokudo.identifier import BBIdentifier
 
 if TYPE_CHECKING:
     from py_trees.behaviour import Behaviour
@@ -58,10 +55,8 @@ def run_tree_once(
     :param tick_rate: Rate to tick tree in Hz, defaults to 5
     :return: Final tree status (SUCCESS/FAILURE) or None if timed out
     """
-    ae_root = robokudo.garden.grow_tree(
-        tree, node, include_gui=include_gui, run_once=True
-    )
-    robokudo.utils.tree.setup_with_descendants_rk(ae_root)
+    ae_root = grow_tree(tree, node, include_gui=include_gui, run_once=True)
+    setup_with_descendants_rk(ae_root)
 
     tick_count = 0
     final_status = None
@@ -92,8 +87,8 @@ def run_tree_once(
 
     # Fetch the Action Server, if present. It's a separate node.
     blackboard = Blackboard()
-    if blackboard.exists(robokudo.identifier.BBIdentifier.QUERY_SERVER):
-        executor.add_node(blackboard.get(robokudo.identifier.BBIdentifier.QUERY_SERVER))
+    if blackboard.exists(BBIdentifier.QUERY_SERVER):
+        executor.add_node(blackboard.get(BBIdentifier.QUERY_SERVER))
 
     # spin only this node until we’re done (don’t touch global rclpy lifecycle)
     while final_status is None and rclpy.ok(context=node.context):

@@ -25,18 +25,19 @@ from typing import Optional
 
 from typing_extensions import Dict, List, Any, TypeVar
 
-import robokudo.io.camera_interface
-import robokudo.io.storage
-import robokudo.utils.type_conversion
-import robokudo.utils.o3d_helper
 from pathlib import Path
 
-from robokudo.cas import CASViews
+from robokudo.cas import CASViews, CAS
+from robokudo.io.camera_interface import CameraInterface
+from robokudo.utils.type_conversion import (
+    ros_cam_info_from_dict,
+    o3d_cam_intrinsics_from_ros_cam_info,
+)
 
 T = TypeVar("T")
 
 
-class FileReaderInterface(robokudo.io.camera_interface.CameraInterface):
+class FileReaderInterface(CameraInterface):
     """
     A camera interface for reading stored data from the local filesystem.
 
@@ -219,9 +220,7 @@ class FileReaderInterface(robokudo.io.camera_interface.CameraInterface):
                 with open(str(file_path)) as fp:
                     cam_info_json = json.load(fp)
                     self.loaded_data[matched_timestamp][matched_data_type] = (
-                        robokudo.utils.type_conversion.ros_cam_info_from_dict(
-                            cam_info_json
-                        )
+                        ros_cam_info_from_dict(cam_info_json)
                     )
 
         # Initialize the main datastructure that we use to access the data
@@ -261,7 +260,7 @@ class RGBDFileReaderInterface(FileReaderInterface):
     Inherits all instance variables from FileReaderInterface.
     """
 
-    def set_data(self, cas: robokudo.cas.CAS) -> None:
+    def set_data(self, cas: CAS) -> None:
         """Set the next RGB-D data frame into the CAS.
 
         This method:
@@ -284,8 +283,6 @@ class RGBDFileReaderInterface(FileReaderInterface):
 
         cas.set(
             CASViews.CAM_INTRINSIC,
-            robokudo.utils.type_conversion.o3d_cam_intrinsics_from_ros_cam_info(
-                data[CASViews.CAM_INFO]
-            ),
+            o3d_cam_intrinsics_from_ros_cam_info(data[CASViews.CAM_INFO]),
         )
         cas.set(CASViews.COLOR2DEPTH_RATIO, self.camera_config.color2depth_ratio)

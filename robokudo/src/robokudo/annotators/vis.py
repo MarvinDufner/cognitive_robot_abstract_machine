@@ -18,12 +18,13 @@ The module is used for:
 * Output buffer management
 """
 
-import py_trees
+from py_trees.blackboard import Blackboard
+from py_trees.common import Status
 
-import robokudo.annotators.core
+from robokudo.annotators.core import BaseAnnotator
 
 
-class Redraw(robokudo.annotators.core.BaseAnnotator):
+class Redraw(BaseAnnotator):
     """
     Annotator for triggering visualization updates.
 
@@ -38,7 +39,7 @@ class Redraw(robokudo.annotators.core.BaseAnnotator):
         """
         super().__init__(name=name)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Set redraw flag to trigger visualization update.
 
         Gets the annotator output pipeline map and sets the redraw
@@ -46,7 +47,7 @@ class Redraw(robokudo.annotators.core.BaseAnnotator):
 
         :return: SUCCESS status
         """
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         annotator_output_pipeline_map_buffer = blackboard.get(
             "annotator_output_pipeline_map_buffer"
         )
@@ -54,4 +55,4 @@ class Redraw(robokudo.annotators.core.BaseAnnotator):
             self.get_parent_pipeline().name
         ].redraw = True
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

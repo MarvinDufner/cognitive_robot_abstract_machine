@@ -22,20 +22,15 @@ import json
 
 import open3d as o3d
 from typing_extensions import Any
-
-import robokudo.io.camera_interface
-import robokudo.io.storage
-import robokudo.world
 from robokudo.annotator_parameters import AnnotatorPredefinedParameters
-from robokudo.cas import CASViews
+from robokudo.cas import CASViews, CAS
+from robokudo.io.camera_interface import CameraInterface
+from robokudo.io.storage import Storage
+from robokudo import world
 from semantic_digital_twin.adapters.ros.messages import WorldModelSnapshot
-from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
-    WorldEntityWithIDKwargsTracker,
-)
-from semantic_digital_twin.world import World
 
 
-class StorageReaderInterface(robokudo.io.camera_interface.CameraInterface):
+class StorageReaderInterface(CameraInterface):
     """A camera interface for reading data from MongoDB storage.
 
     This interface reads sensor data and annotations that were previously stored
@@ -53,14 +48,10 @@ class StorageReaderInterface(robokudo.io.camera_interface.CameraInterface):
         """
         super().__init__(camera_config)
 
-        self.storage: robokudo.io.storage.Storage = robokudo.io.storage.Storage(
-            camera_config.db_name
-        )
+        self.storage: Storage = Storage(camera_config.db_name)
         """MongoDB storage interface"""
 
-        self.reader: robokudo.io.storage.Storage.ListReader = self.storage.ListReader(
-            camera_config.db_name
-        )
+        self.reader: Storage.ListReader = self.storage.ListReader(camera_config.db_name)
         """List-based reader for MongoDB data"""
 
     def has_new_data(self) -> bool:
@@ -77,7 +68,7 @@ class StorageReaderInterface(robokudo.io.camera_interface.CameraInterface):
 
         return self.reader.cursor_has_frames()
 
-    def set_data(self, cas: robokudo.cas.CAS) -> None:
+    def set_data(self, cas: CAS) -> None:
         """Update the Common Analysis Structure with data from storage.
 
         This method:
@@ -90,10 +81,10 @@ class StorageReaderInterface(robokudo.io.camera_interface.CameraInterface):
         """
         cas_frame = self.reader.get_next_frame()
         # Restore the world first to get back references to KinematicStructureEntities
-        tracker = robokudo.world.init_world_with_entity_tracker()
+        tracker = world.init_world_with_entity_tracker()
         kwargs = tracker.create_kwargs()
         WorldModelSnapshot.apply_to_json_snapshot_to_world(
-            robokudo.world.world_instance(), json.loads(cas_frame["world"]), **kwargs
+            world.world_instance(), json.loads(cas_frame["world"]), **kwargs
         )
 
         # Restore the views from the individual documents

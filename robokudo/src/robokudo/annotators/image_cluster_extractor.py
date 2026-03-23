@@ -18,25 +18,23 @@ import copy
 from timeit import default_timer
 
 import cv2
-import numpy
 import numpy as np
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 from typing_extensions import Optional, TYPE_CHECKING, Tuple, Dict
 
-import robokudo
-import robokudo.annotators.core
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.cv_helper
-import robokudo.utils.error_handling
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.annotator_helper import scale_cam_intrinsics
+from robokudo.utils.cv_helper import get_scaled_color_image_for_depth_image
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
+class ImageClusterExtractor(BaseAnnotator):
     """Extract object clusters from images using color segmentation.
 
     This annotator performs the following steps:
@@ -60,7 +58,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
         depth_mask: int = 2
         """Show depth mask of detected objects"""
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for ImageClusterExtractor.
 
         Parameters:
@@ -189,8 +187,8 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
             self.descriptor.parameters.color_name_to_hsv_range[color]["hsv_max"]
         )
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Process input images to detect and annotate object clusters.
 
         The method:
@@ -214,12 +212,10 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
         # Scale the image down so that it matches the depth image size
         resized_color = None
         try:
-            resized_color = (
-                robokudo.utils.cv_helper.get_scaled_color_image_for_depth_image(
-                    self.get_cas(), self.color
-                )
+            resized_color = get_scaled_color_image_for_depth_image(
+                self.get_cas(), self.color
             )
-            robokudo.utils.annotator_helper.scale_cam_intrinsics(self)
+            scale_cam_intrinsics(self)
         except RuntimeError as e:
             self.rk_logger.error(
                 "No color to depth ratio set by your camera driver! Can't scale image for Point Cloud creation."
@@ -255,7 +251,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
         contours = [
             contour for i, contour in enumerate(contours) if hierarchy[0][i][3] == -1
         ]
-        contour_areas = numpy.asarray([cv2.contourArea(c) for c in contours])
+        contour_areas = np.asarray([cv2.contourArea(c) for c in contours])
         filtered_contour_areas = [
             area
             for area in contour_areas
@@ -275,7 +271,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
         object_hypotheses = []
         visualized_geometries = []
         for i, contour in enumerate(filtered_contours):
-            biggest_contour_mask = np.zeros_like(self.depth, dtype=numpy.uint8)
+            biggest_contour_mask = np.zeros_like(self.depth, dtype=np.uint8)
             cv2.drawContours(
                 image=biggest_contour_mask,
                 contours=[contour],
@@ -303,7 +299,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
             color_rgb = cv2.cvtColor(resized_color, cv2.COLOR_BGR2RGB)
             depth_masked = copy.deepcopy(self.depth)
 
-            depth_masked = numpy.where(
+            depth_masked = np.where(
                 biggest_contour_mask == 255, depth_masked, 0
             )  # mask all depth values
 
@@ -329,7 +325,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
             if len(cloud.points) >= self.descriptor.parameters.min_points_threshold:
                 # Create an ObjectHypothesis instance
 
-                object_hypothesis = robokudo.types.scene.ObjectHypothesis()
+                object_hypothesis = ObjectHypothesis()
                 # Set ObjectHypothesis attributes
                 object_hypothesis.id = str(i)
                 object_hypothesis.source = self.name
@@ -361,7 +357,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
             visualization_img = copy.deepcopy(result)
 
         for oh in object_hypotheses:
-            assert isinstance(oh, robokudo.types.scene.ObjectHypothesis)
+            assert isinstance(oh, ObjectHypothesis)
             oh_roi = oh.roi.roi
             upper_left = (oh_roi.pos.x, oh_roi.pos.y)
             upper_left_text = (oh_roi.pos.x, oh_roi.pos.y - 5)
@@ -389,7 +385,7 @@ class ImageClusterExtractor(robokudo.annotators.core.BaseAnnotator):
         self.get_annotator_output_struct().set_geometries(visualized_geometries)
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     def key_callback(self, key: int) -> None:
         """Handle keyboard input to change visualization mode.

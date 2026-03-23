@@ -5,16 +5,6 @@ This module provides decorators to extend annotator functionality.
 :module: decorators
 :synopsis: Decorator utilities for RoboKudo annotators
 :moduleauthor: RoboKudo Team
-
-:Dependencies:
-    * timeit
-    * collections.defaultdict
-    * robokudo.annotators.core
-
-:Functions:
-    * :func:`timer_decorator`: Log execution time of functions
-    * :func:`record_time`: Record execution time of annotator methods
-    * :func:`publish_variables`: Publish annotator variables after method execution
 """
 
 import timeit

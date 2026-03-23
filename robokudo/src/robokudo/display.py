@@ -36,8 +36,8 @@ from py_trees.decorators import Decorator
 from pydot import Node, Edge
 from typing_extensions import TYPE_CHECKING, Dict, Optional, Tuple
 
-from . import pipeline
-from .annotators.core import BaseAnnotator
+from robokudo.pipeline import Pipeline
+from robokudo.annotators.core import BaseAnnotator
 
 if TYPE_CHECKING:
     from pydot import Dot
@@ -141,7 +141,7 @@ def generate_pydot_graph(
         # shape = "doubleoctagon"
         if isinstance(node, Selector):
             shape = "octagon"
-        elif isinstance(node, pipeline.Pipeline):
+        elif isinstance(node, Pipeline):
             shape = "box3d"
         elif isinstance(node, Sequence):
             shape = "box"

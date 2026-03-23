@@ -13,18 +13,19 @@ The module supports:
 """
 
 import logging
-from typing import Optional
-
-import py_trees
+from py_trees.common import Status
 from py_trees.composites import Sequence
-from typing_extensions import List
-
-import robokudo.utils.tree
+from py_trees.behaviour import Behaviour
+from typing_extensions import List, Optional
 from robokudo.utils.error_handling import catch_and_raise_to_blackboard
-from robokudo.utils.tree import add_child_to_parent, fix_parent_relationship_of_childs
+from robokudo.utils.tree import (
+    add_child_to_parent,
+    fix_parent_relationship_of_childs,
+    setup_with_descendants_on_behavior,
+)
 
 
-class TaskSchedulerBase(py_trees.behaviour.Behaviour):
+class TaskSchedulerBase(Behaviour):
     """Base class for task scheduling behaviors.
 
     This Behaviour enables a dynamic arrangement of known Behaviours.
@@ -86,7 +87,7 @@ class TaskSchedulerBase(py_trees.behaviour.Behaviour):
         return None
 
     @catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Update the scheduler state.
 
         Called every time the behavior is ticked.
@@ -112,10 +113,10 @@ class TaskSchedulerBase(py_trees.behaviour.Behaviour):
             parent.remove_child(parent.children[1])  # remove the old job, if existing
 
         if self.fix_parent_relationships_after_plan:
-            robokudo.utils.tree.fix_parent_relationship_of_childs(new_job)
+            fix_parent_relationship_of_childs(new_job)
         parent.add_child(new_job)  # add new job with instances from the original one
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
 
 class IterativeTaskScheduler(TaskSchedulerBase):
@@ -155,7 +156,7 @@ class IterativeTaskScheduler(TaskSchedulerBase):
         :return: True if setup successful
         """
         for tree in self.tree_list:
-            robokudo.utils.tree.setup_with_descendants_on_behavior(tree)
+            setup_with_descendants_on_behavior(tree)
         return True
 
     def plan_new_job(self) -> Optional[Sequence]:

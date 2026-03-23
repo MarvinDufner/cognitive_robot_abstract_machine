@@ -17,13 +17,12 @@ The module is used for:
 * Quick prototyping
 """
 
-import py_trees
-
-import robokudo.annotators.core
+from py_trees.common import Status
 from typing_extensions import Optional, Tuple, Dict, Callable
+from robokudo.annotators.core import BaseAnnotator
 
 
-class LambdaFunctionAnnotator(robokudo.annotators.core.BaseAnnotator):
+class LambdaFunctionAnnotator(BaseAnnotator):
     """
     Annotator for executing arbitrary functions.
 
@@ -31,18 +30,14 @@ class LambdaFunctionAnnotator(robokudo.annotators.core.BaseAnnotator):
     allowing for dynamic behavior definition without creating new annotator classes.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for lambda function annotator."""
 
         class Parameters:
-            """
-            Parameter container for function configuration.
+            """Parameter container for function configuration.
 
-            :ivar func: Function to execute
             :type func: callable
-            :ivar func_args: Positional arguments for function
             :type func_args: tuple
-            :ivar func_kwargs: Keyword arguments for function
             :type func_kwargs: dict
             """
 
@@ -59,8 +54,7 @@ class LambdaFunctionAnnotator(robokudo.annotators.core.BaseAnnotator):
         name: str = "LambdaFunctionAnnotator",
         descriptor: "LambdaFunctionAnnotator.Descriptor" = Descriptor(),
     ):
-        """
-        Initialize the lambda function annotator. Minimal one-time init!
+        """Initialize the lambda function annotator. Minimal one-time init!
 
         :param name: Annotator name, defaults to "LambdaFunctionAnnotator"
         :param descriptor: Configuration descriptor, defaults to Descriptor()
@@ -68,9 +62,8 @@ class LambdaFunctionAnnotator(robokudo.annotators.core.BaseAnnotator):
         super().__init__(name, descriptor)
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    def update(self) -> py_trees.common.Status:
-        """
-        Execute the configured function.
+    def update(self) -> Status:
+        """Execute the configured function.
 
         The function is called with the annotator instance as first argument,
         followed by any configured positional and keyword arguments.

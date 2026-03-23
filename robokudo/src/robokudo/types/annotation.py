@@ -11,16 +11,22 @@ from typing_extensions import TYPE_CHECKING, Optional, Any, List
 
 import numpy as np
 
-from . import core
-from . import cv
-from . import tf
+from robokudo.types.core import Annotation
+from robokudo.types.cv import BoundingBox3D, Points3D
+from robokudo.types.tf import (
+    Position,
+    Pose,
+    StampedPose,
+    StampedPosition,
+    StampedTransform,
+)
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
 
 @dataclass
-class Classification(core.Annotation):
+class Classification(Annotation):
     """Classification annotation for objects.
 
     This class represents a classification result, including the type of classification
@@ -49,7 +55,7 @@ class Classification(core.Annotation):
 
 
 @dataclass
-class SemanticColor(core.Annotation):
+class SemanticColor(Annotation):
     """Semantic color annotation.
 
     This class represents semantic color information, including the color name
@@ -68,7 +74,7 @@ class SemanticColor(core.Annotation):
 
 
 @dataclass
-class LocationAnnotation(core.Annotation):
+class LocationAnnotation(Annotation):
     """Location annotation for objects.
 
     This class represents a named location in the environment.
@@ -81,7 +87,7 @@ class LocationAnnotation(core.Annotation):
 
 
 @dataclass
-class Plane(core.Annotation):
+class Plane(Annotation):
     """Plane annotation for surface detection.
 
     This class represents a detected plane in 3D space, including its model
@@ -100,7 +106,7 @@ class Plane(core.Annotation):
 
 
 @dataclass
-class Shape(core.Annotation):
+class Shape(Annotation):
     """Base class for shape annotations.
 
     This class serves as a base for specific shape types like Cuboid and Sphere.
@@ -149,7 +155,7 @@ class Sphere(Shape):
 
 
 @dataclass
-class ColorHistogram(core.Annotation):
+class ColorHistogram(Annotation):
     """Color histogram annotation.
 
     This class usually represents a 2D color histogram, typically containing hue and
@@ -168,7 +174,7 @@ class ColorHistogram(core.Annotation):
 
 
 @dataclass
-class PoseAnnotation(tf.Pose, core.Annotation):
+class PoseAnnotation(Pose, Annotation):
     """Pose annotation combining transform and annotation functionality.
 
     This class inherits from both Pose and Annotation to provide pose information
@@ -179,7 +185,7 @@ class PoseAnnotation(tf.Pose, core.Annotation):
 
 
 @dataclass
-class PositionAnnotation(tf.Position, core.Annotation):
+class PositionAnnotation(Position, Annotation):
     """Position annotation combining position and annotation functionality.
 
     This class inherits from both Position and Annotation to provide position
@@ -190,7 +196,7 @@ class PositionAnnotation(tf.Position, core.Annotation):
 
 
 @dataclass
-class StampedPoseAnnotation(tf.StampedPose, core.Annotation):
+class StampedPoseAnnotation(StampedPose, Annotation):
     """Timestamped pose annotation.
 
     This class combines timestamped pose information with annotation functionality.
@@ -200,7 +206,7 @@ class StampedPoseAnnotation(tf.StampedPose, core.Annotation):
 
 
 @dataclass
-class StampedPositionAnnotation(tf.StampedPosition, core.Annotation):
+class StampedPositionAnnotation(StampedPosition, Annotation):
     """Timestamped position annotation.
 
     This class combines timestamped position information with annotation functionality.
@@ -210,7 +216,7 @@ class StampedPositionAnnotation(tf.StampedPosition, core.Annotation):
 
 
 @dataclass
-class StampedTransformAnnotation(tf.StampedTransform, core.Annotation):
+class StampedTransformAnnotation(StampedTransform, Annotation):
     """Timestamped transform annotation.
 
     This class combines timestamped transform information with annotation functionality.
@@ -220,7 +226,7 @@ class StampedTransformAnnotation(tf.StampedTransform, core.Annotation):
 
 
 @dataclass
-class Encoding(core.Annotation):
+class Encoding(Annotation):
     """An abstract Encoding Type.
 
     This class represents various types of encodings such as feature vectors,
@@ -234,7 +240,7 @@ class Encoding(core.Annotation):
 
 
 @dataclass
-class BoundingBox3DAnnotation(cv.BoundingBox3D, core.Annotation):
+class BoundingBox3DAnnotation(BoundingBox3D, Annotation):
     """3D bounding box annotation.
 
     This class combines 3D bounding box functionality with annotation capabilities.
@@ -244,7 +250,7 @@ class BoundingBox3DAnnotation(cv.BoundingBox3D, core.Annotation):
 
 
 @dataclass
-class CloudAnnotation(cv.Points3D, core.Annotation):
+class CloudAnnotation(Points3D, Annotation):
     """Point cloud annotation.
 
     This class combines 3D point cloud functionality with annotation capabilities.
@@ -254,7 +260,7 @@ class CloudAnnotation(cv.Points3D, core.Annotation):
 
 
 @dataclass
-class SpatiallyNearestAnnotation(core.Annotation):
+class SpatiallyNearestAnnotation(Annotation):
     """
     Annotation to describe the spatially nearest object to the camera.
     Supposed to be unique for an amount of objects or humans.
@@ -264,7 +270,7 @@ class SpatiallyNearestAnnotation(core.Annotation):
 
 
 @dataclass
-class TextAnnotation(core.Annotation):
+class TextAnnotation(Annotation):
     """Text annotation."""
 
     text: str = ""

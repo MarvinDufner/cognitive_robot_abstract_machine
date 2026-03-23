@@ -16,23 +16,23 @@ The module provides:
 
 from __future__ import annotations
 import copy
-from datetime import datetime, timezone, timedelta
 import time
+import open3d as o3d
+import numpy as np
+
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
 from typing import TypeVar, Optional
-import open3d
 
-import numpy as np
-import sensor_msgs.msg
-from typing_extensions import TYPE_CHECKING, Any, Tuple, Dict, List, Type, deprecated
+from sensor_msgs.msg import CameraInfo
+from typing_extensions import TYPE_CHECKING, Any, Tuple, Dict, List, Type
 
-from .types.tf import StampedTransform
+from robokudo.types.tf import StampedTransform
 
 if TYPE_CHECKING:
-    from .types.core import Annotation
+    from robokudo.types.core import Annotation
     from semantic_digital_twin.spatial_types.spatial_types import (
         HomogeneousTransformationMatrix,
-        Pose,
     )
 
 
@@ -156,35 +156,35 @@ class CAS:
         self.views[CASViews.COLOR2DEPTH_RATIO] = value
 
     @property
-    def cam_info(self) -> Optional[sensor_msgs.msg.CameraInfo]:
+    def cam_info(self) -> Optional[CameraInfo]:
         return self.views.get(CASViews.CAM_INFO)
 
     @cam_info.setter
-    def cam_info(self, value: sensor_msgs.msg.CameraInfo) -> None:
+    def cam_info(self, value: CameraInfo) -> None:
         self.views[CASViews.CAM_INFO] = value
 
     @property
-    def cam_intrinsic(self) -> Optional[open3d.camera.PinholeCameraIntrinsic]:
+    def cam_intrinsic(self) -> Optional[o3d.camera.PinholeCameraIntrinsic]:
         return self.views.get(CASViews.CAM_INTRINSIC)
 
     @cam_intrinsic.setter
-    def cam_intrinsic(self, value: open3d.camera.PinholeCameraIntrinsic) -> None:
+    def cam_intrinsic(self, value: o3d.camera.PinholeCameraIntrinsic) -> None:
         self.views[CASViews.CAM_INTRINSIC] = value
 
     @property
-    def pc_cam_intrinsic(self) -> Optional[open3d.camera.PinholeCameraIntrinsic]:
+    def pc_cam_intrinsic(self) -> Optional[o3d.camera.PinholeCameraIntrinsic]:
         return self.views.get(CASViews.PC_CAM_INTRINSIC)
 
     @pc_cam_intrinsic.setter
-    def pc_cam_intrinsic(self, value: open3d.camera.PinholeCameraIntrinsic) -> None:
+    def pc_cam_intrinsic(self, value: o3d.camera.PinholeCameraIntrinsic) -> None:
         self.views[CASViews.PC_CAM_INTRINSIC] = value
 
     @property
-    def cloud(self) -> Optional[open3d.geometry.PointCloud]:
+    def cloud(self) -> Optional[o3d.geometry.PointCloud]:
         return self.views.get(CASViews.CLOUD)
 
     @cloud.setter
-    def cloud(self, value: open3d.geometry.PointCloud) -> None:
+    def cloud(self, value: o3d.geometry.PointCloud) -> None:
         self.views[CASViews.CLOUD] = value
 
     @property

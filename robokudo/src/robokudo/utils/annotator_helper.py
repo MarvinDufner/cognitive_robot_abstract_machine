@@ -13,25 +13,27 @@ It supports:
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import List
 
 import cv2
 import numpy as np
 import open3d as o3d
-from typing_extensions import Callable, TYPE_CHECKING
+from typing_extensions import Callable, List, TYPE_CHECKING
 
-from . import cv_helper
-from . import o3d_helper
-from . import transform
-from ..cas import CASViews
-from ..types.annotation import PoseAnnotation
-from ..types.scene import ObjectHypothesis
-from ..types.tf import StampedTransform
+from robokudo.cas import CASViews
+from robokudo.types.annotation import PoseAnnotation
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.cv_helper import get_scaled_color_image_for_depth_image
+from robokudo.utils.o3d_helper import scale_o3d_cam_intrinsics
+from robokudo.utils.transform import (
+    get_transform_matrix_from_q,
+    get_translation_from_transform_matrix,
+    get_quaternion_from_transform_matrix,
+)
 
 if TYPE_CHECKING:
     import numpy.typing as npt
-    from ..annotators.core import BaseAnnotator
-    from ..cas import CAS
+    from robokudo.annotators.core import BaseAnnotator
+    from robokudo.cas import CAS
 
 
 def transform_pose_from_cam_to_world(cas: CAS, pose: PoseAnnotation) -> PoseAnnotation:
@@ -44,18 +46,16 @@ def transform_pose_from_cam_to_world(cas: CAS, pose: PoseAnnotation) -> PoseAnno
     :return: Transformed pose in world coordinates
     :raises AssertionError: If camera-to-world transform not in CAS
     """
-    pose_mat = transform.get_transform_matrix_from_q(pose.rotation, pose.translation)
+    pose_mat = get_transform_matrix_from_q(pose.rotation, pose.translation)
 
     cam_to_world_transform = get_cam_to_world_transform_matrix(cas)
 
     pose_in_world_mat = np.matmul(cam_to_world_transform, pose_mat)
 
     new_pose = PoseAnnotation()
-    new_pose.rotation = list(
-        transform.get_quaternion_from_transform_matrix(pose_in_world_mat)
-    )
+    new_pose.rotation = list(get_quaternion_from_transform_matrix(pose_in_world_mat))
     new_pose.translation = list(
-        transform.get_translation_from_transform_matrix(pose_in_world_mat)
+        get_translation_from_transform_matrix(pose_in_world_mat)
     )
     new_pose.source = pose.source
 
@@ -72,18 +72,14 @@ def transform_pose_from_world_to_cam(cas: CAS, pose: PoseAnnotation) -> PoseAnno
     :return: Transformed pose in camera coordinates
     :raises AssertionError: If camera-to-world transform not in CAS
     """
-    pose_mat = transform.get_transform_matrix_from_q(pose.rotation, pose.translation)
+    pose_mat = get_transform_matrix_from_q(pose.rotation, pose.translation)
     world_to_cam_transform = get_world_to_cam_transform_matrix(cas)
 
     pose_in_cam_mat = np.matmul(world_to_cam_transform, pose_mat)
 
     new_pose = PoseAnnotation()
-    new_pose.rotation = list(
-        transform.get_quaternion_from_transform_matrix(pose_in_cam_mat)
-    )
-    new_pose.translation = list(
-        transform.get_translation_from_transform_matrix(pose_in_cam_mat)
-    )
+    new_pose.rotation = list(get_quaternion_from_transform_matrix(pose_in_cam_mat))
+    new_pose.translation = list(get_translation_from_transform_matrix(pose_in_cam_mat))
 
     return new_pose
 
@@ -208,7 +204,7 @@ def scale_cam_intrinsics(annotator: BaseAnnotator) -> None:
     c2d_ratio_x = color2depth_ratio[0]
     c2d_ratio_y = color2depth_ratio[1]
     if color2depth_ratio != (1, 1):
-        annotator.cam_intrinsics = o3d_helper.scale_o3d_cam_intrinsics(
+        annotator.cam_intrinsics = scale_o3d_cam_intrinsics(
             annotator.cam_intrinsics, c2d_ratio_x, c2d_ratio_y
         )
 
@@ -233,7 +229,7 @@ def get_color_image(annotator: BaseAnnotator) -> npt.NDArray:
 
     if annotator.descriptor.parameters.global_with_depth:
         try:
-            resized_color = cv_helper.get_scaled_color_image_for_depth_image(
+            resized_color = get_scaled_color_image_for_depth_image(
                 annotator.get_cas(), img
             )
         except RuntimeError as e:  # pylint: disable=invalid-name

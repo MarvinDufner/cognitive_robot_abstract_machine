@@ -13,11 +13,11 @@ from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rosidl_runtime_py.convert import message_to_ordereddict
-from typing_extensions import TYPE_CHECKING, Optional, Tuple, List, Dict, Any
+from typing_extensions import TYPE_CHECKING, Optional, List, Dict, Any
 
 from robokudo_msgs.action import Query
 
-import robokudo.defs
+from robokudo.defs import PACKAGE_NAME
 
 if TYPE_CHECKING:
     from rclpy.action.client import ClientGoalHandle
@@ -44,7 +44,7 @@ class RoboKudoActionClient(Node):
         :param preempt_timer: Optional preempt timer to cancel the goal automatically after x seconds.
         """
         super().__init__("robokudo_query_test_client")
-        self.rk_logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
+        self.rk_logger = logging.getLogger(PACKAGE_NAME)
         self._action_client: ActionClient = ActionClient(
             self, Query, "/robokudo/query"
         )  # Connect to the action server

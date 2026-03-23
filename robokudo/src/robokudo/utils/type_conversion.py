@@ -24,13 +24,13 @@ from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Header
 from typing_extensions import TYPE_CHECKING, Dict
 
-from . import o3d_helper
-from . import transform
+from robokudo.utils.o3d_helper import get_obb_from_size_and_transform
+from robokudo.utils.transform import get_transform_matrix, get_rotation_matrix_from_q
 
 if TYPE_CHECKING:
     from sensor_msgs.msg import Image
     import numpy.typing as npt
-    from ..types.annotation import (
+    from robokudo.types.annotation import (
         PositionAnnotation,
         BoundingBox3DAnnotation,
         PoseAnnotation,
@@ -183,8 +183,8 @@ def get_transform_matrix_from_pose_annotation(
     :param pose_annotation: Pose annotation to convert
     :return: 4x4 homogeneous transform matrix
     """
-    transform_matrix = transform.get_transform_matrix(
-        transform.get_rotation_matrix_from_q(
+    transform_matrix = get_transform_matrix(
+        get_rotation_matrix_from_q(
             np.array(
                 [
                     pose_annotation.rotation[0],
@@ -223,7 +223,7 @@ def get_o3d_obb_from_bounding_box_annotation(
     transform_matrix = get_transform_matrix_from_pose_annotation(
         bounding_box_annotation.pose
     )
-    return o3d_helper.get_obb_from_size_and_transform(bb_size, transform_matrix)
+    return get_obb_from_size_and_transform(bb_size, transform_matrix)
 
 
 def o3d_cam_intrinsics_from_ros_cam_info(

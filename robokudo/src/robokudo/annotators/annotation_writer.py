@@ -12,18 +12,18 @@ from py_trees.common import Status
 from std_msgs.msg import String
 from typing_extensions import Optional
 
-from . import core
-from ..utils import serialization as serializer
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.utils import serialization as serializer
 
 
-class AnnotationStorageWriter(core.BaseAnnotator):
+class AnnotationStorageWriter(BaseAnnotator):
     """Annotator for writing annotations to storage in JSON format.
 
     This annotator writes the current CAS annotations to files in a specified
     directory, using JSON serialization.
     """
 
-    class Descriptor(core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for annotation storage writer."""
 
         class Parameters:
@@ -89,14 +89,14 @@ class AnnotationStorageWriter(core.BaseAnnotator):
         return Status.SUCCESS
 
 
-class AnnotationPublisherWriter(core.BaseAnnotator):
+class AnnotationPublisherWriter(BaseAnnotator):
     """Annotator for publishing annotations via ROS topics.
 
     This annotator publishes the current CAS annotations as JSON-encoded
     strings over a ROS topic.
     """
 
-    class Descriptor(core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for annotation publisher."""
 
         class Parameters:

@@ -9,6 +9,8 @@ using HSV color space segmentation.
    The non-numba version of color counting may contain bugs in color counting.
 """
 
+from __future__ import annotations
+
 import copy
 from enum import Enum
 from timeit import default_timer
@@ -17,19 +19,18 @@ import cv2
 import numba
 import numpy as np
 import numpy.ma
-import numpy.typing as npt
-import py_trees
-from typing_extensions import Type, Dict, Tuple, List
+from py_trees.common import Status
+from typing_extensions import Type, Dict, Tuple, List, TYPE_CHECKING
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.cv_helper
-import robokudo.utils.error_handling
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.annotation import SemanticColor
 from robokudo.types.cv import Rect
+from robokudo.types.scene import AnalyzableAnnotation
+from robokudo.utils.cv_helper import crop_image
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 
 class Color(Enum):
@@ -52,7 +53,7 @@ class Color(Enum):
     # COUNT # Use len(Color) instead
 
 
-class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
+class ClusterColorAnnotator(BaseAnnotator):
     """Calculate the semantic color for every Object Hypothesis (cluster) that has a RGB ROI and a Mask.
 
     This annotator analyzes object hypotheses by:
@@ -69,7 +70,7 @@ class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
     * Value thresholds for black/white/grey
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for the ClusterColorAnnotator.
 
         Defines parameters that control the color analysis behavior:
@@ -91,7 +92,7 @@ class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
                 self.max_value_black: int = 60
                 self.min_value_white: int = 120
                 self.ratio_annotation_threshold: float = 0.2
-                self.analysis_scope: Type = robokudo.types.scene.AnalyzableAnnotation
+                self.analysis_scope: Type = AnalyzableAnnotation
 
         # Overwrite the parameters explicitly to enable auto-completion
         parameters = Parameters()
@@ -341,7 +342,7 @@ class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         return len(all_image_pixel_values_in_mask), color_count
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Process current scene to analyze colors of object hypotheses.
 
         Steps:
@@ -377,7 +378,7 @@ class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     def create_color_annotations(self, color: npt.NDArray) -> None:
         """Create color annotations for all object hypotheses.
@@ -455,7 +456,7 @@ class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
                 color_ratio,
             ) in color_count_result_sorted_by_count:
                 if color_ratio > self.descriptor.parameters.ratio_annotation_threshold:
-                    color_annotation = robokudo.types.annotation.SemanticColor()
+                    color_annotation = SemanticColor()
                     color_annotation.color = str(color_name.name.lower())
                     color_annotation.source = self.name
                     color_annotation.ratio = color_ratio
@@ -514,7 +515,7 @@ class ClusterColorAnnotator(robokudo.annotators.core.BaseAnnotator):
                 roi.pos.x + histogram_size[0],
                 roi.pos.y + roi.height + 1 + histogram_size[1],
             )
-            histogram_region = robokudo.utils.cv_helper.crop_image(
+            histogram_region = crop_image(
                 visualization_img, histogram_upper_left, histogram_size
             )
 

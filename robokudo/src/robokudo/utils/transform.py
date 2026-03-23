@@ -21,7 +21,7 @@ Dependencies:
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from typing_extensions import Iterable
 
 import numpy as np
 from geometry_msgs.msg import Pose

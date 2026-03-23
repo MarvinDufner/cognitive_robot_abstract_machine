@@ -17,13 +17,13 @@ The module is used for:
 * Conditional processing
 """
 
-import py_trees
+from py_trees.common import Status
 from typing_extensions import Optional, Tuple, Dict, Callable
 
-import robokudo.annotators.core
+from robokudo.annotators.core import BaseAnnotator
 
 
-class FilterAnnotator(robokudo.annotators.core.BaseAnnotator):
+class FilterAnnotator(BaseAnnotator):
     """
     Annotator for applying filter conditions to annotations.
 
@@ -31,7 +31,7 @@ class FilterAnnotator(robokudo.annotators.core.BaseAnnotator):
     annotations, modifying the annotation list in-place based on the filter results.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """
         Configuration descriptor for filter annotator.
 
@@ -68,7 +68,7 @@ class FilterAnnotator(robokudo.annotators.core.BaseAnnotator):
         super().__init__(name, descriptor)
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """
         Apply the filter function to current annotations.
 
@@ -91,4 +91,4 @@ class FilterAnnotator(robokudo.annotators.core.BaseAnnotator):
             ]
             self.get_cas().annotations = annotations
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

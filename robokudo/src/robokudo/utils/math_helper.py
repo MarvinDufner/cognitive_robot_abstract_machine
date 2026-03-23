@@ -5,16 +5,11 @@ This module provides utilities for 3D geometric calculations.
 :module: math_helper
 :synopsis: 3D geometric calculations and utilities
 :moduleauthor: RoboKudo Team
-
-:Dependencies:
-    None
 """
 
-from typing import Iterable, Optional, Tuple, List
-
+from robokudo.utils.transform import get_rotation_matrix_from_q
+from typing_extensions import Iterable, Optional, Tuple, List
 import numpy as np
-
-from . import transform
 
 
 def intersection_point(
@@ -294,7 +289,7 @@ def intersecting_cuboids(
 
         # Convert quaternion to rotation matrix
         quat = np.array(cuboid_orientation, dtype=float)
-        rot = transform.get_rotation_matrix_from_q(quat)  # x, y, z, w
+        rot = get_rotation_matrix_from_q(quat)  # x, y, z, w
         # inverse of a rotation matrix = transpose
         rot_inv = rot.T
 

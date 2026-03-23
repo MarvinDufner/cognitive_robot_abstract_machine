@@ -1,23 +1,30 @@
-import os
 from timeit import default_timer
 import numpy as np
-import py_trees.common
+from py_trees.common import Status
 from typing_extensions import Optional, Dict, Any
 
-import robokudo.pipeline
-import robokudo.types.annotation
-import robokudo.types.cv
-import robokudo.utils.annotator_helper
 from robokudo.annotators.core import BaseAnnotator
 from robokudo.io.semantic_digital_twin import SemanticDigitalTwinAdapter, Object
+from robokudo.types.annotation import (
+    PositionAnnotation,
+    PoseAnnotation,
+    Classification,
+    BoundingBox3DAnnotation,
+    SemanticColor,
+    ColorHistogram,
+)
 from robokudo.types.scene import ObjectHypothesis
 
 
 class SemanticDigitalTwinConnector(BaseAnnotator):
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    """An annotator that synchronizes the current state of the world with the semdt."""
+
+    class Descriptor(BaseAnnotator.Descriptor):
 
         class Parameters:
             def __init__(self) -> None:
+                """Initialize a new set of parameters for the descriptor."""
+
                 self.urdf_path: Optional[str] = None
                 """Optional Path to the URDF file of the world"""
 
@@ -44,55 +51,46 @@ class SemanticDigitalTwinConnector(BaseAnnotator):
         :param oh: Object hypothesis to extract data from.
         :return: A dictionary containing the object hypothesis data in form of a dictionary.
         """
-        data = {}
+        data: Dict[str, Any] = {}
         cas = self.get_cas()
 
-        positions = cas.filter_by_type(
-            robokudo.types.annotation.PositionAnnotation, oh.annotations
-        )
+        if hasattr(oh, "roi"):
+            data["oh_roi"] = oh.roi.roi
+
+        positions = cas.filter_by_type(PositionAnnotation, oh.annotations)
         if len(positions) > 0:
             translation_vector = np.array(positions[0].translation)
             data["translation_vector"] = translation_vector
 
-        poses = cas.filter_by_type(
-            robokudo.types.annotation.PoseAnnotation, oh.annotations
-        )
+        poses = cas.filter_by_type(PoseAnnotation, oh.annotations)
         if len(poses) > 0:
             translation_vector = np.array(poses[0].translation)
             data["translation_vector"] = translation_vector
 
-        classes = cas.filter_by_type(
-            robokudo.types.annotation.Classification, oh.annotations
-        )
+        classes = cas.filter_by_type(Classification, oh.annotations)
         if len(classes) > 0:
             data["class"] = classes[0]
 
-        bboxs = cas.filter_by_type(
-            robokudo.types.annotation.BoundingBox3DAnnotation, oh.annotations
-        )
+        bboxs = cas.filter_by_type(BoundingBox3DAnnotation, oh.annotations)
         if len(bboxs) > 0:
             data["bbox"] = bboxs[0]
 
-        semantic_colors = cas.filter_by_type(
-            robokudo.types.annotation.SemanticColor, oh.annotations
-        )
+        semantic_colors = cas.filter_by_type(SemanticColor, oh.annotations)
         if len(semantic_colors) > 0:
             data["semantic_color"] = semantic_colors[0]
 
-        color_histograms = cas.filter_by_type(
-            robokudo.types.annotation.ColorHistogram, oh.annotations
-        )
+        color_histograms = cas.filter_by_type(ColorHistogram, oh.annotations)
         if len(color_histograms) > 0:
             data["color_histogram"] = color_histograms[0]
 
         return data
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Synchronise the current RoboKudo state with the current semdt state."""
         start_timer = default_timer()
 
         ohs: list[ObjectHypothesis] = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
+            ObjectHypothesis
         )
 
         # Get the best data from oh
@@ -124,4 +122,4 @@ class SemanticDigitalTwinConnector(BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

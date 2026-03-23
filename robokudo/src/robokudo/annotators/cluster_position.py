@@ -18,25 +18,18 @@ The module uses:
    Can analyze either ObjectHypothesis or CloudAnnotation data.
 """
 
-from __future__ import annotations
-
-import copy
-from collections.abc import Iterable
 from timeit import default_timer
-from typing_extensions import List, TYPE_CHECKING, Type
+
+from py_trees.common import Status
+from typing_extensions import List, Type
 
 import open3d as o3d
-import py_trees
-
-from . import core, outputs
-from ..types import annotation, scene
-from ..cas import CAS, CASViews
-
-if TYPE_CHECKING:
-    import numpy.typing as npt
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.types import annotation, scene
+from robokudo.cas import CAS, CASViews
 
 
-class ClusterPositionAnnotator(core.BaseAnnotator):
+class ClusterPositionAnnotator(BaseAnnotator):
     """3D position estimation for object hypotheses.
 
     This annotator:
@@ -51,7 +44,7 @@ class ClusterPositionAnnotator(core.BaseAnnotator):
        Can process either ObjectHypothesis or CloudAnnotation data.
     """
 
-    class Descriptor(core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for position estimation."""
 
         class Parameters:
@@ -77,7 +70,7 @@ class ClusterPositionAnnotator(core.BaseAnnotator):
         super().__init__(name, descriptor)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Process object hypotheses and estimate positions.
 
         The method:
@@ -135,7 +128,7 @@ class ClusterPositionAnnotator(core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     def position_annotation_from_centroid(
         self, centroid: List[float]

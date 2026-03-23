@@ -8,36 +8,23 @@ using different visualization backends. It coordinates:
 * ROS visualization
 * Shared visualization state
 * Pipeline data synchronization
-
-Dependencies
------------
-* py_trees for behavior tree functionality
-* cv2 for OpenCV visualization
-* robokudo.pipeline for pipeline access
-* robokudo.vis.* for visualization backends
-
-See Also
---------
-* :mod:`robokudo.vis.visualizer` : Base visualization interface
-* :mod:`robokudo.vis.cv_visualizer` : OpenCV-based visualization
-* :mod:`robokudo.vis.o3d_visualizer` : Open3D-based visualization
-* :mod:`robokudo.vis.ros_visualizer` : ROS-based visualization
 """
 
 import copy
 import logging
 from timeit import default_timer
 
-import py_trees
+from py_trees.common import Status
 from py_trees.behaviour import Behaviour
+from py_trees.blackboard import Blackboard
 from typing_extensions import Dict, List, Type
 
-import robokudo.defs
-import robokudo.pipeline
-import robokudo.vis.cv_visualizer
-import robokudo.vis.o3d_visualizer
-import robokudo.vis.ros_visualizer
-import robokudo.vis.visualizer
+from robokudo.defs import PACKAGE_NAME
+from robokudo.pipeline import Pipeline
+from robokudo.vis.cv_visualizer import CVVisualizer
+from robokudo.vis.o3d_visualizer import O3DVisualizer
+from robokudo.vis.ros_visualizer import SharedROSVisualizer, AllAnnotatorROSVisualizer
+from robokudo.vis.visualizer import Visualizer
 
 
 class VisualizationManager(Behaviour):
@@ -66,26 +53,24 @@ class VisualizationManager(Behaviour):
         """
         super().__init__(name=name)
 
-        self.pipelines: Dict[str, robokudo.pipeline.Pipeline] = {}
+        self.pipelines: Dict[str, Pipeline] = {}
         """Mapping of pipeline names to Pipeline objects"""
 
-        self.rk_logger: logging.Logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
+        self.rk_logger: logging.Logger = logging.getLogger(PACKAGE_NAME)
         """Logger instance for this class"""
 
         self.visualizer_types: List[Type] = [
-            robokudo.vis.cv_visualizer.CVVisualizer,
-            robokudo.vis.o3d_visualizer.O3DVisualizer,
-            robokudo.vis.ros_visualizer.SharedROSVisualizer,
-            robokudo.vis.ros_visualizer.AllAnnotatorROSVisualizer,
+            CVVisualizer,
+            O3DVisualizer,
+            SharedROSVisualizer,
+            AllAnnotatorROSVisualizer,
         ]
         """List of available visualizer classes"""
 
-        self.visualizers: Dict[str, List[robokudo.vis.visualizer.Visualizer]] = {}
+        self.visualizers: Dict[str, List[Visualizer]] = {}
         """Mapping of pipeline name to list of Visualizers"""
 
-    def create_visualizers_for_pipeline(
-        self, pipeline: robokudo.pipeline.Pipeline
-    ) -> None:
+    def create_visualizers_for_pipeline(self, pipeline: Pipeline) -> None:
         """Create visualizer instances for a pipeline.
 
         :param pipeline: Pipeline to create visualizers for
@@ -95,7 +80,7 @@ class VisualizationManager(Behaviour):
             with the pipeline. All visualizers share a common visualization state.
         """
         # TODO Handle shared visualization context - Not all Visualizers need one!
-        shared_state = robokudo.vis.visualizer.Visualizer.SharedState()
+        shared_state = Visualizer.SharedState()
         visualizers = [
             visclass.new_visualizer_instance(
                 pipeline=pipeline, shared_visualizer_state=shared_state
@@ -105,12 +90,12 @@ class VisualizationManager(Behaviour):
         self.visualizers[pipeline.name] = visualizers
 
     @staticmethod
-    def visualizer_instances() -> List[robokudo.vis.visualizer.Visualizer]:
+    def visualizer_instances() -> List[Visualizer]:
         """Get all active visualizer instances.
 
         :returns: List of all active Visualizer instances
         """
-        return robokudo.vis.visualizer.Visualizer.instances
+        return Visualizer.instances
 
     def initialise(self) -> None:
         """Initialize the behavior tree node.
@@ -130,10 +115,10 @@ class VisualizationManager(Behaviour):
         # The GUIManager should live one level below the top-node (Parallel)
         # Initially fill a list of all Pipelines
         for node in self.parent.iterate():
-            if isinstance(node, robokudo.pipeline.Pipeline):
+            if isinstance(node, Pipeline):
                 self.pipelines[node.name] = node
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Update visualizations for all pipelines.
 
         This method:
@@ -153,7 +138,7 @@ class VisualizationManager(Behaviour):
         self.rk_logger.debug("%s.update()" % self.__class__.__name__)
         start_timer = default_timer()
 
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         annotator_output_pipeline_map_buffer = blackboard.get(
             "annotator_output_pipeline_map_buffer"
         )  # Working buffer
@@ -215,9 +200,9 @@ class VisualizationManager(Behaviour):
         # Check if one Visualizer returned a termination signal
         for vis in VisualizationManager.visualizer_instances():
             if vis.indicate_termination():
-                return py_trees.common.Status.FAILURE
+                return Status.FAILURE
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
 
-        return py_trees.common.Status.RUNNING
+        return Status.RUNNING

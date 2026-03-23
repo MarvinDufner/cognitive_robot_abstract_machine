@@ -22,7 +22,7 @@ from typing_extensions import TYPE_CHECKING
 from . import transform
 
 if TYPE_CHECKING:
-    from ..semantic_map import SemanticMapEntry
+    from robokudo.semantic_map import SemanticMapEntry
     import numpy.typing as npt
 
 

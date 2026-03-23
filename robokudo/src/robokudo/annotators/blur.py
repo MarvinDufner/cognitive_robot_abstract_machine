@@ -18,14 +18,14 @@ import cv2
 from py_trees.common import Status
 from typing_extensions import TYPE_CHECKING
 
-from . import core
-from ..cas import CASViews
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.cas import CASViews
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class BlurAnnotator(core.BaseAnnotator):
+class BlurAnnotator(BaseAnnotator):
     """Annotator for calculating and visualizing image blur metrics.
 
     This annotator:
@@ -39,7 +39,7 @@ class BlurAnnotator(core.BaseAnnotator):
        advancement when the blur threshold is exceeded.
     """
 
-    class Descriptor(core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for blur detection."""
 
         class Parameters:

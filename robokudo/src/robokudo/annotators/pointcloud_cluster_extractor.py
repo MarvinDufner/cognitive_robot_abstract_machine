@@ -19,22 +19,19 @@ from timeit import default_timer
 import cv2
 import numpy as np
 import open3d as o3d
-import py_trees
 from matplotlib import pyplot as plt
 from scipy.spatial.transform import Rotation as R
 from typing_extensions import Tuple, List, TYPE_CHECKING
-
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.types.annotation
-import robokudo.types.cv
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
-import robokudo.utils.o3d_helper
-import robokudo.utils.transform
+from py_trees.common import Status
+from robokudo.annotators.core import ThreadedAnnotator, BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.annotation import Plane
+from robokudo.types.cv import ImageROI
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.annotator_helper import draw_bounding_boxes_from_object_hypotheses
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
+from robokudo.utils.o3d_helper import put_obb_on_target_obb, concatenate_clouds
+from robokudo.utils.transform import get_transform_matrix
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -48,7 +45,7 @@ def generate_roi_with_mask_from_points(
     pc_cam_intrinsics: o3d.camera.PinholeCameraIntrinsic,
     cloud: o3d.geometry.PointCloud,
     color2depth_ratio: Tuple[int, int] = (1, 1),
-) -> Tuple[robokudo.types.cv.ImageROI, npt.NDArray]:
+) -> Tuple[ImageROI, npt.NDArray]:
     """Generate ROI and mask from projected point cloud points.
 
     Projects 3D points to image plane and creates:
@@ -82,7 +79,7 @@ def generate_roi_with_mask_from_points(
 
     full_mask = np.zeros((image_height, image_width), np.uint8)
     full_mask[y_scaled, x_scaled] = 255
-    roi = robokudo.types.cv.ImageROI()
+    roi = ImageROI()
     roi.roi.pos.x = x_scaled.min()
     roi.roi.pos.y = y_scaled.min()
     roi.roi.width = x_scaled.max() - x_scaled.min()
@@ -137,7 +134,7 @@ def cluster_points(
     return all_cluster_indices
 
 
-class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
+class PointCloudClusterExtractor(ThreadedAnnotator):
     """Annotator for object detection.
 
     The main idea is to look for the Plane annotation in the CAS extract the points that belong to the plane,
@@ -149,7 +146,7 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
        Requires a Plane annotation in the CAS to function.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for point cloud clustering."""
 
         class Parameters:
@@ -185,7 +182,7 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
 
     def points_and_indices_from_plane(
         self,
-        plane_model: robokudo.types.annotation.Plane,
+        plane_model: Plane,
         cloud: o3d.geometry.PointCloud,
     ) -> Tuple[
         o3d.geometry.OrientedBoundingBox,
@@ -249,9 +246,7 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
             [plane_obb.extent[0], plane_obb.extent[1], 0.8]
         )
 
-        on_plane_obb = robokudo.utils.o3d_helper.put_obb_on_target_obb(
-            above_plane_obb, plane_obb
-        )
+        on_plane_obb = put_obb_on_target_obb(above_plane_obb, plane_obb)
         on_plane_cloud = outlier_cloud.crop(on_plane_obb)
         on_plane_cloud_indices = on_plane_obb.get_point_indices_within_bounding_box(
             outlier_cloud.points
@@ -274,8 +269,8 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
             outlier_cloud,
         )
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def compute(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def compute(self) -> Status:
         """Process point cloud to detect and annotate object clusters.
 
         The method:
@@ -299,14 +294,12 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
         color = self.get_cas().get(CASViews.COLOR_IMAGE)
         height, width, d = color.shape
         vis_mask = np.zeros((height, width), np.uint8)
-        plane_models = self.get_cas().filter_annotations_by_type(
-            robokudo.types.annotation.Plane
-        )
+        plane_models = self.get_cas().filter_annotations_by_type(Plane)
         if plane_models is None or plane_models == []:
             self.feedback_message = "No plane model in CAS. Aborting."
             raise Exception(self.feedback_message)
 
-        plane_model: robokudo.types.annotation.Plane = plane_models[0]
+        plane_model: Plane = plane_models[0]
 
         # Segment the pointcloud first. Get the points inside the volume above the given plane and related variables
         (
@@ -362,7 +355,7 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
             )
 
             # Add each cluster to CAS
-            object_hypothesis = robokudo.types.scene.ObjectHypothesis()
+            object_hypothesis = ObjectHypothesis()
             object_hypothesis.source = self.name
             object_hypothesis.points = cluster_cloud
             object_hypothesis.point_indices = [cluster_indices_in_outlier_cloud]
@@ -388,16 +381,14 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
             self.rk_logger.warning(f"No Clusters have been found.")
             end_timer = default_timer()
             self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         ##### Visualization
         # 3D
-        visualization_cloud = robokudo.utils.o3d_helper.concatenate_clouds(
-            all_vis_clouds
-        )
+        visualization_cloud = concatenate_clouds(all_vis_clouds)
 
         plane_normal = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
-        t = robokudo.utils.transform.get_transform_matrix(plane_obb.R, plane_obb.center)
+        t = get_transform_matrix(plane_obb.R, plane_obb.center)
         plane_normal.transform(t)
 
         x = [
@@ -416,7 +407,7 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
 
         # Overlay the mask with the input RGB image
         visualization_img = cv2.addWeighted(color, 0.5, mask3d, 0.5, 0)
-        robokudo.utils.annotator_helper.draw_bounding_boxes_from_object_hypotheses(
+        draw_bounding_boxes_from_object_hypotheses(
             visualization_img,
             object_hypotheses,
             lambda oh: f"ROI-{oh.id}({len(oh.points.points)})",
@@ -427,17 +418,17 @@ class PointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
         self.rk_logger.info("PCE Done")
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
 
-class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator):
+class NaivePointCloudClusterExtractor(ThreadedAnnotator):
     """Annotator for object detection. Simply takes an input cloud and clusters it.
 
     .. note::
        Unlike PointCloudClusterExtractor, this does not require a plane model.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for naive point cloud clustering."""
 
         class Parameters:
@@ -471,8 +462,8 @@ class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator
         """
         super().__init__(name, descriptor)
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def compute(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def compute(self) -> Status:
         """Process point cloud to detect and annotate object clusters.
 
         The method:
@@ -514,7 +505,7 @@ class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator
         cluster_idx = 0
         for cluster_indices in all_cluster_indices:
             if len(cluster_indices) < self.descriptor.parameters.min_cluster_count:
-                self.rk_logger().debug(
+                self.rk_logger.debug(
                     f"Skipping cluster {cluster_idx} with {len(cluster_indices)} points"
                 )
                 continue
@@ -531,12 +522,12 @@ class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator
             )  # limit to 0-19 range due to map size
             all_vis_clouds.append(clusters[cluster_idx]["vis_cloud"])
 
-            self.rk_logger().debug(
+            self.rk_logger.debug(
                 f"Extracted cluster {cluster_idx} with {len(cluster_cloud.points)} points"
             )
 
             # Add each cluster to CAS
-            object_hypothesis = robokudo.types.scene.ObjectHypothesis()
+            object_hypothesis = ObjectHypothesis()
             object_hypothesis.source = self.name
             object_hypothesis.points = cluster_cloud
             object_hypothesis.point_indices = [cluster_indices]
@@ -559,16 +550,14 @@ class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator
             cluster_idx += 1
 
         if len(object_hypotheses) == 0:
-            self.rk_logger().warning(f"No Clusters have been found.")
+            self.rk_logger.warning(f"No Clusters have been found.")
             end_timer = default_timer()
             self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         ##### Visualization
         # 3D
-        visualization_cloud = robokudo.utils.o3d_helper.concatenate_clouds(
-            all_vis_clouds
-        )
+        visualization_cloud = concatenate_clouds(all_vis_clouds)
 
         x = [
             {"name": "Visualization cloud PCE", "geometry": visualization_cloud},
@@ -582,7 +571,7 @@ class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator
 
         # Overlay the mask with the input RGB image
         visualization_img = cv2.addWeighted(color, 0.5, mask3d, 0.5, 0)
-        robokudo.utils.annotator_helper.draw_bounding_boxes_from_object_hypotheses(
+        draw_bounding_boxes_from_object_hypotheses(
             visualization_img,
             object_hypotheses,
             lambda oh: f"ROI-{oh.id}({len(oh.points.points)})",
@@ -593,4 +582,4 @@ class NaivePointCloudClusterExtractor(robokudo.annotators.core.ThreadedAnnotator
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
         self.rk_logger.info("PCE Stop")
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

@@ -6,9 +6,6 @@ This module provides NMS implementations for filtering overlapping bounding boxe
 :synopsis: Non-Maxima-Suppression for object detection
 :moduleauthor: Lennart Heinbokel
 
-:Dependencies:
-    None
-
 :Created:
     2023-02-02
 """

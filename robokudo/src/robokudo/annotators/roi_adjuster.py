@@ -5,23 +5,19 @@ boundaries for object hypotheses. It can grow or shrink ROIs and their associate
 masks by a specified pixel offset.
 """
 
-import copy
 from timeit import default_timer
 
-import py_trees
+from py_trees.common import Status
 from typing_extensions import Type
 
-import robokudo
-import robokudo.annotators.core
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.cv_helper
-import robokudo.utils.error_handling
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.cv_helper import adjust_image_roi, adjust_mask
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 
 
-class ROIAdjusterAnnotator(robokudo.annotators.core.BaseAnnotator):
+class ROIAdjusterAnnotator(BaseAnnotator):
     """Annotator for adjusting ROI sizes of object hypotheses.
 
     This annotator can grow or shrink ROIs (Regions of Interest) on object
@@ -29,7 +25,7 @@ class ROIAdjusterAnnotator(robokudo.annotators.core.BaseAnnotator):
     and their associated masks, ensuring proper adjustment of both.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for ROI adjustment."""
 
         class Parameters:
@@ -39,15 +35,14 @@ class ROIAdjusterAnnotator(robokudo.annotators.core.BaseAnnotator):
                 self.offset_pixel: int = 20
                 """Pixels to add/subtract from ROI sides (positive grows, negative shrinks)"""
 
-                self.analysis_scope: Type = robokudo.types.scene.ObjectHypothesis
+                self.analysis_scope: Type = ObjectHypothesis
                 """Type of annotations to process."""
 
                 self.fill_value_mask: int = 0
                 """Value to fill new mask areas when growing ROIs"""
 
-        parameters = (
-            Parameters()
-        )  # overwrite the parameters explicitly to enable auto-completion
+        # overwrite the parameters explicitly to enable auto-completion
+        parameters = Parameters()
 
     def __init__(
         self,
@@ -61,8 +56,8 @@ class ROIAdjusterAnnotator(robokudo.annotators.core.BaseAnnotator):
         """
         super().__init__(name, descriptor)
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Update ROIs by applying the configured pixel offset.
 
         For each object hypothesis in the analysis scope:
@@ -78,12 +73,12 @@ class ROIAdjusterAnnotator(robokudo.annotators.core.BaseAnnotator):
             self.descriptor.parameters.analysis_scope
         )
         for object_hypothesis in object_hypotheses:
-            robokudo.utils.cv_helper.adjust_image_roi(
+            adjust_image_roi(
                 color, object_hypothesis.roi, self.descriptor.parameters.offset_pixel
             )
 
             if object_hypothesis.roi.mask is not None:
-                object_hypothesis.roi.mask = robokudo.utils.cv_helper.adjust_mask(
+                object_hypothesis.roi.mask = adjust_mask(
                     object_hypothesis.roi.mask,
                     self.descriptor.parameters.offset_pixel,
                     fill_value=self.descriptor.parameters.fill_value_mask,
@@ -91,4 +86,4 @@ class ROIAdjusterAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

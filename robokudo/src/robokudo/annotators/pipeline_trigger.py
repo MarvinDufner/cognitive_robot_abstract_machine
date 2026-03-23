@@ -10,11 +10,13 @@ This module provides an annotator for:
    The pipeline will remain in RUNNING state until triggered.
 """
 
-import py_trees
-import robokudo.annotators.core
+from py_trees.blackboard import Blackboard
+from py_trees.common import Status
+
+from robokudo.annotators.core import BaseAnnotator
 
 
-class PipelineTrigger(robokudo.annotators.core.BaseAnnotator):
+class PipelineTrigger(BaseAnnotator):
     """Pipeline execution controller using triggers.
 
     This annotator basically gives you a way to wait for a 'trigger'
@@ -32,7 +34,7 @@ class PipelineTrigger(robokudo.annotators.core.BaseAnnotator):
         """
         super().__init__(name)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Check trigger state and control pipeline execution.
 
         The method:
@@ -45,11 +47,11 @@ class PipelineTrigger(robokudo.annotators.core.BaseAnnotator):
         :return: SUCCESS if triggered, RUNNING otherwise
         """
         self.rk_logger.debug("%s.update()" % (self.__class__.__name__))
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         pipeline_trigger = blackboard.get("pipeline_trigger")
 
         if pipeline_trigger:
             blackboard.set("pipeline_trigger", False)
-            return py_trees.common.Status.SUCCESS
+            return Status.SUCCESS
 
-        return py_trees.common.Status.RUNNING
+        return Status.RUNNING

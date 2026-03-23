@@ -1,10 +1,10 @@
 from queue import Queue
-from typing import Any
+from typing_extensions import Any
 
 from py_trees.blackboard import Blackboard
 
 from robokudo_msgs.action import Query
-from ..identifier import BBIdentifier
+from robokudo.identifier import BBIdentifier
 
 
 class QueryHandler(object):

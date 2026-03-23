@@ -23,6 +23,12 @@ from semantic_digital_twin.world_description.geometry import Box, FileMesh, Scal
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body, Region, SemanticAnnotation
 from . import defs
+from semantic_digital_twin.world_description.world_entity import (
+    Body,
+    SemanticAnnotation,
+)
+from robokudo.defs import Region3DWithName
+
 
 @dataclass
 class ObjectSpec:
@@ -32,6 +38,7 @@ class ObjectSpec:
     and the corresponding connections.
 
     """
+
     name: str
     pose: HomogeneousTransformationMatrix
     mesh_path: Optional[Path] = None
@@ -55,7 +62,7 @@ class RegionSpec:
 
 
 @dataclass
-class ObjectKnowledge(defs.Region3DWithName):
+class ObjectKnowledge(Region3DWithName):
     """Knowledge representation for a single object.
 
     This class extends Region3DWithName to add support for object components
@@ -118,9 +125,7 @@ class BaseObjectKnowledgeBase:
             -center_x, -center_y, -center_z, 0, 0, 0
         )
 
-    def build_objects(
-        self, root: Body, specs: List[Any]
-    ) -> Dict[str, Connection6DoF]:
+    def build_objects(self, root: Body, specs: List[Any]) -> Dict[str, Connection6DoF]:
         """Create bodies, connections, annotations, and poses from object specs.
 
         Each spec must provide these attributes:

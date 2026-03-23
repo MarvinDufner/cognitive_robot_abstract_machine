@@ -18,22 +18,19 @@ from timeit import default_timer
 import cv2
 import numpy
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 from typing_extensions import Optional, TYPE_CHECKING
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.utils.annotator_helper
-import robokudo.utils.cv_helper
-import robokudo.utils.o3d_helper
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.utils.annotator_helper import scale_cam_intrinsics
+from robokudo.utils.cv_helper import get_scaled_color_image_for_depth_image
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class ImagePreprocessorAnnotator(robokudo.annotators.core.BaseAnnotator):
+class ImagePreprocessorAnnotator(BaseAnnotator):
     """RGB-D image preprocessor and point cloud generator.
 
     This annotator:
@@ -56,7 +53,7 @@ class ImagePreprocessorAnnotator(robokudo.annotators.core.BaseAnnotator):
         depth: int = 2
         """Display depth image (2)"""
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for image preprocessing."""
 
         class Parameters:
@@ -91,7 +88,7 @@ class ImagePreprocessorAnnotator(robokudo.annotators.core.BaseAnnotator):
         self.display_mode: int = self.ViewMode.color
         """The display mode to use (color or depth)"""
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Process RGB-D images and generate point cloud.
 
         The method:
@@ -116,14 +113,12 @@ class ImagePreprocessorAnnotator(robokudo.annotators.core.BaseAnnotator):
         else:
             self.get_annotator_output_struct().set_image(self.color)
 
-        robokudo.utils.annotator_helper.scale_cam_intrinsics(self)
+        scale_cam_intrinsics(self)
 
         resized_color = None
         try:
-            resized_color = (
-                robokudo.utils.cv_helper.get_scaled_color_image_for_depth_image(
-                    self.get_cas(), self.color
-                )
+            resized_color = get_scaled_color_image_for_depth_image(
+                self.get_cas(), self.color
             )
         except RuntimeError as e:
             self.rk_logger.error(
@@ -162,7 +157,7 @@ class ImagePreprocessorAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     def key_callback(self, key: int) -> None:
         """Handle keyboard input for view mode switching.

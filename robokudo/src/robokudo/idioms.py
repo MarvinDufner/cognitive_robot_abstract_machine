@@ -13,9 +13,9 @@ The module provides:
 
 from py_trees.composites import Sequence
 
-from .annotators.outputs import ClearAnnotatorOutputs
-from .behaviours.action_server_checks import ActionServerPresentAndDone
-from .behaviours.clear_errors import ClearErrors
+from robokudo.annotators.outputs import ClearAnnotatorOutputs
+from robokudo.behaviours.action_server_checks import ActionServerPresentAndDone
+from robokudo.behaviours.clear_errors import ClearErrors
 
 
 def non_query_pipeline_init() -> Sequence:

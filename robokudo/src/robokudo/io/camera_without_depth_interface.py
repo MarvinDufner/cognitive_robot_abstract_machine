@@ -22,13 +22,13 @@ from __future__ import annotations
 from typing_extensions import Optional, TYPE_CHECKING, Any
 
 from robokudo.io.camera_interface import CameraInterface
-import robokudo.cas
 from robokudo.cas import CASViews
 from robokudo.annotator_parameters import AnnotatorPredefinedParameters
 
 import cv2
 
 if TYPE_CHECKING:
+    from robokudo.cas import CAS
     import numpy.typing as npt
 
 
@@ -113,7 +113,7 @@ class OpenCVCameraWithoutDepthInterface(CameraInterface):
 
         return self._has_new_data
 
-    def set_data(self, cas: robokudo.cas.CAS) -> None:
+    def set_data(self, cas: CAS) -> None:
         """Update the Common Analysis Structure with latest frame data.
 
         This method:

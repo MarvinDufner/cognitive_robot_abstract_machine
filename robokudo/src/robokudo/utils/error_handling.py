@@ -5,12 +5,6 @@ This module provides error handling utilities for behavior trees.
 :module: error_handling
 :synopsis: Error handling utilities for behavior trees
 :moduleauthor: RoboKudo Team
-
-:Dependencies:
-    * py_trees
-    * robokudo.identifier
-    * functools.wraps
-    * traceback
 """
 
 # import logging
@@ -21,7 +15,7 @@ from py_trees.blackboard import Blackboard
 from py_trees.common import Status
 from typing_extensions import Callable, Union, Any, Optional
 
-from ..identifier import BBIdentifier
+from robokudo.identifier import BBIdentifier
 
 # rk_logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
 

@@ -12,23 +12,17 @@ raise RuntimeError(
 import sys
 from timeit import default_timer
 
-import numpy
 import numpy as np
 import open3d as o3d
-import py_trees
-import rclpy
+from py_trees.common import Status
 from scipy.spatial.transform import Rotation as R
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.io.tf_listener_proxy
-import robokudo.semantic_map
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
-import robokudo.utils.transform
+from robokudo.annotators.core import ThreadedAnnotator, BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.io import tf_listener_proxy
+from robokudo.semantic_map import SemanticMapEntry
+from robokudo.utils.annotator_helper import get_world_to_cam_transform_matrix
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 from robokudo.utils.module_loader import ModuleLoader
 from robokudo.utils.semantic_map import (
     get_obb_from_semantic_map_region_in_cam_coordinates,
@@ -36,7 +30,7 @@ from robokudo.utils.semantic_map import (
 )
 
 
-class RegionVisualizer(robokudo.annotators.core.ThreadedAnnotator):
+class RegionVisualizer(ThreadedAnnotator):
     """Annotator for visualizing semantic map regions.
 
     This annotator retrieves a semantic map and visualizes its regions in:
@@ -49,7 +43,7 @@ class RegionVisualizer(robokudo.annotators.core.ThreadedAnnotator):
     in the correct positions.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for region visualization."""
 
         class Parameters:
@@ -97,8 +91,8 @@ class RegionVisualizer(robokudo.annotators.core.ThreadedAnnotator):
             self.descriptor.parameters.semantic_map_name,
         )
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def compute(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def compute(self) -> Status:
         """Compute the visualization of semantic map regions.
 
         Creates visualizations containing:
@@ -127,26 +121,18 @@ class RegionVisualizer(robokudo.annotators.core.ThreadedAnnotator):
         visualized_geometries = []
 
         try:
-            world_to_cam_transform = (
-                robokudo.utils.annotator_helper.get_world_to_cam_transform_matrix(
-                    self.get_cas()
-                )
-            )
+            world_to_cam_transform = get_world_to_cam_transform_matrix(self.get_cas())
         except KeyError as err:
             self.rk_logger.warning(f"Couldn't find viewpoint in the CAS: {err}")
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         for key, region in active_regions.items():
-            assert isinstance(region, robokudo.semantic_map.SemanticMapEntry)
+            assert isinstance(region, SemanticMapEntry)
             # Will be used for saving the indices of the cloud for this specific region
 
             # if region is defined in the world frame, the region can be transformed with the transformation matrix from world to cam
             if region.frame_id == self.world_frame_name:
-                transform_matrix = (
-                    robokudo.utils.annotator_helper.get_world_to_cam_transform_matrix(
-                        self.get_cas()
-                    )
-                )
+                transform_matrix = get_world_to_cam_transform_matrix(self.get_cas())
                 obb = get_obb_from_semantic_map_region_in_cam_coordinates(
                     region,
                     self.descriptor.parameters.world_frame_name,
@@ -157,7 +143,7 @@ class RegionVisualizer(robokudo.annotators.core.ThreadedAnnotator):
             else:
                 # raise "Not supported yet - Migrate to ROS2 first"
                 # get translation and rotation of region
-                transform_listener = robokudo.io.tf_listener_proxy.instance()
+                transform_listener = tf_listener_proxy.instance()
                 newest = rospy.Time(0)
                 try:
                     transform_listener.waitForTransform(
@@ -222,4 +208,4 @@ class RegionVisualizer(robokudo.annotators.core.ThreadedAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

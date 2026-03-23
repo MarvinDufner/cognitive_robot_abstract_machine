@@ -11,36 +11,43 @@ raise RuntimeError(
 )
 
 import numpy as np
-import numpy.typing as npt
 import open3d as o3d
-import py_trees
-from typing_extensions import List, Optional
+from py_trees.common import Status
+from typing_extensions import List, Optional, TYPE_CHECKING, Union
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.types.annotation
-import robokudo.types.cv
-import robokudo.types.tf
-import robokudo.utils.annotator_helper
-import robokudo.utils.cv_helper
-import robokudo.utils.knowledge
-import robokudo.utils.o3d_helper
-import robokudo.utils.transform
-import robokudo.utils.type_conversion
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
 from robokudo.descriptors.object_knowledge.object_knowledge_iai_kitchen import (
     ObjectKnowledge,
 )
 from robokudo.object_knowledge_base import BaseObjectKnowledgeBase
+from robokudo.types.annotation import Classification, PoseAnnotation
+from robokudo.types.cv import ImageROI
 from robokudo.types.scene import (
     ParthoodComponentHypothesis,
     ParthoodHypothesis,
     ParthoodFeatureHypothesis,
+    ObjectHypothesis,
 )
+from robokudo.utils.annotator_helper import generate_source_name
+from robokudo.utils.cv_helper import sanity_checks_bounding_rects, clamp_bounding_rect
+from robokudo.utils.knowledge import (
+    load_object_knowledge_base,
+    get_obb_for_child_object_and_transform,
+    get_obbs_for_object_and_childs,
+)
+from robokudo.utils.o3d_helper import (
+    get_2d_bounding_rect_from_3d_bb,
+    draw_wireframe_of_obb_into_image,
+    get_2d_corner_points_from_3d_bb,
+)
+from robokudo.utils.type_conversion import get_transform_matrix_from_pose_annotation
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 
-class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
+class ObjectKnowledgeVisualizer(BaseAnnotator):
     """Annotator for visualizing object knowledge and part relationships.
 
     This annotator displays reference frames of objects and their components/features
@@ -51,7 +58,7 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
     - 2D ROIs for parts in images
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for object knowledge visualization."""
 
         class Parameters:
@@ -79,7 +86,7 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
         """
         super().__init__(name, descriptor)
 
-        self.object_kb = robokudo.utils.knowledge.load_object_knowledge_base(self)
+        self.object_kb = load_object_knowledge_base(self)
         """Loaded object knowledge base"""
 
     def fill_parthood_hypothesis(
@@ -93,33 +100,27 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
         :param ph: A ParthoodHypothesis or one of its children.
         :param object_knowledge: Knowledge about the object and its parts
         :param transform: Transform between cam and parent object
-        :return: bool: True if parthood hypothesis could be generated, False otherwise
+        :return: True if parthood hypothesis could be generated, False otherwise
         """
         ph.name = object_knowledge.name
-        ph.source = robokudo.utils.annotator_helper.generate_source_name(self)
+        ph.source = generate_source_name(self)
 
         # TODO: Cloud generation. Cut out from whole scene, but also from object pointcloud (if existing)
 
-        obb = robokudo.utils.knowledge.get_obb_for_child_object_and_transform(
-            object_knowledge, transform
-        )
-        corner_points = robokudo.utils.o3d_helper.get_2d_bounding_rect_from_3d_bb(
-            self.get_cas(), obb
-        )
+        obb = get_obb_for_child_object_and_transform(object_knowledge, transform)
+        corner_points = get_2d_bounding_rect_from_3d_bb(self.get_cas(), obb)
 
         image_height = self.get_cas().get(CASViews.COLOR_IMAGE).shape[0]
         image_width = self.get_cas().get(CASViews.COLOR_IMAGE).shape[1]
 
-        if not robokudo.utils.cv_helper.sanity_checks_bounding_rects(
-            corner_points, image_width, image_height
-        ):
+        if not sanity_checks_bounding_rects(corner_points, image_width, image_height):
             return False
 
-        corner_points = robokudo.utils.cv_helper.clamp_bounding_rect(
+        corner_points = clamp_bounding_rect(
             corner_points, image_width=image_width, image_height=image_height
         )
 
-        roi = robokudo.types.cv.ImageROI()
+        roi = ImageROI()
         roi.roi.pos.x = corner_points[0]
         roi.roi.pos.y = corner_points[1]
         roi.roi.width = corner_points[2]
@@ -132,7 +133,7 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
 
     def generate_parthood_hypotheses(
         self, object_knowledge: ObjectKnowledge, transform: npt.NDArray
-    ) -> Optional[List[ParthoodHypothesis]]:
+    ) -> Optional[List[Union[ParthoodComponentHypothesis, ParthoodFeatureHypothesis]]]:
         """Generate hypotheses for object parts and features.
 
         Creates ParthoodComponentHypothesis and ParthoodFeatureHypothesis objects
@@ -144,7 +145,10 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
         """
         if not BaseObjectKnowledgeBase.has_parthood_childs(object_knowledge):
             return None
-        annotations = []
+
+        annotations: List[
+            Union[ParthoodComponentHypothesis, ParthoodFeatureHypothesis]
+        ] = []
         for component in object_knowledge.components:
             pch = ParthoodComponentHypothesis()
             if self.fill_parthood_hypothesis(pch, component, transform):
@@ -157,7 +161,7 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
 
         return annotations
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Update the visualization with current object knowledge.
 
         Creates visualizations containing:
@@ -169,15 +173,13 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
 
         :return: SUCCESS after creating visualizations
         """
-        self.object_kb = robokudo.utils.knowledge.load_object_knowledge_base(self)
+        self.object_kb = load_object_knowledge_base(self)
         cloud = self.get_cas().get(CASViews.CLOUD)
         color = self.get_cas().get_copy(CASViews.COLOR_IMAGE)
 
         # Look for objects with classifications and check if we have ObjectKnowledge about them
 
-        object_hypotheses = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
-        )
+        object_hypotheses = self.get_cas().filter_annotations_by_type(ObjectHypothesis)
 
         object_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
         obbs_list = []
@@ -190,41 +192,34 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
                 # This assumes that we have a proper classification
                 # and that it's the first one in the list of annotations
                 if (
-                    isinstance(annotation, robokudo.types.annotation.Classification)
+                    isinstance(annotation, Classification)
                     and annotation.classname in self.object_kb.entries
                     and classification is None
                 ):
                     classification = annotation
                     continue
 
-                if (
-                    isinstance(annotation, robokudo.types.annotation.PoseAnnotation)
-                    and pose is None
-                ):
+                if isinstance(annotation, PoseAnnotation) and pose is None:
                     pose = annotation
                     continue
 
             if classification and pose:
                 object_knowledge = self.object_kb.entries[classification.classname]
-                object_transform = robokudo.utils.type_conversion.get_transform_matrix_from_pose_annotation(
-                    pose
-                )
+                object_transform = get_transform_matrix_from_pose_annotation(pose)
                 object_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
                     size=0.2
                 )
                 object_frame.transform(object_transform)
-                obbs = robokudo.utils.knowledge.get_obbs_for_object_and_childs(
+                obbs = get_obbs_for_object_and_childs(
                     object_knowledge, object_transform
                 )
 
-                robokudo.utils.o3d_helper.draw_wireframe_of_obb_into_image(
+                draw_wireframe_of_obb_into_image(
                     self.get_cas(), color, obbs[classification.classname]
                 )
 
                 for o_key, o_value in obbs.items():
-                    robokudo.utils.o3d_helper.get_2d_corner_points_from_3d_bb(
-                        self.get_cas(), o_value
-                    )
+                    get_2d_corner_points_from_3d_bb(self.get_cas(), o_value)
                     obbs_list.append(o_value)
 
                 parthood_annotations = self.generate_parthood_hypotheses(
@@ -244,4 +239,4 @@ class ObjectKnowledgeVisualizer(robokudo.annotators.core.BaseAnnotator):
         self.get_annotator_output_struct().set_geometries(visualized_geometries)
         self.get_annotator_output_struct().set_image(color)
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

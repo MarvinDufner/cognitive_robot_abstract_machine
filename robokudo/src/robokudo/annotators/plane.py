@@ -19,19 +19,17 @@ The plane detection uses:
 
 from timeit import default_timer
 
-import numpy
+import numpy as np
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.types.annotation
-import robokudo.utils.transform
+from robokudo.annotators.core import ThreadedAnnotator, BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.annotation import Plane
+from robokudo.utils.transform import get_transform_from_plane_equation
 
 
-class PlaneAnnotator(robokudo.annotators.core.ThreadedAnnotator):
+class PlaneAnnotator(ThreadedAnnotator):
     """Plane detector and visualizer for point clouds.
 
     This annotator:
@@ -45,7 +43,7 @@ class PlaneAnnotator(robokudo.annotators.core.ThreadedAnnotator):
        Uses Open3D's plane segmentation with configurable parameters.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for plane detection."""
 
         class Parameters:
@@ -76,7 +74,7 @@ class PlaneAnnotator(robokudo.annotators.core.ThreadedAnnotator):
         """
         super().__init__(name, descriptor)
 
-    def compute(self) -> py_trees.common.Status:
+    def compute(self) -> Status:
         """Detect and annotate dominant plane in point cloud.
 
         The method:
@@ -116,7 +114,7 @@ class PlaneAnnotator(robokudo.annotators.core.ThreadedAnnotator):
         [a, b, c, d] = plane_model
         # print(f"Plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
 
-        plane_annotation = robokudo.types.annotation.Plane()
+        plane_annotation = Plane()
         plane_annotation.model = plane_model
         plane_annotation.inliers = inliers
         self.get_cas().annotations.append(plane_annotation)
@@ -134,13 +132,11 @@ class PlaneAnnotator(robokudo.annotators.core.ThreadedAnnotator):
                 width=1.0, height=1.0, depth=0.01
             )
             plane_model_mesh.translate(
-                numpy.array([-0.5, -0.5, 0])
+                np.array([-0.5, -0.5, 0])
             )  # Shift origin to center instead of corner
-            plane_model_mesh.paint_uniform_color(numpy.array([1, 0, 0]))
+            plane_model_mesh.paint_uniform_color(np.array([1, 0, 0]))
 
-            transform = robokudo.utils.transform.get_transform_from_plane_equation(
-                plane_model
-            )
+            transform = get_transform_from_plane_equation(plane_model)
             plane_model_mesh.transform(transform)
 
             visualized_geometries.append(
@@ -151,4 +147,4 @@ class PlaneAnnotator(robokudo.annotators.core.ThreadedAnnotator):
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
         self.rk_logger.info("Plane compute end")
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

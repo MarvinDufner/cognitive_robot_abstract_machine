@@ -12,11 +12,13 @@ The behavior integrates with RoboKudo's error handling system to detect
 conditions that should trigger goal cancellation.
 """
 
-import py_trees
-import robokudo.utils.error_handling
+from py_trees.behaviour import Behaviour
+from py_trees.common import Status
+
+from robokudo.utils.error_handling import get_blackboard_exception
 
 
-class GoalCanceled(py_trees.Behaviour):
+class GoalCanceled(Behaviour):
     """
     A behavior that detects when goals should be canceled due to errors.
 
@@ -46,7 +48,7 @@ class GoalCanceled(py_trees.Behaviour):
         # self.rk_logger.debug("%s.initialise()" % self.__class__.__name__)
         pass
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """
         Check if the current goal should be canceled.
 
@@ -58,7 +60,7 @@ class GoalCanceled(py_trees.Behaviour):
         :return: SUCCESS if goal should be canceled, FAILURE otherwise
         """
         # self.rk_logger.debug("%s.update()" % (self.__class__.__name__))
-        if robokudo.utils.error_handling.get_blackboard_exception() is not None:
-            return py_trees.common.Status.SUCCESS
+        if get_blackboard_exception() is not None:
+            return Status.SUCCESS
 
-        return py_trees.common.Status.FAILURE
+        return Status.FAILURE

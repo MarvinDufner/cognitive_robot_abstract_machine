@@ -14,10 +14,10 @@ from geometry_msgs.msg import Vector3, PoseStamped
 from typing_extensions import TYPE_CHECKING, Type, Optional, TypeVar, Generic
 
 from robokudo_msgs.msg import ShapeSize
-from . import annotator_helper
-from .. import defs
-from ..cas import CASViews
-from ..types.annotation import (
+from robokudo.utils.annotator_helper import transform_pose_from_cam_to_world
+from robokudo.defs import PACKAGE_NAME
+from robokudo.cas import CASViews
+from robokudo.types.annotation import (
     PoseAnnotation,
     StampedPoseAnnotation,
     Classification,
@@ -29,12 +29,12 @@ from ..types.annotation import (
     Shape,
     StampedPositionAnnotation,
 )
-from ..types.cv import BoundingBox3D
-from ..types.core import Annotation
+from robokudo.types.cv import BoundingBox3D
+from robokudo.types.core import Annotation
 
 if TYPE_CHECKING:
     from robokudo_msgs.msg import ObjectDesignator
-    from ..cas import CAS
+    from robokudo.cas import CAS
 
 T = TypeVar("T", bound=Annotation)
 S = TypeVar("S", bound=Shape)
@@ -251,9 +251,7 @@ class Pose2ODConverter(Annotation2ODConverter[PoseAnnotation]):
         if use_cam_coords:
             pose_annotation = annotation
         else:
-            pose_annotation = annotator_helper.transform_pose_from_cam_to_world(
-                cas, annotation
-            )
+            pose_annotation = transform_pose_from_cam_to_world(cas, annotation)
 
         # First, convert the PoseAnnotation to a StampedPose
         spa = self.pose_converter.convert(pose_annotation)
@@ -302,7 +300,7 @@ class Position2ODConverter(Annotation2ODConverter[PositionAnnotation]):
         pos.rotation.insert(2, 0)
         pos.rotation.insert(3, 1)
 
-        pose_map = annotator_helper.transform_pose_from_cam_to_world(cas, pos)
+        pose_map = transform_pose_from_cam_to_world(cas, pos)
 
         # Must be a PoseStamped due to type specification in ros message
         ps = PoseStamped()
@@ -356,7 +354,7 @@ class StampedPosition2ODConverter(Annotation2ODConverter[StampedPositionAnnotati
         pos.rotation.insert(2, 0)
         pos.rotation.insert(3, 1)
 
-        pose_map = annotator_helper.transform_pose_from_cam_to_world(cas, pos)
+        pose_map = transform_pose_from_cam_to_world(cas, pos)
 
         # Must be a PoseStamped due to type specification in ros message
         ps = PoseStamped()
@@ -440,7 +438,7 @@ class Sphere2ODConverter(Annotation2ODConverter[Sphere]):
     ) -> None:
         size = ShapeSize(radius=annotation.radius)
 
-        rk_logger = logging.getLogger(defs.PACKAGE_NAME)
+        rk_logger = logging.getLogger(PACKAGE_NAME)
         rk_logger.info(
             f"The center point of the Sphere annotation is currently not converted to OD."
         )

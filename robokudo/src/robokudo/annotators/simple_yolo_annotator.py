@@ -3,14 +3,15 @@ from __future__ import annotations
 import copy
 
 import cv2
-import py_trees
 import torch
+from py_trees.common import Status
 from typing_extensions import TYPE_CHECKING
 from ultralytics import YOLO
 
-import robokudo.annotators.core
-import robokudo.types.annotation
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.annotation import Classification
+from robokudo.types.cv import ImageROI
 from robokudo.types.scene import ObjectHypothesis
 from robokudo.utils.comparators import RoiComparator
 
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class SimpleYoloAnnotator(robokudo.annotators.core.BaseAnnotator):
+class SimpleYoloAnnotator(BaseAnnotator):
 
     def __init__(self, name: str = "SimpleYoloAnnotator") -> None:
         super().__init__(name=name)
@@ -33,7 +34,7 @@ class SimpleYoloAnnotator(robokudo.annotators.core.BaseAnnotator):
         self.roi_comparator = RoiComparator(1.0)
         """A comparator for ROIs used to associate YOLO and RoboKudo ROIs."""
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Run YOLO inference on the cas color image and combine classifications with existing object hypotheses.
 
         Runs objects detection on the image and uses the RoiComparator find the closest bounding box created for
@@ -43,7 +44,7 @@ class SimpleYoloAnnotator(robokudo.annotators.core.BaseAnnotator):
         visualization_img = copy.deepcopy(self.get_cas().get(CASViews.COLOR_IMAGE))
 
         ohs: list[ObjectHypothesis] = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
+            ObjectHypothesis
         )
 
         with torch.no_grad():
@@ -57,12 +58,12 @@ class SimpleYoloAnnotator(robokudo.annotators.core.BaseAnnotator):
             cls = result.cls[0]
             name = self.id2name[cls]
 
-            classification = robokudo.types.annotation.Classification()
+            classification = Classification()
             classification.source = self.name
             classification.classname = name
             classification.confidence = result.conf[0]
 
-            roi = robokudo.types.cv.ImageROI()
+            roi = ImageROI()
             roi.roi.pos.x = int(bbox[0])
             roi.roi.pos.y = int(bbox[1])
             roi.roi.width = int(bbox[2] - bbox[0])
@@ -79,7 +80,7 @@ class SimpleYoloAnnotator(robokudo.annotators.core.BaseAnnotator):
                     best_conf = conf
 
             if best_oh is None:
-                object_hypothesis = robokudo.types.scene.ObjectHypothesis()
+                object_hypothesis = ObjectHypothesis()
                 object_hypothesis.source = self.name
                 object_hypothesis.id = str(obj_id)
                 object_hypothesis.roi = roi
@@ -96,12 +97,12 @@ class SimpleYoloAnnotator(robokudo.annotators.core.BaseAnnotator):
         self.get_cas().annotations.extend(object_hypotheses)
         self.get_annotator_output_struct().set_image(visualization_img)
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     @staticmethod
     def add_to_image(
-        obj: robokudo.types.scene.ObjectHypothesis,
-        classification: robokudo.types.annotation.Classification,
+        obj: ObjectHypothesis,
+        classification: Classification,
         image: npt.NDArray[np.uint8],
     ) -> npt.NDArray[np.uint8]:
         """Add the object hypothesis along with the classification name and confidence to the visualization image."""

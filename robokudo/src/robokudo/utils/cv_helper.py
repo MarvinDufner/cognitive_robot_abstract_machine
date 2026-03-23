@@ -13,20 +13,17 @@ It supports:
 
 from __future__ import annotations
 
-import logging
-
 import cv2
-import numpy
+import numpy as np
 from typing_extensions import TYPE_CHECKING, Tuple
 
-from .. import defs
-from ..cas import CASViews
-from ..types.cv import ImageROI
+from robokudo.cas import CASViews
+from robokudo.types.cv import ImageROI
 
 if TYPE_CHECKING:
     import cv2.typing as cv2t
     import numpy.typing as npt
-    from ..cas import CAS
+    from robokudo.cas import CAS
 
 
 def crop_image(image: npt.NDArray, xy: tuple, wh: tuple) -> npt.NDArray:
@@ -126,7 +123,7 @@ def get_hsv_for_rgb_color(rgb: Tuple[int, int, int]) -> npt.NDArray:
     :param rgb: RGB color values (r,g,b)
     :return: HSV color values
     """
-    return cv2.cvtColor(numpy.uint8([[list(rgb)]]), cv2.COLOR_RGB2HSV_FULL)
+    return cv2.cvtColor(np.uint8([[list(rgb)]]), cv2.COLOR_RGB2HSV_FULL)
 
 
 def get_hsv_for_bgr_color(bgr: Tuple[int, int, int]) -> npt.NDArray:
@@ -135,7 +132,7 @@ def get_hsv_for_bgr_color(bgr: Tuple[int, int, int]) -> npt.NDArray:
     :param bgr: BGR color values (b,g,r)
     :return: HSV color values
     """
-    return cv2.cvtColor(numpy.uint8([[list(bgr)]]), cv2.COLOR_BGR2HSV_FULL)
+    return cv2.cvtColor(np.uint8([[list(bgr)]]), cv2.COLOR_BGR2HSV_FULL)
 
 
 def draw_rectangle_around_center(
@@ -335,7 +332,7 @@ def adjust_mask(mask: npt.NDArray, offset: int, fill_value: int = 0) -> npt.NDAr
 
     if offset > 0:
         # Growing the mask
-        new_mask = numpy.full((new_height, new_width), fill_value, dtype=mask.dtype)
+        new_mask = np.full((new_height, new_width), fill_value, dtype=mask.dtype)
         new_mask[offset : offset + height, offset : offset + width] = mask
     elif offset < 0:
         # Shrinking the mask

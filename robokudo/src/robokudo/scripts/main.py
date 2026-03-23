@@ -6,20 +6,19 @@ import argparse
 import logging
 import os
 import sys
-import threading
 import traceback
+from threading import Thread
 
 # For time measurements or additional logic
 from timeit import default_timer as timer
 
-# PyTrees
-import py_trees
-
-# ROS imports
 import rclpy
-import rclpy.executors
 import rclpy.impl.logging_severity
 import rclpy.logging
+from py_trees.blackboard import Blackboard
+from py_trees.common import Status
+from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
+from rclpy.parameter import Parameter
 from typing_extensions import TYPE_CHECKING
 
 # RoboKudo imports
@@ -50,7 +49,7 @@ def run_ae(
     logger = logging.getLogger(LOGGING_IDENTIFIER_MAIN_EXECUTABLE)
     logger.info(f"Running AE named '{ae_name}'...")
 
-    blackboard = py_trees.blackboard.Blackboard()
+    blackboard = Blackboard()
     blackboard.set("CAS", None)
     tick_count = 0
 
@@ -64,7 +63,7 @@ def run_ae(
             logger.debug(f"Tick took {end - start:.4f} seconds")
             if (
                 ae_root.root.children
-                and ae_root.root.children[0].status == py_trees.common.Status.FAILURE
+                and ae_root.root.children[0].status == Status.FAILURE
             ):
                 # If your top-level child fails, maybe shut down
                 rclpy.shutdown()
@@ -151,10 +150,10 @@ def main() -> None:
     node1 = init_node(
         node_name,
         parameter_overrides=[
-            rclpy.parameter.Parameter(
+            Parameter(
                 "default_snapshot_stream", rclpy.parameter.Parameter.Type.BOOL, True
             ),
-            rclpy.parameter.Parameter(
+            Parameter(
                 "default_snapshot_period", rclpy.parameter.Parameter.Type.DOUBLE, 2.0
             ),
         ],
@@ -163,16 +162,16 @@ def main() -> None:
 
     # 5. Create any action servers or supporting nodes
     query_action_server = QueryActionServer(name="query")
-    blackboard = py_trees.blackboard.Blackboard()
+    blackboard = Blackboard()
     blackboard.set(BBIdentifier.QUERY_SERVER, query_action_server)
     blackboard.set(
         BBIdentifier.QUERY_SERVER_IN_PIPELINE, False
     )  # Ownership in Pipeline has to be declared first
 
     # 6. Start executors in separate threads
-    executor_main = rclpy.executors.SingleThreadedExecutor()
+    executor_main = SingleThreadedExecutor()
     executor_asrv = (
-        rclpy.executors.MultiThreadedExecutor()
+        MultiThreadedExecutor()
     )  # Necessary to handle long-running goals AND incoming preempts
 
     executor_main.add_node(node1)
@@ -184,12 +183,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
 
-    thread_main = threading.Thread(
-        target=spin_executor, args=(executor_main,), daemon=True
-    )
-    thread_asrv = threading.Thread(
-        target=spin_executor, args=(executor_asrv,), daemon=True
-    )
+    thread_main = Thread(target=spin_executor, args=(executor_main,), daemon=True)
+    thread_asrv = Thread(target=spin_executor, args=(executor_asrv,), daemon=True)
     thread_main.start()
     thread_asrv.start()
 

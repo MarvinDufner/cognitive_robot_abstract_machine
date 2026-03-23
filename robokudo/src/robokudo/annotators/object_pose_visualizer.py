@@ -6,21 +6,19 @@ in both 2D (image overlays) and 3D (coordinate frames) representations.
 
 from timeit import default_timer
 
-import numpy
+import numpy as np
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 
-import robokudo
-import robokudo.annotators.core
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
-import robokudo.utils.transform
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.annotation import PoseAnnotation
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
+from robokudo.utils.transform import get_transform_matrix_from_q
 
 
-class ObjectPoseVisualizer(robokudo.annotators.core.BaseAnnotator):
+class ObjectPoseVisualizer(BaseAnnotator):
     """Annotator for visualizing object poses in the CAS.
 
     This annotator creates visualizations of object poses by:
@@ -38,8 +36,8 @@ class ObjectPoseVisualizer(robokudo.annotators.core.BaseAnnotator):
         super().__init__(name)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Update the visualization with current object poses.
 
         Creates visualizations containing:
@@ -55,23 +53,19 @@ class ObjectPoseVisualizer(robokudo.annotators.core.BaseAnnotator):
         visualization_img = self.get_cas().get_copy(CASViews.COLOR_IMAGE)
         cloud = self.get_cas().get(CASViews.CLOUD)
 
-        object_hypotheses = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
-        )
+        object_hypotheses = self.get_cas().filter_annotations_by_type(ObjectHypothesis)
 
         geometries_to_visualize = []
         object_id = 0
         for oh in object_hypotheses:
             for oh_anno in oh.annotations:
-                if isinstance(oh_anno, robokudo.types.annotation.PoseAnnotation):
+                if isinstance(oh_anno, PoseAnnotation):
                     cluster_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
                         size=0.2
                     )
-                    pose_transform = (
-                        robokudo.utils.transform.get_transform_matrix_from_q(
-                            numpy.asarray(oh_anno.rotation),
-                            numpy.asarray(oh_anno.translation),
-                        )
+                    pose_transform = get_transform_matrix_from_q(
+                        np.asarray(oh_anno.rotation),
+                        np.asarray(oh_anno.translation),
                     )
                     cluster_frame.transform(pose_transform)
 
@@ -91,4 +85,4 @@ class ObjectPoseVisualizer(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

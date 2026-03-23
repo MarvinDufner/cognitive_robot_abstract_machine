@@ -8,23 +8,16 @@ for RoboKudo pipeline visualization. It implements:
 * Visualizer lifecycle management
 * Pipeline data access
 * Common visualization utilities
-
-Dependencies
------------
-* logging for status messages
-* py_trees for behavior tree integration
-* robokudo.annotators for annotator access
-* robokudo.pipeline for pipeline access
 """
 
 import logging
 
-import py_trees
+from py_trees.blackboard import Blackboard
 from typing_extensions import List, Any, Optional, Set, Type
 
-import robokudo.annotators.outputs
-import robokudo.pipeline
-from robokudo.annotators.core import BaseAnnotator
+from robokudo.annotators.outputs import AnnotatorOutputs
+from robokudo.defs import PACKAGE_NAME
+from robokudo.pipeline import Pipeline
 
 
 class Visualizer(object):
@@ -114,7 +107,7 @@ class Visualizer(object):
 
     def __init__(
         self,
-        pipeline: robokudo.pipeline.Pipeline,
+        pipeline: Pipeline,
         shared_visualizer_state: Optional["Visualizer.SharedState"] = None,
     ) -> None:
         """Initialize the visualizer.
@@ -125,7 +118,7 @@ class Visualizer(object):
         :param pipeline: Pipeline to visualize
         :param shared_visualizer_state: Shared state object for coordinating between visualizers
         """
-        self.pipeline: robokudo.pipeline.Pipeline = pipeline
+        self.pipeline: Pipeline = pipeline
         """Pipeline being visualized"""
 
         self.indicate_termination_var: bool = False
@@ -152,7 +145,7 @@ class Visualizer(object):
             )
             self.shared_visualizer_state.active_annotator_i = 0
 
-        self.rk_logger: logging.Logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
+        self.rk_logger: logging.Logger = logging.getLogger(PACKAGE_NAME)
         """Logger instance"""
 
     def identifier(self) -> str:
@@ -193,7 +186,7 @@ class Visualizer(object):
     @classmethod
     def new_visualizer_instance(
         cls,
-        pipeline: robokudo.pipeline.Pipeline,
+        pipeline: Pipeline,
         shared_visualizer_state: Optional["Visualizer.SharedState"] = None,
     ) -> "Visualizer":
         """Create and register a new visualizer instance.
@@ -259,21 +252,19 @@ class Visualizer(object):
 
     def get_visualized_annotator_outputs_for_pipeline(
         self,
-    ) -> robokudo.annotators.outputs.AnnotatorOutputs:
+    ) -> AnnotatorOutputs:
         """Get annotator outputs for visualization.
 
         :returns: Annotator outputs for the current pipeline
         :raises AssertionError: If outputs are not of the expected type
         """
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         annotator_output_pipeline_map_visualized = blackboard.get(
             "annotator_output_pipeline_map_visualized"
         )
         annotator_outputs = annotator_output_pipeline_map_visualized.map[
             self.pipeline.name
         ]
-        assert isinstance(
-            annotator_outputs, robokudo.annotators.outputs.AnnotatorOutputs
-        )
+        assert isinstance(annotator_outputs, AnnotatorOutputs)
 
         return annotator_outputs

@@ -15,15 +15,13 @@ The module is primarily used for:
 * Robust failure handling
 """
 
-from typing import Any, Generator
-
 # thanks to simon
 # https://github.com/SemRoCo/giskardpy/blob/devel/src/giskardpy/tree/composites/better_parallel.py
 
-import py_trees.composites
+from py_trees.composites import Parallel as OriginalParallel
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
-from typing_extensions import List, Union, Optional, Iterator
+from typing_extensions import List, Union, Any, Iterator
 
 
 class ParallelPolicy(object):
@@ -90,7 +88,7 @@ class ParallelPolicy(object):
             self.children = children
 
 
-class Parallel(py_trees.composites.Parallel):
+class Parallel(OriginalParallel):
     """Enhanced parallel behavior tree node.
 
     This class extends py_trees.composites.Parallel with:
@@ -103,7 +101,7 @@ class Parallel(py_trees.composites.Parallel):
        Children are ticked in sequence but may run concurrently.
     """
 
-    def tick(self) -> Iterator[Union[py_trees.composites.Parallel, Any]]:
+    def tick(self) -> Iterator[Union[OriginalParallel, Any]]:
         """Tick all children according to policy.
 
         This method:

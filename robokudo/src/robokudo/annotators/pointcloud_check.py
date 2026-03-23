@@ -21,22 +21,21 @@ The annotator supports:
 from timeit import default_timer
 
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 
-import robokudo.annotators.core
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 
 
-class PointcloudCheckAnnotator(robokudo.annotators.core.BaseAnnotator):
+class PointcloudCheckAnnotator(BaseAnnotator):
     """Check if the CASViews.Cloud contains more than X points.
 
     .. warning::
        Will raise exception if point cloud not found in CAS.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for point cloud checking."""
 
         class Parameters:
@@ -47,14 +46,10 @@ class PointcloudCheckAnnotator(robokudo.annotators.core.BaseAnnotator):
                 self.point_threshold: int = 100
                 """Decision boundary for: if CASViews.CLOUD has less than this amount of points"""
 
-                self.status_below_threshold: py_trees.common.Status = (
-                    py_trees.common.Status.FAILURE
-                )
+                self.status_below_threshold: Status = Status.FAILURE
                 """Status when below threshold"""
 
-                self.status_above_threshold: py_trees.common.Status = (
-                    py_trees.common.Status.SUCCESS
-                )
+                self.status_above_threshold: Status = Status.SUCCESS
                 """Status when above threshold"""
 
                 self.raise_on_failure: bool = True
@@ -75,8 +70,8 @@ class PointcloudCheckAnnotator(robokudo.annotators.core.BaseAnnotator):
         """
         super().__init__(name, descriptor)
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Check point cloud size against threshold.
 
         The method:

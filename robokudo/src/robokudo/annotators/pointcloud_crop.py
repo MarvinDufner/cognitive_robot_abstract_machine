@@ -16,22 +16,23 @@ from timeit import default_timer
 
 import cv2
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 from typing_extensions import Optional, TYPE_CHECKING
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.utils.annotator_helper import (
+    transform_cloud_from_cam_to_world,
+    transform_cloud_from_world_to_cam,
+)
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 from robokudo.utils.o3d_helper import get_mask_from_pointcloud
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class PointcloudCropAnnotator(robokudo.annotators.core.BaseAnnotator):
+class PointcloudCropAnnotator(BaseAnnotator):
     """Point cloud cropping using axis-aligned bounding boxes.
 
     Crop a subset of points from a pointcloud data based on min/max X,Y,Z values.
@@ -41,7 +42,7 @@ class PointcloudCropAnnotator(robokudo.annotators.core.BaseAnnotator):
        When using world coordinates, requires valid camera-to-world transform in CAS.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for point cloud cropping."""
 
         class Parameters:
@@ -88,8 +89,8 @@ class PointcloudCropAnnotator(robokudo.annotators.core.BaseAnnotator):
         self.color: Optional[npt.NDArray] = None
         """A copy of the color image currently being worked with."""
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Process and crop point cloud data.
 
         The method:
@@ -118,17 +119,13 @@ class PointcloudCropAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         if self.descriptor.parameters.relative_to_world:
             try:
-                cloud = (
-                    robokudo.utils.annotator_helper.transform_cloud_from_cam_to_world(
-                        self.get_cas(), cloud
-                    )
-                )
+                cloud = transform_cloud_from_cam_to_world(self.get_cas(), cloud)
             except Exception as e:
                 self.rk_logger.warning(
                     f"Couldn't find camera viewpoint in the CAS and relative_to_world is true. "
                     f"Fail. Error: {e}"
                 )
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         #
         # Crop the point cloud
@@ -152,10 +149,8 @@ class PointcloudCropAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         # Transform cloud back to camera coordinates if it has been transformed to world before
         if self.descriptor.parameters.relative_to_world:
-            cropped_cloud_transformed = (
-                robokudo.utils.annotator_helper.transform_cloud_from_world_to_cam(
-                    self.get_cas(), cropped_cloud
-                )
+            cropped_cloud_transformed = transform_cloud_from_world_to_cam(
+                self.get_cas(), cropped_cloud
             )
             cropped_cloud = cropped_cloud_transformed
 
@@ -177,4 +172,4 @@ class PointcloudCropAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

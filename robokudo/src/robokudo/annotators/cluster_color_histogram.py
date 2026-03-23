@@ -17,30 +17,30 @@ The module uses:
    Histogram plotting is optional and can be disabled for performance.
 """
 
+from __future__ import annotations
+from py_trees.common import Status
+
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.types.annotation import ColorHistogram
+from robokudo.types.scene import ObjectHypothesis
 import copy
 import math
 from timeit import default_timer
-from typing import Tuple
 
 import cv2
 import numpy as np
-import numpy.typing as npt
-import py_trees
 from matplotlib import pyplot as plt
-from typing_extensions import List, Optional
+from typing_extensions import List, Optional, Tuple, TYPE_CHECKING
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.cv_helper
 from robokudo.annotators.cluster_color import Color
 from robokudo.cas import CASViews
 from robokudo.types.cv import Rect
 
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
-class ClusterColorHistogramAnnotator(robokudo.annotators.core.BaseAnnotator):
+
+class ClusterColorHistogramAnnotator(BaseAnnotator):
     """Hue and saturation histogram analysis for object hypotheses with RGB ROI and Mask.
 
     This annotator:
@@ -54,7 +54,7 @@ class ClusterColorHistogramAnnotator(robokudo.annotators.core.BaseAnnotator):
        Histogram plotting can significantly impact performance (200-500ms).
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for color histogram analysis."""
 
         class Parameters:
@@ -86,7 +86,7 @@ class ClusterColorHistogramAnnotator(robokudo.annotators.core.BaseAnnotator):
         super().__init__(name, descriptor)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Process object hypotheses and calculate color histograms.
 
         The method:
@@ -121,7 +121,7 @@ class ClusterColorHistogramAnnotator(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     def create_color_histogram_annotations(
         self, color: npt.NDArray
@@ -143,9 +143,7 @@ class ClusterColorHistogramAnnotator(robokudo.annotators.core.BaseAnnotator):
         # Iterate over everything that is a Object hypothesis and calculate the colors
         cluster_index = 0
 
-        object_hypotheses = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
-        )
+        object_hypotheses = self.get_cas().filter_annotations_by_type(ObjectHypothesis)
 
         if self.descriptor.parameters.generate_plot_output:
             plot_columns = 3
@@ -193,7 +191,7 @@ class ClusterColorHistogramAnnotator(robokudo.annotators.core.BaseAnnotator):
             )
             normalized_histogram2d = histogram_2d / histogram_2d.sum()
 
-            color_histogram_annotation = robokudo.types.annotation.ColorHistogram()
+            color_histogram_annotation = ColorHistogram()
             color_histogram_annotation.normalized = True
             color_histogram_annotation.hist = normalized_histogram2d
             object_hypothesis.annotations.append(color_histogram_annotation)

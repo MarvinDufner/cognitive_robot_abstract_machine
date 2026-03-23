@@ -17,22 +17,21 @@ Authors:
 * Naser Azizi
 """
 
-import threading
 from timeit import default_timer
 
 import numpy as np
 import open3d as o3d
-import py_trees
-import rclpy.parameter
-import rcl_interfaces.msg
+from rclpy.parameter import Parameter
+from rcl_interfaces.msg import SetParametersResult
+from py_trees.common import Status
 from typing_extensions import List, Dict, Type
 
-import robokudo.annotators.core
-import robokudo.io.ros
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.error_handling
-import robokudo.cas
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.cas import CAS, CASViews
+from robokudo.io.ros import get_node
+from robokudo.types.annotation import Classification
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
 
 """
 This module implements a statistical outlierremoval based on the standard deviation and
@@ -52,7 +51,7 @@ _PYTYPE_TO_ROS_FIELD: Dict[Type, str] = {
 }
 
 
-class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnnotator):
+class OutlierRemovalOnObjectHypothesisAnnotator(BaseAnnotator):
     """Annotator for statistical outlier removal and clustering refinement.
 
     This annotator processes object hypotheses by:
@@ -66,7 +65,7 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
     The processing can be selectively disabled for specific object classes.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for outlier removal and clustering."""
 
         class Parameters:
@@ -108,7 +107,7 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
         super().__init__(name, descriptor)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
-        self.node = robokudo.io.ros.get_node()
+        self.node = get_node()
 
         for param_name, default_value in vars(self.descriptor.parameters).items():
             self.node.declare_parameter(f"{self.name}/{param_name}", default_value)
@@ -117,18 +116,16 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
 
         self.rk_logger.info("OutlierRemovalNode initialized with current parameters")
 
-    def parameters_callback(
-        self, params: List[rclpy.parameter.Parameter]
-    ) -> rcl_interfaces.msg.SetParametersResult:
+    def parameters_callback(self, params: List[Parameter]) -> SetParametersResult:
         for param in params:
             if hasattr(self.descriptor.parameters, param.name):
                 setattr(self.descriptor.parameters, param.name, param.value)
 
         self.rk_logger.info("Received reconf call: " + str(params))
-        return rcl_interfaces.msg.SetParametersResult(successful=True)
+        return SetParametersResult(successful=True)
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Process object hypotheses to remove outliers and refine clusters.
 
         :return: SUCCESS if processing completed, raises Exception if no clusters found
@@ -145,16 +142,14 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
             raise Exception("No Clusters have been found.")
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
     def cluster_statistical_outlierremoval_pcd(self) -> bool:
         """Perform outlier removal and clustering on each object hypothesis.
 
         :return: True, if at least one of the object hypotheses could be optimized. False otherwise.
         """
-        annotations = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
-        )
+        annotations = self.get_cas().filter_annotations_by_type(ObjectHypothesis)
         vis_geometries = []
 
         optimized_one_cluster = False
@@ -164,10 +159,8 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
                 continue
 
             if len(self.descriptor.parameters.skip_removal_on_classes) > 0:
-                classes: List[robokudo.types.annotation.Classification] = (
-                    robokudo.cas.CAS.filter_by_type(
-                        robokudo.types.annotation.Classification, annotation.annotations
-                    )
+                classes: List[Classification] = CAS.filter_by_type(
+                    Classification, annotation.annotations
                 )
 
                 found_class = False
@@ -228,7 +221,7 @@ class OutlierRemovalOnObjectHypothesisAnnotator(robokudo.annotators.core.BaseAnn
         if not optimized_one_cluster:
             return False
 
-        visualization_img = self.get_cas().get(robokudo.cas.CASViews.COLOR_IMAGE)
+        visualization_img = self.get_cas().get(CASViews.COLOR_IMAGE)
         self.get_annotator_output_struct().set_image(visualization_img)
         self.get_annotator_output_struct().set_geometries(vis_geometries)
 

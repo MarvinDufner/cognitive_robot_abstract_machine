@@ -7,27 +7,33 @@ This module provides an annotator for visualizing object hypotheses in both
 from __future__ import annotations
 import copy
 from pathlib import Path
-from typing import Dict, List, Tuple
-
-import numpy as np
 from timeit import default_timer
 
 import cv2
 import open3d as o3d
-import py_trees
 import trimesh
-from typing_extensions import TYPE_CHECKING, Tuple
+from py_trees.common import Status
+from typing_extensions import TYPE_CHECKING, Tuple, Dict, List
 
-import robokudo
-import robokudo.annotators.core
-import robokudo.types.annotation
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
-import robokudo.utils.o3d_helper
-import robokudo.utils.type_conversion
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
-from robokudo_msgs.action import Query
+from robokudo.types.annotation import (
+    Classification,
+    BoundingBox3DAnnotation,
+    PoseAnnotation,
+)
+from robokudo.types.scene import ObjectHypothesis
+from robokudo.utils.annotator_helper import draw_bounding_boxes_from_object_hypotheses
+from robokudo.utils.error_handling import catch_and_raise_to_blackboard
+from robokudo.utils.o3d_helper import (
+    trimesh_to_o3d_mesh,
+    draw_wireframe_of_obb_into_image,
+    draw_mesh_wireframe_on_image,
+)
+from robokudo.utils.type_conversion import (
+    get_o3d_obb_from_bounding_box_annotation,
+    get_transform_matrix_from_pose_annotation,
+)
 from semantic_digital_twin.world_description.geometry import FileMesh, Mesh
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -36,7 +42,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
+class ObjectHypothesisVisualizer(BaseAnnotator):
     """Annotator for visualizing object hypotheses in the CAS.
 
     This annotator creates visualizations of detected objects by:
@@ -46,7 +52,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
     * Optionally filtering objects based on query type
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for object hypothesis visualization."""
 
         class Parameters:
@@ -95,7 +101,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
         tm: trimesh.Trimesh = shape.mesh
         cache_key = self._mesh_cache_key(shape)
         if cache_key not in self._mesh_cache:
-            self._mesh_cache[cache_key] = robokudo.utils.o3d_helper.trimesh_to_o3d_mesh(tm)
+            self._mesh_cache[cache_key] = trimesh_to_o3d_mesh(tm)
         mesh_instance = copy.deepcopy(self._mesh_cache[cache_key])
         mesh_instance.transform(shape.origin.to_np())
         return mesh_instance
@@ -128,8 +134,8 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
         # Draw the text on the image
         cv2.putText(image, text, (text_x, text_y), font, font_scale, color, thickness)
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Update the visualization with current object hypotheses.
 
         Creates visualizations containing:
@@ -150,9 +156,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
             if self.get_cas().contains(CASViews.QUERY):
                 query = self.get_cas().get(CASViews.QUERY)
 
-        object_hypotheses = self.get_cas().filter_annotations_by_type(
-            robokudo.types.scene.ObjectHypothesis
-        )
+        object_hypotheses = self.get_cas().filter_annotations_by_type(ObjectHypothesis)
         if len(object_hypotheses) == 0:
             self.draw_text_middle(visualization_img, "No Object Hypotheses")
         else:
@@ -162,7 +166,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
                 best_classification = None
 
                 for oh_anno in oh.annotations:
-                    if isinstance(oh_anno, robokudo.types.annotation.Classification):
+                    if isinstance(oh_anno, Classification):
                         if oh_anno.confidence > max_conf:
                             max_conf = oh_anno.confidence
                             best_classification = oh_anno
@@ -180,7 +184,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
                 matching_object_hypotheses = []
                 for oh in object_hypotheses:
                     classifications = self.get_cas().filter_by_type_and_criteria(
-                        robokudo.types.annotation.Classification,
+                        Classification,
                         oh.annotations,
                         criteria={"classname": ("==", f"{query.obj.type}")},
                     )
@@ -188,12 +192,12 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
                     if len(classifications) > 0:
                         matching_object_hypotheses.append(oh)
 
-                robokudo.utils.annotator_helper.draw_bounding_boxes_from_object_hypotheses(
+                draw_bounding_boxes_from_object_hypotheses(
                     visualization_img, matching_object_hypotheses, get_box_text
                 )
 
             else:
-                robokudo.utils.annotator_helper.draw_bounding_boxes_from_object_hypotheses(
+                draw_bounding_boxes_from_object_hypotheses(
                     visualization_img, object_hypotheses, get_box_text
                 )
 
@@ -201,20 +205,16 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
             visualized_geometries.append(object_hypothesis.points)
 
             bb_annotations = self.get_cas().filter_by_type(
-                type_to_include=robokudo.types.annotation.BoundingBox3DAnnotation,
+                type_to_include=BoundingBox3DAnnotation,
                 input_list=object_hypothesis.annotations,
             )
             for bb_annotation in bb_annotations:
-                obb = robokudo.utils.type_conversion.get_o3d_obb_from_bounding_box_annotation(
-                    bb_annotation
-                )
+                obb = get_o3d_obb_from_bounding_box_annotation(bb_annotation)
                 visualized_geometries.append(obb)
-                robokudo.utils.o3d_helper.draw_wireframe_of_obb_into_image(
-                    self.get_cas(), visualization_img, obb
-                )
+                draw_wireframe_of_obb_into_image(self.get_cas(), visualization_img, obb)
 
             pose_annotations = self.get_cas().filter_by_type(
-                type_to_include=robokudo.types.annotation.PoseAnnotation,
+                type_to_include=PoseAnnotation,
                 input_list=object_hypothesis.annotations,
             )
 
@@ -222,9 +222,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
                 cluster_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
                     size=0.2
                 )
-                transform = robokudo.utils.type_conversion.get_transform_matrix_from_pose_annotation(
-                    pose_annotation
-                )
+                transform = get_transform_matrix_from_pose_annotation(pose_annotation)
                 cluster_frame.transform(transform)
                 visualized_geometries.append(cluster_frame)
 
@@ -234,7 +232,7 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
                         mesh_instance = self._mesh_shape_to_o3d(mesh_shape)
                         mesh_instance.transform(transform)
                         visualized_geometries.append(mesh_instance)
-                        robokudo.utils.o3d_helper.draw_mesh_wireframe_on_image(
+                        draw_mesh_wireframe_on_image(
                             visualization_img, mesh_shape, transform, self.get_cas()
                         )
 
@@ -246,4 +244,4 @@ class ObjectHypothesisVisualizer(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

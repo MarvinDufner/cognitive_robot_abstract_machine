@@ -12,10 +12,10 @@ The behavior integrates with RoboKudo's error handling system to manage
 error states across the behavior tree.
 """
 
-import py_trees
 from py_trees.behaviour import Behaviour
+from py_trees.common import Status
 
-import robokudo.utils.error_handling
+from robokudo.utils.error_handling import clear_blackboard_exception
 
 
 class ClearErrors(Behaviour):
@@ -49,7 +49,7 @@ class ClearErrors(Behaviour):
         """
         pass
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """
         Clear any error states from the blackboard.
 
@@ -58,8 +58,7 @@ class ClearErrors(Behaviour):
         * Always returns SUCCESS since clearing errors cannot fail
 
         :return: Always returns SUCCESS
-        :rtype: py_trees.common.Status
         """
-        robokudo.utils.error_handling.clear_blackboard_exception()
+        clear_blackboard_exception()
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

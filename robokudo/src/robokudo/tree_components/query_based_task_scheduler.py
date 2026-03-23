@@ -7,24 +7,19 @@ pipelines based on the current query state.
 Original implementation by Malte Huerkamp.
 """
 
-import logging
-import typing
-from typing import Optional, Callable
-
-import py_trees
+from py_trees.composites import Composite, Sequence
 from robokudo_msgs.action import Query
-from typing_extensions import Dict, Any
+from typing_extensions import Dict, Any, Optional, Callable
 
-import robokudo.annotators.core
-import robokudo.tree_components.task_scheduler
-import robokudo.utils.tree
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
-from robokudo.utils.tree import add_child_to_parent
+from robokudo.tree_components.task_scheduler import TaskSchedulerBase
+from robokudo.utils.tree import add_child_to_parent, setup_with_descendants_on_behavior
 
 
 class QueryBasedScheduler(
-    robokudo.tree_components.task_scheduler.TaskSchedulerBase,
-    robokudo.annotators.core.BaseAnnotator,
+    TaskSchedulerBase,
+    BaseAnnotator,
 ):
     """A Task Scheduler that checks the active Query in the CAS to infer which perception subtree to execute.
     You can apply a function to infer per use-case which perception tree you want to incorporate.
@@ -40,7 +35,7 @@ class QueryBasedScheduler(
     def __init__(
         self,
         name: str = "QueryBasedScheduler",
-        tasks: Optional[Dict[str, py_trees.composites.Composite]] = None,
+        tasks: Optional[Dict[str, Composite]] = None,
         filter_fn: Optional[Callable[[Query.Goal], str]] = None,
     ) -> None:
         """Initialize the query-based scheduler.
@@ -55,16 +50,16 @@ class QueryBasedScheduler(
         super().__init__(name)
         if tasks is None:
             tasks = dict()
-        self.tasks: Dict[str, py_trees.composites.Composite] = tasks
+        self.tasks: Dict[str, Composite] = tasks
         self.filter_fn: Optional[Callable[[Query.Goal], str]] = filter_fn
 
     def setup(self, **kwargs: Any) -> bool:
         """Set up all task trees."""
         for task in self.tasks:
-            robokudo.utils.tree.setup_with_descendants_on_behavior(self.tasks[task])
+            setup_with_descendants_on_behavior(self.tasks[task])
         return True
 
-    def plan_new_job(self) -> Optional[py_trees.composites.Sequence]:
+    def plan_new_job(self) -> Optional[Sequence]:
         """Plan the next job based on the current query.
 
         This method:
@@ -75,9 +70,9 @@ class QueryBasedScheduler(
         :return: New job sequence containing selected task, or None if no task found
         """
         parent = self.parent
-        assert isinstance(parent, py_trees.composites.Sequence)
+        assert isinstance(parent, Sequence)
 
-        new_job = py_trees.composites.Sequence("Task", memory=True)
+        new_job = Sequence("Task", memory=True)
 
         query = self.get_cas().get(CASViews.QUERY)
 

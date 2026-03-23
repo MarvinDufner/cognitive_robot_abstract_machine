@@ -13,16 +13,13 @@ The module supports:
 """
 
 from dataclasses import dataclass, field
-
 from typing_extensions import List
-
 from builtin_interfaces.msg import Time
-
-from . import core
+from robokudo.types.core import Type
 
 
 @dataclass
-class Pose(core.Type):
+class Pose(Type):
     """6-DOF pose representation.
 
     Represents a full 6-degree-of-freedom pose with:
@@ -42,7 +39,7 @@ class Pose(core.Type):
 
 
 @dataclass
-class Position(core.Type):
+class Position(Type):
     """3-DOF position representation.
 
     Represents a 3-degree-of-freedom position with:

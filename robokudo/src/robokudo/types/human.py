@@ -16,13 +16,13 @@ from dataclasses import dataclass, field
 
 from typing_extensions import Any, List
 
-from . import core
-from . import cv
-from . import tf
+from robokudo.types.core import Annotation
+from robokudo.types.cv import Points3D, ImageROI
+from robokudo.types.tf import Pose
 
 
 @dataclass
-class FaceAnnotation(cv.ImageROI, cv.Points3D, tf.Pose):
+class FaceAnnotation(ImageROI, Points3D, Pose):
     """Face detection result combining 2D, 3D and pose information.
 
     Provides:
@@ -39,7 +39,7 @@ class FaceAnnotation(cv.ImageROI, cv.Points3D, tf.Pose):
 
 
 @dataclass
-class MimicAnnotation(core.Annotation):
+class MimicAnnotation(Annotation):
     """Facial expression or mimic detection result.
 
     Represents detected facial expressions or mimics.
@@ -52,7 +52,7 @@ class MimicAnnotation(core.Annotation):
 
 
 @dataclass
-class AttributeAnnotation(core.Annotation):
+class AttributeAnnotation(Annotation):
     """Generic human attribute annotation.
 
     Used for various human attributes such as:
@@ -70,7 +70,7 @@ class AttributeAnnotation(core.Annotation):
 
 
 @dataclass
-class ActivityAnnotation(core.Annotation):
+class ActivityAnnotation(Annotation):
     """Human activity detection result.
 
     Represents detected human activities and their context.
@@ -95,7 +95,7 @@ class ActivityAnnotation(core.Annotation):
 
 
 @dataclass
-class KeypointAnnotation(core.Annotation):
+class KeypointAnnotation(Annotation):
     """Human body keypoint detection result.
 
     Represents detected keypoints like:

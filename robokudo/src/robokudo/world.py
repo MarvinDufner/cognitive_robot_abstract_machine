@@ -1,6 +1,5 @@
-"""
-General methods to access the current World.
-Reasoning about alternate world states is done in the corresponding Annotators.
+"""General methods to access the current World. Reasoning about alternate world states is done in the corresponding
+Annotators.
 """
 
 import sys
@@ -38,12 +37,12 @@ def init_world_entity_tracker_from_world(
 
 
 def world_instance() -> World:
-    """
-    A singleton-like World instance.
+    """Return the world state for the currently running perception pipeline.
 
-    :return: The world state for the currently running perception pipeline.
+    .. warning::
     This is NOT necessarily the belief state World based on the previous analysis results.
-    :rtype: World
+
+    :return: A singleton-like World instance.
     """
     if this.world is None:
         this.clear_world()

@@ -23,13 +23,14 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-import py_trees
 from py_trees.behaviour import Behaviour
+from py_trees.blackboard import Blackboard
+from py_trees.common import Status
 from typing_extensions import TYPE_CHECKING, Dict, List, Any, Optional
 
-import robokudo.defs
-import robokudo.pipeline
-import robokudo.utils.tree
+from robokudo.defs import PACKAGE_NAME
+from robokudo.pipeline import Pipeline
+from robokudo.utils.tree import find_parent_of_type
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -64,8 +65,7 @@ class AnnotatorOutputStruct:
         self.render_next_time = True
 
     def set_geometries(self, geometries: List[Dict[str, Any]]) -> None:
-        """
-        Set the geometries in this AnnotatorOutputStruct and instruct the GUI to render it next time.
+        """Set the geometries in this AnnotatorOutputStruct and instruct the GUI to render it next time.
 
         :param geometries: This parameter holds the geometries to be drawn. It should behave like o3d.visualization.draw,
         which means that you can either pass a drawable geometry, a dict with a drawable geometry
@@ -94,8 +94,7 @@ class AnnotatorOutputs:
         """Whether the outputs should be redrawn on the next GUI update. Defaults to True for the first run."""
 
     def init_annotator(self, annotator_name: str) -> None:
-        """
-        Initialize the output structure for an annotator.
+        """Initialize the output structure for an annotator.
 
         :param annotator_name: Name of the annotator
         """
@@ -108,13 +107,10 @@ class AnnotatorOutputs:
 
 
 class AnnotatorOutputPerPipelineMap:
-    """
-    Container for annotator outputs across multiple pipelines.
+    """Container for annotator outputs across multiple pipelines.
 
     This class manages output structures for all annotators across
     all pipelines in the system.
-
-
     """
 
     def __init__(self) -> None:
@@ -129,26 +125,22 @@ class ClearAnnotatorOutputs(Behaviour):
 
     def __init__(self, name: str = "ClearAnnotatorOutputs") -> None:
         super().__init__(name)
-        self.rk_logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
+        self.rk_logger = logging.getLogger(PACKAGE_NAME)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         self.rk_logger.debug("%s.update()" % (self.__class__.__name__))
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         annotator_output_pipeline_map_buffer = blackboard.get(
             "annotator_output_pipeline_map_buffer"
         )
         assert isinstance(
             annotator_output_pipeline_map_buffer,
-            robokudo.annotators.outputs.AnnotatorOutputPerPipelineMap,
+            AnnotatorOutputPerPipelineMap,
         )
 
-        pipeline = robokudo.utils.tree.find_parent_of_type(
-            self, robokudo.pipeline.Pipeline
-        )
+        pipeline = find_parent_of_type(self, Pipeline)
         annotator_outputs = annotator_output_pipeline_map_buffer.map[pipeline.name]
-        assert isinstance(
-            annotator_outputs, robokudo.annotators.outputs.AnnotatorOutputs
-        )
+        assert isinstance(annotator_outputs, AnnotatorOutputs)
         annotator_outputs.clear_outputs()
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

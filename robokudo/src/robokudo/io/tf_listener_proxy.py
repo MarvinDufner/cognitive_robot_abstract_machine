@@ -15,7 +15,7 @@ components needing transform information.
 
 import sys
 
-import rclpy
+from rclpy.node import Node
 from tf2_ros import TransformListener, Buffer
 
 # Module-level singleton-like variables
@@ -24,7 +24,7 @@ this.tf_buffer = None
 this.tf_listener = None
 
 
-def instance(node: rclpy.node.Node) -> Buffer:
+def instance(node: Node) -> Buffer:
     """
     A singleton-like TransformListener instance.
 

@@ -23,19 +23,23 @@ import numpy as np
 import open3d as o3d
 import trimesh
 from typing_extensions import TYPE_CHECKING, Tuple, List
-
-from . import transform
-from ..cas import CASViews
+from robokudo.cas import CASViews
+from robokudo.utils.transform import (
+    get_transform_matrix,
+    get_translation_from_transform_matrix,
+    get_rotation_from_transform_matrix,
+)
 
 if TYPE_CHECKING:
+    import cv2.typing as cv2t
     import numpy.typing as npt
-    from ..cas import CAS
+    from robokudo.cas import CAS
     from semantic_digital_twin.world_description.geometry import Mesh
 
 
 def put_obb_on_target_obb(
-        input_obb: o3d.geometry.OrientedBoundingBox,
-        target_obb: o3d.geometry.OrientedBoundingBox,
+    input_obb: o3d.geometry.OrientedBoundingBox,
+    target_obb: o3d.geometry.OrientedBoundingBox,
 ) -> o3d.geometry.OrientedBoundingBox:
     """Place one oriented bounding box on top of another.
 
@@ -57,9 +61,9 @@ def put_obb_on_target_obb(
 
 
 def transform_obb_relative_to_obb_center(
-        input_obb: o3d.geometry.OrientedBoundingBox,
-        target_obb: o3d.geometry.OrientedBoundingBox,
-        transform_matrix: npt.NDArray,
+    input_obb: o3d.geometry.OrientedBoundingBox,
+    target_obb: o3d.geometry.OrientedBoundingBox,
+    transform_matrix: npt.NDArray,
 ) -> o3d.geometry.OrientedBoundingBox:
     """Transform a bounding box relative to another's center.
 
@@ -68,9 +72,7 @@ def transform_obb_relative_to_obb_center(
     :param transform_matrix: 4x4 transform matrix relative to target center
     :return: Transformed bounding box
     """
-    target_obb_transform = transform.get_transform_matrix(
-        target_obb.R, target_obb.center
-    )
+    target_obb_transform = get_transform_matrix(target_obb.R, target_obb.center)
     input_to_target_transform = np.matmul(target_obb_transform, transform_matrix)
 
     # Build a new OBB from the input_obb by reusing the size
@@ -84,7 +86,7 @@ def transform_obb_relative_to_obb_center(
 
 
 def get_obb_from_size_and_transform(
-        bb_size: npt.NDArray, transform_matrix: npt.NDArray
+    bb_size: npt.NDArray, transform_matrix: npt.NDArray
 ) -> o3d.geometry.OrientedBoundingBox:
     """Create an oriented bounding box from size and transform.
 
@@ -93,15 +95,15 @@ def get_obb_from_size_and_transform(
     :return: Oriented bounding box
     """
     return o3d.geometry.OrientedBoundingBox(
-        center=transform.get_translation_from_transform_matrix(transform_matrix),
-        R=transform.get_rotation_from_transform_matrix(transform_matrix),
+        center=get_translation_from_transform_matrix(transform_matrix),
+        R=get_rotation_from_transform_matrix(transform_matrix),
         extent=bb_size,
     )
 
 
 def get_2d_corner_points_from_3d_bb(
-        cas: CAS, object_bb: o3d.geometry.OrientedBoundingBox
-) -> cv2.typing.Rect:
+    cas: CAS, object_bb: o3d.geometry.OrientedBoundingBox
+) -> cv2t.Rect:
     """Project 3D bounding box corners to 2D image points.
 
     :param cas: CAS containing camera parameters
@@ -129,7 +131,7 @@ def get_2d_corner_points_from_3d_bb(
 
 
 def project_points_to_image(
-        cas: CAS, points_cam: npt.NDArray
+    cas: CAS, points_cam: npt.NDArray
 ) -> Tuple[npt.NDArray, npt.NDArray]:
     """Project 3D camera-frame points to 2D image pixels and validity mask."""
     pc_cam_intrinsics = cas.get(CASViews.PC_CAM_INTRINSIC)
@@ -149,12 +151,12 @@ def project_points_to_image(
 
 
 def draw_mesh_wireframe_on_image(
-        image: npt.NDArray,
-        mesh_shape: Mesh,
-        object_transform: npt.NDArray,
-        cas: CAS,
-        color: Tuple[int, int, int] = (0, 255, 0),
-        thickness: int = 1,
+    image: npt.NDArray,
+    mesh_shape: Mesh,
+    object_transform: npt.NDArray,
+    cas: CAS,
+    color: Tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 1,
 ) -> None:
     """Draw the mesh wireframe by projecting its edges into the image."""
     tm = mesh_shape.mesh.copy()
@@ -180,8 +182,8 @@ def draw_mesh_wireframe_on_image(
 
 
 def get_2d_bounding_rect_from_3d_bb(
-        cas: CAS, object_bb: o3d.geometry.OrientedBoundingBox
-) -> cv2.typing.Rect:
+    cas: CAS, object_bb: o3d.geometry.OrientedBoundingBox
+) -> cv2t.Rect:
     """
     Get a cv2.boundingRect which represents the space taken by a open3d boundingbox.
     Perspective projection and color2depth ratio are taken into account.
@@ -196,7 +198,7 @@ def get_2d_bounding_rect_from_3d_bb(
 
 
 def draw_wireframe_of_obb_into_image(
-        cas: CAS, image: npt.NDArray, obb: o3d.geometry.OrientedBoundingBox
+    cas: CAS, image: npt.NDArray, obb: o3d.geometry.OrientedBoundingBox
 ) -> None:
     """Draw 3D bounding box wireframe on image.
 
@@ -229,11 +231,11 @@ def draw_wireframe_of_obb_into_image(
 
 
 def get_mask_from_pointcloud(
-        input_cloud: o3d.geometry.PointCloud,
-        ref_image: npt.NDArray,
-        cam_intrinsics: o3d.camera.PinholeCameraIntrinsic,
-        mask_scale_factor: float = None,
-        crop_to_ref: bool = None,
+    input_cloud: o3d.geometry.PointCloud,
+    ref_image: npt.NDArray,
+    cam_intrinsics: o3d.camera.PinholeCameraIntrinsic,
+    mask_scale_factor: float = None,
+    crop_to_ref: bool = None,
 ) -> npt.NDArray:
     """
     Generate a binary mask image by projecting the input_cloud to the ref_image mask
@@ -282,7 +284,7 @@ def get_mask_from_pointcloud(
 
 
 def scale_o3d_cam_intrinsics(
-        cam_intrinsic: o3d.camera.PinholeCameraIntrinsic, scalex: float, scaley: float
+    cam_intrinsic: o3d.camera.PinholeCameraIntrinsic, scalex: float, scaley: float
 ) -> o3d.camera.PinholeCameraIntrinsic:
     """Scale camera intrinsics by x and y factors.
 
@@ -311,7 +313,7 @@ def scale_o3d_cam_intrinsics(
 
 
 def concatenate_clouds(
-        clouds: List[o3d.geometry.PointCloud],
+    clouds: List[o3d.geometry.PointCloud],
 ) -> o3d.geometry.PointCloud:
     """Combine multiple point clouds into one.
 
@@ -331,12 +333,12 @@ def concatenate_clouds(
 
 
 def get_cloud_from_rgb_depth_and_mask(
-        rgb_image: npt.NDArray,
-        depth_image: npt.NDArray,
-        mask: npt.NDArray,
-        cam_intrinsics: o3d.camera.PinholeCameraIntrinsic,
-        depth_truncate: float = 9.0,
-        mask_true_val: int = 255,
+    rgb_image: npt.NDArray,
+    depth_image: npt.NDArray,
+    mask: npt.NDArray,
+    cam_intrinsics: o3d.camera.PinholeCameraIntrinsic,
+    depth_truncate: float = 9.0,
+    mask_true_val: int = 255,
 ) -> o3d.geometry.PointCloud:
     """Create point cloud from RGB-D images and mask.
 
@@ -373,9 +375,9 @@ def get_cloud_from_rgb_depth_and_mask(
 
 
 def create_line_for_visualization(
-        origin: Tuple[float, float, float],
-        target: Tuple[float, float, float],
-        color: Tuple[float, float, float],
+    origin: Tuple[float, float, float],
+    target: Tuple[float, float, float],
+    color: Tuple[float, float, float],
 ) -> o3d.geometry.LineSet:
     """Create a LineSet that you can use to visualize a line between two points
 
@@ -394,7 +396,7 @@ def create_line_for_visualization(
 
 
 def create_sphere_from_translation(
-        origin: npt.NDArray, color: Tuple[float, float, float], radius: float
+    origin: npt.NDArray, color: Tuple[float, float, float], radius: float
 ) -> o3d.geometry.TriangleMesh:
     """Create an o3d sphere for visualization.
 
@@ -421,7 +423,9 @@ def trimesh_to_o3d_mesh(mesh: trimesh.Trimesh) -> o3d.geometry.TriangleMesh:
     o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(mesh.vertices))
     o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(mesh.faces))
 
-    if getattr(mesh, "visual", None) is not None and hasattr(mesh.visual, "vertex_colors"):
+    if getattr(mesh, "visual", None) is not None and hasattr(
+        mesh.visual, "vertex_colors"
+    ):
         colors = np.asarray(mesh.visual.vertex_colors)
         if len(colors) == len(mesh.vertices):
             colors = colors[:, :3]

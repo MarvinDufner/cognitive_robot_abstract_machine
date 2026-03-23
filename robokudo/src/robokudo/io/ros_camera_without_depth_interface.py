@@ -16,20 +16,17 @@ The module is used for cameras like:
 * Network cameras with ROS interfaces
 """
 
-import threading
+from threading import Lock
 
 import cv2
 import message_filters
 import numpy as np
 import open3d as o3d
-import sensor_msgs
 from cv_bridge import CvBridge
 from message_filters import Subscriber
 from sensor_msgs.msg import CameraInfo, Image
 from typing_extensions import Any, Tuple, TYPE_CHECKING, Optional, List
 
-import robokudo.cas
-import robokudo.types.tf
 from robokudo.cas import CASViews
 from robokudo.io.camera_interface import ROSCameraInterface
 
@@ -79,7 +76,7 @@ class ROSCameraWithoutDepthInterface(ROSCameraInterface):
         self.color: Optional[Tuple[npt.NDArray]] = None
         """Latest RGB image data"""
 
-        self.cam_info: Optional[sensor_msgs.msg.CameraInfo] = None
+        self.cam_info: Optional[CameraInfo] = None
         """Latest camera calibration info"""
 
         self.cam_intrinsic: Optional[o3d.camera.PinholeCameraIntrinsic] = None
@@ -97,7 +94,7 @@ class ROSCameraWithoutDepthInterface(ROSCameraInterface):
         self.timestamp: Optional[float] = None
         """Timestamp of latest data"""
 
-        self.lock: threading.Lock = threading.Lock()
+        self.lock: Lock = Lock()
         """Thread synchronization lock"""
 
         # hack because my rosbag has image topic
@@ -173,8 +170,8 @@ class ROSCameraWithoutDepthInterface(ROSCameraInterface):
 
     def callback(
         self,
-        color_data: sensor_msgs.msg.Image,
-        cam_info: Optional[sensor_msgs.msg.CameraInfo] = None,
+        color_data: Image,
+        cam_info: Optional[CameraInfo] = None,
     ) -> None:
         """Process synchronized RGB image and camera info messages.
 
@@ -204,7 +201,7 @@ class ROSCameraWithoutDepthInterface(ROSCameraInterface):
         self._has_new_data = True
         self.lock.release()
 
-    def set_data(self, cas: robokudo.cas.CAS) -> None:
+    def set_data(self, cas: CAS) -> None:
         """
         Update the Common Analysis Structure with latest camera data.
 

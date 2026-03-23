@@ -8,22 +8,14 @@ It handles:
 * Camera control
 * Coordinate frame display
 * Window management
-
-Dependencies
------------
-* open3d for 3D visualization
-* logging for status messages
-* robokudo.annotators for annotator access
-* robokudo.vis.visualizer for base visualization interface
 """
 
 import logging
 
 import open3d as o3d  # this import creates a SIGINT during unit test execution....
-from typing_extensions import Any, List, Dict, Union, Optional
+from typing_extensions import Any, List, Dict, Union, Optional, TYPE_CHECKING
 
-from robokudo.annotators.core import BaseAnnotator
-import robokudo.defs
+from robokudo.defs import PACKAGE_NAME
 from robokudo.vis.visualizer import Visualizer
 
 
@@ -54,7 +46,7 @@ class O3DVisualizer(Visualizer, Visualizer.Observer):
 
     def notify(
         self,
-        observable: robokudo.vis.visualizer.Visualizer.Observable,
+        observable: Visualizer.Observable,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -136,7 +128,7 @@ class Viewer3D(object):
         self.CLOUD_NAME: str = "Viewer3D"
         """Name identifier for the point cloud"""
 
-        self.rk_logger: logging.Logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
+        self.rk_logger: logging.Logger = logging.getLogger(PACKAGE_NAME)
         """Logger instance"""
 
         app: o3d.visualization.gui.Application = (

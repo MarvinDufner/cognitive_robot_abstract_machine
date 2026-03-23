@@ -15,14 +15,20 @@ servers to ensure proper state management and error handling.
 
 import logging
 
-import py_trees
+from py_trees.common import Status
+from py_trees.behaviour import Behaviour
+from py_trees.blackboard import Blackboard
 
-import robokudo.defs
-import robokudo.utils.error_handling
+from robokudo.defs import PACKAGE_NAME
 from robokudo.identifier import BBIdentifier
+from robokudo.utils.error_handling import (
+    catch_and_raise_to_blackboard,
+    has_blackboard_exception,
+    get_blackboard_exception,
+)
 
 
-class ActionServerActive(py_trees.behaviour.Behaviour):
+class ActionServerActive(Behaviour):
     """A behavior that checks if an action server is active.
 
     This behavior monitors the action server's state and returns:
@@ -37,7 +43,7 @@ class ActionServerActive(py_trees.behaviour.Behaviour):
         """
         super().__init__(name=name)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """
         Check if the action server is active.
 
@@ -48,18 +54,18 @@ class ActionServerActive(py_trees.behaviour.Behaviour):
 
         :return: SUCCESS if server is active, FAILURE otherwise
         """
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         action_server = blackboard.get(BBIdentifier.QUERY_SERVER)
         if action_server is None:
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         if action_server.is_active():
-            return py_trees.common.Status.SUCCESS
+            return Status.SUCCESS
 
-        return py_trees.common.Status.FAILURE
+        return Status.FAILURE
 
 
-class ActionServerCheck(py_trees.behaviour.Behaviour):
+class ActionServerCheck(Behaviour):
     """
     A behavior that monitors action server state transitions.
 
@@ -80,7 +86,7 @@ class ActionServerCheck(py_trees.behaviour.Behaviour):
         """
         super().__init__(name=name)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Check action server state.
 
         This method:
@@ -91,18 +97,18 @@ class ActionServerCheck(py_trees.behaviour.Behaviour):
 
         :return: Status based on server state
         """
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         action_server = blackboard.get(BBIdentifier.QUERY_SERVER)
         if action_server is None:
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         if action_server.is_active():
-            return py_trees.common.Status.RUNNING
+            return Status.RUNNING
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
 
-class ActionServerNoPreemptRequest(py_trees.behaviour.Behaviour):
+class ActionServerNoPreemptRequest(Behaviour):
     """
     A behavior that handles action server preemption requests.
 
@@ -121,7 +127,7 @@ class ActionServerNoPreemptRequest(py_trees.behaviour.Behaviour):
         """
         super().__init__(name=name)
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Check for and handle preemption requests.
 
         This method:
@@ -132,15 +138,15 @@ class ActionServerNoPreemptRequest(py_trees.behaviour.Behaviour):
 
         :return: FAILURE if preemption requested, SUCCESS otherwise
         """
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = Blackboard()
         if blackboard.get(BBIdentifier.QUERY_PREEMPT_REQUESTED):
             blackboard.set(BBIdentifier.QUERY_PREEMPT_ACK, True)
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
         else:
-            return py_trees.common.Status.SUCCESS
+            return Status.SUCCESS
 
 
-class AbortGoal(py_trees.behaviour.Behaviour):
+class AbortGoal(Behaviour):
     """
     A behavior that aborts the current goal with an error message.
 
@@ -162,8 +168,8 @@ class AbortGoal(py_trees.behaviour.Behaviour):
         self.msg: str = msg
         """Error message for goal abortion"""
 
-    @robokudo.utils.error_handling.catch_and_raise_to_blackboard
-    def update(self) -> py_trees.common.Status:
+    @catch_and_raise_to_blackboard
+    def update(self) -> Status:
         """Abort the current goal.
 
         This method raises an exception with the specified message.
@@ -176,7 +182,7 @@ class AbortGoal(py_trees.behaviour.Behaviour):
         raise Exception(self.msg)
 
 
-class RunningUntilExceptionHandled(py_trees.behaviour.Behaviour):
+class RunningUntilExceptionHandled(Behaviour):
     """A behavior that waits for exception handling to complete.
 
     This behavior monitors the blackboard for active exceptions and
@@ -199,7 +205,7 @@ class RunningUntilExceptionHandled(py_trees.behaviour.Behaviour):
         self.msg: str = msg
         """Status message for waiting state"""
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Check if exception handling is complete.
 
         This method:
@@ -210,18 +216,18 @@ class RunningUntilExceptionHandled(py_trees.behaviour.Behaviour):
         :return: SUCCESS if no exceptions, RUNNING otherwise
         """
         # No exception set yet? All good.
-        if not robokudo.utils.error_handling.has_blackboard_exception():
-            return py_trees.common.Status.SUCCESS
+        if not has_blackboard_exception():
+            return Status.SUCCESS
 
         # Exception was already initialized but is None? All good.
-        if robokudo.utils.error_handling.get_blackboard_exception() is None:
-            return py_trees.common.Status.SUCCESS
+        if get_blackboard_exception() is None:
+            return Status.SUCCESS
 
         self.feedback_message = "Waiting for exception handling"
-        return py_trees.common.Status.RUNNING
+        return Status.RUNNING
 
 
-class ActionServerPresentAndDone(py_trees.behaviour.Behaviour):
+class ActionServerPresentAndDone(Behaviour):
     """A behaviour that checks whether an action server is present and represents its state."""
 
     def __init__(self, name: str = "ActionServerPresentAndDone") -> None:
@@ -231,36 +237,33 @@ class ActionServerPresentAndDone(py_trees.behaviour.Behaviour):
         """
         super().__init__(name=name)
 
-        self.rk_logger: logging.Logger = logging.getLogger(robokudo.defs.PACKAGE_NAME)
+        self.rk_logger: logging.Logger = logging.getLogger(PACKAGE_NAME)
         """Logger for this behaviour."""
 
-    def update(self) -> py_trees.common.Status:
-        blackboard = py_trees.blackboard.Blackboard()
+    def update(self) -> Status:
+        blackboard = Blackboard()
         if not blackboard.exists(BBIdentifier.QUERY_SERVER):
             # print("No ActionServer(AS) found - Skipping all following checks that are AS related")
-            return py_trees.common.Status.SUCCESS
+            return Status.SUCCESS
 
         if not blackboard.get(BBIdentifier.QUERY_SERVER_IN_PIPELINE):
             # print("ActionServer(AS) found, but not used in Pipeline")
-            return py_trees.common.Status.SUCCESS
+            return Status.SUCCESS
 
         action_server = blackboard.get(BBIdentifier.QUERY_SERVER)
 
         self.rk_logger.debug("ActionServer in pipeline!")
 
         # The Action Server has to pick up the exception and deliver it to the client. Wait until that happened.
-        if (
-            robokudo.utils.error_handling.has_blackboard_exception()
-            and robokudo.utils.error_handling.get_blackboard_exception() is not None
-        ):
+        if has_blackboard_exception() and get_blackboard_exception() is not None:
             self.rk_logger.info("ActionServer needs to deliver exception")
-            return py_trees.common.Status.RUNNING
+            return Status.RUNNING
 
         # If the Action Server is still processing the current goal, wait.
         # It's the responsibility of the rest of the tree to send the goal or re-iterate without
         # calling *this* Behavior again.
         if action_server.is_active():
             self.rk_logger.info("ActionServer needs to finish current goal.")
-            return py_trees.common.Status.RUNNING
+            return Status.RUNNING
 
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

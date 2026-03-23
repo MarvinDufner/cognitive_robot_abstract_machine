@@ -33,12 +33,14 @@ from pathlib import Path
 
 from typing_extensions import TYPE_CHECKING, List, Any, Optional
 
-from ..descriptors.camera_configs.base_camera_config import BaseCameraConfig
+from robokudo.descriptors.camera_configs.base_camera_config import BaseCameraConfig
 
 if TYPE_CHECKING:
     from types import ModuleType
-    from ..analysis_engine import AnalysisEngineInterface
-    from ..world_descriptor import BaseWorldDescriptor
+    from robokudo.analysis_engine import AnalysisEngineInterface
+    from robokudo.object_knowledge_base import BaseObjectKnowledgeBase
+    from robokudo.semantic_map import BaseSemanticMap
+    from robokudo.world_descriptor import BaseWorldDescriptor
 
 
 class RobokudoModuleType(enum.Enum):

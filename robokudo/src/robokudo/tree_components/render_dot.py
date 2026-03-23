@@ -15,11 +15,13 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from timeit import default_timer
 
-import py_trees
+from py_trees.behaviour import Behaviour
+from py_trees.common import Status
+from py_trees.decorators import Decorator
 from typing_extensions import Optional, List, Union
 
-import robokudo.display
-import robokudo.utils.tree
+from robokudo.display import render_dot_tree
+from robokudo.utils.tree import find_root
 
 
 def create_dir_if_not_exists(path: str) -> None:
@@ -48,9 +50,9 @@ def render_now(behaviour: Union["RenderTreeToDot", "RenderTreeToDotDecorator"]) 
         create_dir_if_not_exists(behaviour.path)
 
     # Go up until we find the root
-    root = robokudo.utils.tree.find_root(behaviour)
+    root = find_root(behaviour)
 
-    robokudo.display.render_dot_tree(
+    render_dot_tree(
         root,
         name=f"RKTree{behaviour.suffix}-{behaviour.counter}",
         threadpool_executor=behaviour.executor,
@@ -62,7 +64,7 @@ def render_now(behaviour: Union["RenderTreeToDot", "RenderTreeToDotDecorator"]) 
     behaviour.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
 
 
-class RenderTreeToDot(py_trees.behaviour.Behaviour):
+class RenderTreeToDot(Behaviour):
     """Behavior that renders tree to DOT format when ticked.
 
     This behavior renders the entire tree to DOT format each time it is ticked,
@@ -92,16 +94,16 @@ class RenderTreeToDot(py_trees.behaviour.Behaviour):
         self.suffix: str = suffix
         """Suffix to append to output filenames"""
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Render tree on each tick.
 
         :return: Always returns SUCCESS
         """
         render_now(self)
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
 
 
-class RenderTreeToDotDecorator(py_trees.decorators.Decorator):
+class RenderTreeToDotDecorator(Decorator):
     """Decorator that renders tree when child returns specific status.
 
     This decorator monitors its child's status and triggers a tree render
@@ -110,10 +112,10 @@ class RenderTreeToDotDecorator(py_trees.decorators.Decorator):
 
     def __init__(
         self,
-        child: Optional[py_trees.behaviour.Behaviour] = None,
+        child: Optional[Behaviour] = None,
         path: Optional[str] = None,
         suffix: str = "",
-        trigger_when_status_is: Optional[List[py_trees.common.Status]] = None,
+        trigger_when_status_is: Optional[List[Status]] = None,
     ) -> None:
         """Initialize render decorator.
 
@@ -126,13 +128,11 @@ class RenderTreeToDotDecorator(py_trees.decorators.Decorator):
 
         if trigger_when_status_is is None:
             trigger_when_status_is = [
-                py_trees.common.Status.SUCCESS,
-                py_trees.common.Status.FAILURE,
+                Status.SUCCESS,
+                Status.FAILURE,
             ]
 
-        self.trigger_when_status_is: List[py_trees.common.Status] = (
-            trigger_when_status_is
-        )
+        self.trigger_when_status_is: List[Status] = trigger_when_status_is
         """List of status values that trigger rendering"""
 
         self.path: str = path
@@ -150,7 +150,7 @@ class RenderTreeToDotDecorator(py_trees.decorators.Decorator):
         self.suffix: str = suffix
         """Suffix to append to output filenames"""
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Check child status and render if triggered.
 
         :return: Status of decorated child

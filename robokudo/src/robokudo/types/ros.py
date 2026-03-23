@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 
 from typing_extensions import List
 
-from . import core
+from robokudo.types.core import Type
 
 
 @dataclass
-class Header(core.Type):
+class Header(Type):
     """ROS message header type.
 
     Standard ROS message header containing sequence number, timestamp,
@@ -43,7 +43,7 @@ class Header(core.Type):
 
 
 @dataclass
-class RegionOfInterest(core.Type):
+class RegionOfInterest(Type):
     """ROS region of interest message type.
 
     Defines a rectangular region within an image.
@@ -76,7 +76,7 @@ class RegionOfInterest(core.Type):
 
 
 @dataclass
-class CameraInfo(core.Type):
+class CameraInfo(Type):
     """ROS camera calibration and metadata message type.
 
     Contains camera calibration data and image metadata including:

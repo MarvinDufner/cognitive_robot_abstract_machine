@@ -18,15 +18,15 @@ from dataclasses import dataclass, field
 import open3d as o3d
 from typing_extensions import TYPE_CHECKING, List, Any
 
-from . import core
-from . import cv
+from robokudo.types.core import IdentifiableAnnotation, Nameable, Annotation
+from robokudo.types.cv import ImageROI
 
 if TYPE_CHECKING:
     from semantic_digital_twin.world_description.world_entity import Body
 
 
 @dataclass
-class AnalyzableAnnotation(core.IdentifiableAnnotation):
+class AnalyzableAnnotation(IdentifiableAnnotation):
     """
     An Annotation that describes an entity observed in the scene, that shall be analyzed further.
     This is considered as a super class for everything that could potentially be necessary to look at.
@@ -56,7 +56,7 @@ class AnalyzableAnnotation(core.IdentifiableAnnotation):
     A reference to an SDT Body, if present
     """
 
-    roi: cv.ImageROI = field(default_factory=cv.ImageROI)
+    roi: ImageROI = field(default_factory=ImageROI)
     """
     Image region of interest
     """
@@ -99,7 +99,7 @@ class HumanHypothesis(ObjectHypothesis):
 
 
 @dataclass
-class RegionHypothesis(AnalyzableAnnotation, core.Nameable):
+class RegionHypothesis(AnalyzableAnnotation, Nameable):
     """Hypothesis about a region in the scene.
 
     A region in the scene. It doesn't necessarily focus on one specific object, but is rather used as a data structure
@@ -111,7 +111,7 @@ class RegionHypothesis(AnalyzableAnnotation, core.Nameable):
 
 
 @dataclass
-class ParthoodHypothesis(AnalyzableAnnotation, core.Nameable):
+class ParthoodHypothesis(AnalyzableAnnotation, Nameable):
     """Base class for part-whole relationships in objects.
 
     This annotation can be used to represent parts of an object.
@@ -145,7 +145,7 @@ class ParthoodFeatureHypothesis(ParthoodHypothesis):
 
 
 @dataclass
-class OccupiedAnnotation(core.Annotation):
+class OccupiedAnnotation(Annotation):
     """Annotation indicating region occupancy.
 
     This annotation can be used to indicate that a region is occupied.

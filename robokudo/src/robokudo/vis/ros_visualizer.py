@@ -8,26 +8,16 @@ It handles:
 * Pipeline state visualization
 * Dynamic topic management
 * Image format conversion
-
-Dependencies
------------
-* rospy for ROS integration
-* cv2 for image manipulation
-* numpy for array operations
-* cv_bridge for ROS/OpenCV conversion
-* robokudo.annotators for annotator access
-* robokudo.vis.visualizer for base visualization interface
 """
 
 import cv2
-import numpy
+import numpy as np
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from typing_extensions import Any, Dict
-import rclpy.publisher
+from rclpy.publisher import Publisher
 
-import robokudo.vis.visualizer
 from robokudo.annotators.core import BaseAnnotator
 from robokudo.vis.visualizer import Visualizer
 
@@ -46,7 +36,7 @@ class SharedROSVisualizer(Visualizer, Visualizer.Observer, Node):
 
         self.shared_visualizer_state.register_observer(self)
 
-        self.ros_image_publisher: rclpy.publisher.Publisher = self.create_publisher(
+        self.ros_image_publisher: Publisher = self.create_publisher(
             Image, f"{self.pipeline.name}/output_image", 10
         )
         """Publisher for the image topic"""
@@ -83,7 +73,7 @@ class SharedROSVisualizer(Visualizer, Visualizer.Observer, Node):
                 # This might happen in dynamic perception pipelines, where annotators have not been set up
                 # during construction of the tree AND don't generate image outputs.
                 # Create an empty image to show in the visualizer
-                img = numpy.zeros((640, 480, 3), dtype="uint8")
+                img = np.zeros((640, 480, 3), dtype="uint8")
             else:
                 img = annotator_outputs.outputs[active_annotator_instance.name].image
             img_with_annotator_text = cv2.putText(
@@ -101,7 +91,7 @@ class SharedROSVisualizer(Visualizer, Visualizer.Observer, Node):
 
     def notify(
         self,
-        observable: robokudo.vis.visualizer.Visualizer.Observable,
+        observable: Visualizer.Observable,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -132,7 +122,7 @@ class AllAnnotatorROSVisualizer(Visualizer, Node):
         Visualizer.__init__(self, *args, **kwargs)
         Node.__init__(self, "all_annotator_ros_visualizer")
 
-        self.ros_image_publishers: Dict[str, rclpy.publisher.Publisher] = {}
+        self.ros_image_publishers: Dict[str, Publisher] = {}
         """Mapping of annotator names to ROS publishers"""
 
         self.ros_image_cv_bridge: CvBridge = CvBridge()
@@ -184,7 +174,7 @@ class AllAnnotatorROSVisualizer(Visualizer, Node):
 
     def notify(
         self,
-        observable: robokudo.vis.visualizer.Visualizer.Observable,
+        observable: Visualizer.Observable,
         *args: Any,
         **kwargs: Any,
     ) -> None:

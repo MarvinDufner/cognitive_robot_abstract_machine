@@ -16,12 +16,12 @@ import functools
 from py_trees.common import Status
 from typing_extensions import Callable, Type, Optional
 
-from . import core
-from ..cas import CAS
-from ..types.scene import ObjectHypothesis
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.cas import CAS
+from robokudo.types.scene import ObjectHypothesis
 
 
-class CASCheckFunc(core.BaseAnnotator):
+class CASCheckFunc(BaseAnnotator):
     """Function-based CAS condition checker.
 
     Evaluates a given function that checks conditions in the CAS and returns:

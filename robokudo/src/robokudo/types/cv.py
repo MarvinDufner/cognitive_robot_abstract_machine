@@ -17,15 +17,15 @@ from dataclasses import dataclass, field
 from typing_extensions import TYPE_CHECKING
 import open3d as o3d
 
-from . import core
-from . import tf
+from robokudo.types.core import Type
+from robokudo.types.tf import Pose
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
 
 @dataclass
-class Point2D(core.Type):
+class Point2D(Type):
     """2D point representation.
 
     Represents a point in 2D image coordinates.
@@ -43,7 +43,7 @@ class Point2D(core.Type):
 
 
 @dataclass
-class Points3D(core.Type):
+class Points3D(Type):
     """3D point cloud container.
 
     Wraps an Open3D point cloud for 3D point operations.
@@ -56,7 +56,7 @@ class Points3D(core.Type):
 
 
 @dataclass
-class Rect(core.Type):
+class Rect(Type):
     """2D rectangle representation.
 
     Defines a rectangle by its top-left corner position and dimensions.
@@ -79,7 +79,7 @@ class Rect(core.Type):
 
 
 @dataclass
-class ImageROI(core.Type):
+class ImageROI(Type):
     """Image region of interest.
 
     Defines a region of interest in an image using:
@@ -99,7 +99,7 @@ class ImageROI(core.Type):
 
 
 @dataclass
-class BoundingBox3D(core.Type):
+class BoundingBox3D(Type):
     """3D oriented bounding box.
 
     Represents a 3D box with:
@@ -122,7 +122,7 @@ class BoundingBox3D(core.Type):
     Box length along z-axis
     """
 
-    pose: tf.Pose = field(default_factory=tf.Pose)
+    pose: Pose = field(default_factory=Pose)
     """
     Box pose in 3D space
     """

@@ -1,7 +1,7 @@
 from threading import Lock
 from rclpy import create_node
 from rclpy.node import Node
-from typing_extensions import Optional, Any
+from typing_extensions import Any
 
 _rk_node: Node = None
 """Central RoboKudo ROS node."""

@@ -23,15 +23,14 @@ from pathlib import Path
 from timeit import default_timer
 
 import cv2
-import py_trees
+from py_trees.common import Status
 
-import robokudo.io.storage
-import robokudo.annotators.core
-import robokudo.utils.type_conversion
+from robokudo.annotators.core import BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.utils.type_conversion import ros_cam_info_to_dict
 
 
-class FileWriter(robokudo.annotators.core.BaseAnnotator):
+class FileWriter(BaseAnnotator):
     """Sensor data storage to filesystem.
 
     This module provides methods to store sensor data into the local filesystem.
@@ -42,7 +41,7 @@ class FileWriter(robokudo.annotators.core.BaseAnnotator):
        Target directory must exist and be writable.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for file writer."""
 
         class Parameters:
@@ -110,7 +109,7 @@ class FileWriter(robokudo.annotators.core.BaseAnnotator):
             )
         )
 
-    def update(self) -> py_trees.common.Status:
+    def update(self) -> Status:
         """Process and store sensor data.
 
         The method:
@@ -129,7 +128,7 @@ class FileWriter(robokudo.annotators.core.BaseAnnotator):
             print(
                 f"FileWriter has not been properly instantiated. Check error log for __init__ errors."
             )
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         color = self.get_cas().get(CASViews.COLOR_IMAGE)
         depth = self.get_cas().get(CASViews.DEPTH_IMAGE)
@@ -148,7 +147,7 @@ class FileWriter(robokudo.annotators.core.BaseAnnotator):
             depth,
         )
 
-        cam_info_dict = robokudo.utils.type_conversion.ros_cam_info_to_dict(cam_info)
+        cam_info_dict = ros_cam_info_to_dict(cam_info)
         with open(
             str(
                 self.generate_full_file_path_(
@@ -161,4 +160,4 @@ class FileWriter(robokudo.annotators.core.BaseAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

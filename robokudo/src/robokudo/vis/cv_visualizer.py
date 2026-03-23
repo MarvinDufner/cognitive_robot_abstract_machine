@@ -8,31 +8,15 @@ It handles:
 * Keyboard controls for navigation and control
 * Window management
 * Pipeline state visualization
-
-Dependencies
------------
-* cv2 for image display and window management
-* numpy for image manipulation
-* py_trees for behavior tree integration
-* robokudo.annotators for annotator access
-* robokudo.vis.visualizer for base visualization interface
-
-See Also
---------
-* :mod:`robokudo.vis.visualizer` : Base visualization interface
-* :mod:`robokudo.vis.o3d_visualizer` : 3D visualization
-* :mod:`robokudo.vis.ros_visualizer` : ROS-based visualization
 """
 
 import subprocess
 import sys
 
 import cv2
-import numpy
-import py_trees
+import numpy as np
+from py_trees.blackboard import Blackboard
 from typing_extensions import Any, Optional
-import robokudo.vis.visualizer
-
 from robokudo.annotators.core import BaseAnnotator
 from robokudo.vis.visualizer import Visualizer
 
@@ -98,7 +82,7 @@ class CVVisualizer(Visualizer, Visualizer.Observer):
                 # during construction of the tree AND don't generate image outputs.
                 # Create an empty image to show in the visualizer
                 # print(f"No visual output for annotator {active_annotator_instance.name}")
-                img = numpy.zeros((640, 480, 3), dtype="uint8")
+                img = np.zeros((640, 480, 3), dtype="uint8")
             else:
                 img = annotator_outputs.outputs[active_annotator_instance.name].image
 
@@ -145,7 +129,7 @@ class CVVisualizer(Visualizer, Visualizer.Observer):
 
     def notify(
         self,
-        observable: robokudo.vis.visualizer.Visualizer.Observable,
+        observable: Visualizer.Observable,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -259,7 +243,7 @@ class CVVisualizer(Visualizer, Visualizer.Observer):
             return True
 
         if key == 32:  # space
-            blackboard = py_trees.blackboard.Blackboard()
+            blackboard = Blackboard()
             blackboard.set("pipeline_trigger", True)
 
         # all other keys can be handled by the annotator

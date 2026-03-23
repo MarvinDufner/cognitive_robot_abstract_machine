@@ -20,26 +20,24 @@ The module is used for:
 
 import copy
 import json
+import robokudo.world
 from timeit import default_timer
 
-import py_trees
+from py_trees.common import Status
 
-import robokudo.annotators.outputs
-import robokudo.annotators.core
-import robokudo.io.storage
-import robokudo.world
+from robokudo.annotators.core import BaseAnnotator
+from robokudo.io.storage import Storage
 from semantic_digital_twin.adapters.ros.messages import WorldModelSnapshot
 
 
-class StorageWriter(robokudo.annotators.core.BaseAnnotator):
-    """
-    Annotator for storing sensor data in MongoDB.
+class StorageWriter(BaseAnnotator):
+    """Annotator for storing sensor data in MongoDB.
 
     This annotator provides methods to store sensor data in a MongoDB database,
     allowing for data recording and offline processing without using ROS bag files.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for storage writer."""
 
         class Parameters:
@@ -48,12 +46,12 @@ class StorageWriter(robokudo.annotators.core.BaseAnnotator):
             def __init__(self) -> None:
                 self.db_name: str = "rk_scenes"
                 """Database name"""
+
                 self.drop_database_on_storage: bool = True
                 """Whether to clear database before recording"""
 
-        parameters = (
-            Parameters()
-        )  # overwrite the parameters explicitly to enable auto-completion
+        # Overwrite the parameters explicitly to enable auto-completion
+        parameters = Parameters()
 
     def __init__(
         self,
@@ -67,15 +65,14 @@ class StorageWriter(robokudo.annotators.core.BaseAnnotator):
         """
         super().__init__(name, descriptor)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
-        self.storage = robokudo.io.storage.Storage(self.descriptor.parameters.db_name)
+        self.storage = Storage(self.descriptor.parameters.db_name)
 
         # Wipe the database completely before recording data
         if self.descriptor.parameters.drop_database_on_storage:
             self.storage.drop_database()
 
-    def update(self) -> py_trees.common.Status:
-        """
-        Store current CAS data in MongoDB.
+    def update(self) -> Status:
+        """Store current CAS data in MongoDB.
 
         Creates a deep copy of the CAS, flattens it into a dictionary,
         and stores both views and CAS data in the database.
@@ -110,8 +107,8 @@ class StorageWriter(robokudo.annotators.core.BaseAnnotator):
         result = self.storage.store_cas_dict(flat_cas)
         if not result.acknowledged:
             self.rk_logger.error(f"mongo db error when trying to store cas")
-            return py_trees.common.Status.FAILURE
+            return Status.FAILURE
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS

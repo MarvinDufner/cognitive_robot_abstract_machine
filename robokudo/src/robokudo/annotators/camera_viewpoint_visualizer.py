@@ -9,11 +9,11 @@ import open3d as o3d
 from py_trees.common import Status
 
 import robokudo.utils.annotator_helper
-from . import core
+from robokudo.annotators.core import BaseAnnotator
 from ..cas import CASViews
 
 
-class CameraViewpointVisualizer(core.BaseAnnotator):
+class CameraViewpointVisualizer(BaseAnnotator):
     """Annotator for visualizing camera viewpoints and reference frames.
 
     This annotator displays the reference frame set in the viewpoint (e.g., /map frame)

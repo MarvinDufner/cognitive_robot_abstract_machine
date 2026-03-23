@@ -24,21 +24,25 @@ import math
 from pathlib import Path
 from timeit import default_timer
 
-import numpy
+import numpy as np
 import open3d as o3d
-import py_trees
+from py_trees.common import Status
 from typing_extensions import Optional
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.annotators.outputs
-import robokudo.types.scene
-import robokudo.utils.transform
+from robokudo.annotators.core import ThreadedAnnotator, BaseAnnotator
 from robokudo.cas import CASViews
+from robokudo.types.annotation import PoseAnnotation
+from robokudo.types.scene import ObjectHypothesis
 from robokudo.utils.file_loader import FileLoader
+from robokudo.utils.transform import (
+    get_transform_matrix_from_q,
+    get_transform_matrix_for_rotation_around_axis,
+    get_translation_from_transform_matrix,
+    get_quaternion_from_transform_matrix,
+)
 
 
-class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
+class ICPPoseRefinementAnnotator(ThreadedAnnotator):
     """Pose refinement using iterative closest point (ICP).
 
     This annotator:
@@ -57,7 +61,7 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
        Currently limited to refining against a single pre-loaded model.
     """
 
-    class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
+    class Descriptor(BaseAnnotator.Descriptor):
         """Configuration descriptor for ICP refinement."""
 
         class Parameters:
@@ -141,7 +145,7 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
             self.rk_logger.error(f"No ply model found at '{ply_path}'")
         return ply_path
 
-    def compute(self) -> py_trees.common.Status:
+    def compute(self) -> Status:
         """Process object hypotheses and refine poses.
 
         The method:
@@ -164,7 +168,7 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
             )
             self.rk_logger.warn(error_message)
             self.feedback_message = error_message
-            return py_trees.common.Status.SUCCESS  # Don't fail the whole pipeline
+            return Status.SUCCESS  # Don't fail the whole pipeline
 
         cloud = self.get_cas().get(CASViews.CLOUD)
         annotations = self.get_cas().annotations
@@ -172,11 +176,11 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
 
         # ICP Parameters
         thresh = 0.02
-        icp_transform_init = numpy.eye(4)
+        icp_transform_init = np.eye(4)
 
         # Iterate over everything that is a Object hypothesis and calculate the centroid
         for annotation in annotations:
-            if not isinstance(annotation, robokudo.types.scene.ObjectHypothesis):
+            if not isinstance(annotation, ObjectHypothesis):
                 continue
             # Each hypothesis must have valid points before we can proceed
             if annotation.points is None:
@@ -196,21 +200,21 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
             pose_annotations = [
                 x
                 for x in object_hypothesis.annotations
-                if isinstance(x, robokudo.types.annotation.PoseAnnotation)
+                if isinstance(x, PoseAnnotation)
             ]
 
             for pose_annotation in pose_annotations:
                 # Transform PLY Model based on the PoseAnnotation for that object
-                pose_t = robokudo.utils.transform.get_transform_matrix_from_q(
-                    numpy.asarray(pose_annotation.rotation),
-                    numpy.asarray(pose_annotation.translation),
+                pose_t = get_transform_matrix_from_q(
+                    np.asarray(pose_annotation.rotation),
+                    np.asarray(pose_annotation.translation),
                 )
 
                 # Pose variants are a tuple with the actual pose to evaluate and a textual description for easier readability
                 initial_pose_variants = [(pose_t, "Initial Pose")]
 
                 # Turn model upside-down and add this as a pose variant. The z-axis might be turned upside-down
-                upside_down_transform = robokudo.utils.transform.get_transform_matrix_for_rotation_around_axis(
+                upside_down_transform = get_transform_matrix_for_rotation_around_axis(
                     math.pi, (1, 0, 0)
                 )
                 initial_pose_variants.append(
@@ -294,16 +298,12 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
                     {"name": "Refined Pose Estimate", "geometry": refined_ply_model}
                 )
 
-                refined_pose_annotation = robokudo.types.annotation.PoseAnnotation()
+                refined_pose_annotation = PoseAnnotation()
                 refined_pose_annotation.translation = list(
-                    robokudo.utils.transform.get_translation_from_transform_matrix(
-                        refined_transformation
-                    )
+                    get_translation_from_transform_matrix(refined_transformation)
                 )
                 refined_pose_annotation.rotation = list(
-                    robokudo.utils.transform.get_quaternion_from_transform_matrix(
-                        refined_transformation
-                    )
+                    get_quaternion_from_transform_matrix(refined_transformation)
                 )
                 refined_pose_annotation.source = type(self).__name__
 
@@ -319,4 +319,4 @@ class ICPPoseRefinementAnnotator(robokudo.annotators.core.ThreadedAnnotator):
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"
-        return py_trees.common.Status.SUCCESS
+        return Status.SUCCESS
