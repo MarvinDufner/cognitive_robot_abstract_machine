@@ -13,6 +13,7 @@ from random_events.set import Set
 from random_events.variable import Symbolic
 from typing_extensions import (
     TYPE_CHECKING,
+    Generator,
     List,
     Optional,
     Self,
@@ -421,10 +422,19 @@ class HasGraspPose(HasRootBody, ABC):
     A mixin class for semantic annotations that have a grasp pose.
     """
 
-    grasp_pose: HomogeneousTransformationMatrix = field(kw_only=True, default=None)
+    grasp_pose: Optional[HomogeneousTransformationMatrix] = field(
+        kw_only=True, default=None
+    )
     """
-    The grasp pose of the semantic annotation
+    The static grasp pose of the semantic annotation. 
     """
+
+    def grasp_poses(self) -> Generator[HomogeneousTransformationMatrix, None, None]:
+        """
+        Yield grasp poses for this semantic annotation.
+        """
+        if self.grasp_pose is not None:
+            yield self.grasp_pose
 
 
 @dataclass(eq=False)

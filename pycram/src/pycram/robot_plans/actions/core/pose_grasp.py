@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Union, Iterable, Optional, Any
 
 from pycram.datastructures.enums import Arms
@@ -16,7 +16,14 @@ from pycram.robot_plans.motions.pose_grasp import (
     RetractDirection,
 )
 from pycram.view_manager import ViewManager
-from semantic_digital_twin.datastructures.definitions import GripperState
+from semantic_digital_twin.datastructures.definitions import (
+    GripperState,
+    StaticJointState,
+)
+from semantic_digital_twin.reasoning.robot_predicates import (
+    robot_in_collision,
+    blocking,
+)
 from semantic_digital_twin.semantic_annotations.mixins import HasGraspPose
 
 
@@ -39,13 +46,18 @@ class PoseGraspAction(ActionDescription):
     use_collision_avoidance: bool = True
     """Whether to enable collision avoidance during the grasp motion."""
 
+    _resolved_grasp_pose: Optional[HomogeneousTransformationMatrix] = field(
+        default=None, init=False, repr=False
+    )
+    """Grasp pose resolved during precondition validation, consumed in execute."""
+
     def execute(self) -> None:
         SequentialPlan(
             self.context,
             MoveGripperMotion(gripper=self.arm, motion=GripperState.OPEN),
             PoseGraspMotion(
                 arm=self.arm,
-                grasp_pose=self.target.grasp_pose,
+                grasp_pose=self._resolved_grasp_pose,
                 allowed_collision_bodies=list(self.target.bodies),
                 pre_grasp_distance=self.pre_grasp_distance,
                 use_collision_avoidance=self.use_collision_avoidance,
@@ -53,10 +65,26 @@ class PoseGraspAction(ActionDescription):
             MoveGripperMotion(gripper=self.arm, motion=GripperState.CLOSE),
         ).perform()
 
+    def _is_graspable(self, pose: HomogeneousTransformationMatrix) -> bool:
+        hand = ViewManager.get_end_effector_view(self.arm, self.robot_view)
+        tool_frame = hand.tool_frame
+
+        return not blocking(pose, self.world.root, tool_frame)
+
     def validate_precondition(self):
-        if not isinstance(self.target.grasp_pose, HomogeneousTransformationMatrix):
+        if not isinstance(
+            next(self.target.grasp_poses(), None), HomogeneousTransformationMatrix
+        ):
             raise PlanFailure(
                 f"Cannot perform PoseGraspAction: {self.target} has no grasp pose set."
+            )
+        self._resolved_grasp_pose = next(
+            (pose for pose in self.target.grasp_poses() if self._is_graspable(pose)),
+            None,
+        )
+        if self._resolved_grasp_pose is None:
+            raise PlanFailure(
+                f"Cannot perform PoseGraspAction: all grasp poses for {self.target} are blocked."
             )
 
     def validate_postcondition(self, result: Optional[Any] = None):
@@ -142,7 +170,9 @@ class PoseGraspAndLiftAction(ActionDescription):
         ).perform()
 
     def validate_precondition(self):
-        if not isinstance(self.target.grasp_pose, HomogeneousTransformationMatrix):
+        if not isinstance(
+            next(self.target.grasp_poses(), None), HomogeneousTransformationMatrix
+        ):
             raise PlanFailure(
                 f"Cannot perform PoseGraspAndLiftAction: {self.target} has no grasp pose set."
             )
