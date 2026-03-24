@@ -188,6 +188,10 @@ class CollisionRule(ABC):
         """
         return {}
 
+    def copy_for_world(self, world: World) -> Self:
+        kwargs = self.get_init_kwargs_for_world(world)
+        return self.__class__(**kwargs)
+
     @abstractmethod
     def apply_to_collision_matrix(self, collision_matrix: CollisionMatrix):
         """
@@ -226,6 +230,10 @@ class MaxAvoidedCollisionsRule(ABC):
 
     def get_init_kwargs_for_world(self, world: World) -> dict[str, Any]:
         return {}
+
+    def copy_for_world(self, world: World) -> Self:
+        kwargs = self.get_init_kwargs_for_world(world)
+        return self.__class__(**kwargs)
 
     @abstractmethod
     def get_max_avoided_collisions(self, body: Body) -> int | None:

@@ -56,6 +56,13 @@ class AvoidCollisionRule(CollisionRule, ABC):
 
     added_collision_checks: set[CollisionCheck] = field(default_factory=set, init=False)
 
+    def get_init_kwargs_for_world(self, world: World) -> dict[str, Any]:
+        return {
+            **super().get_init_kwargs_for_world(world),
+            "buffer_zone_distance": self.buffer_zone_distance,
+            "violated_distance": self.violated_distance,
+        }
+
     def applies_to(self, body_a: Body, body_b: Body) -> bool:
         """
         Returns True if the rule configures collision distances for the given body.
@@ -79,13 +86,6 @@ class AvoidCollisionRule(CollisionRule, ABC):
 
     def apply_to_collision_matrix(self, collision_matrix: CollisionMatrix):
         collision_matrix.add_collision_checks(self.added_collision_checks)
-
-    def get_init_kwargs_for_world(self, world: World) -> dict[str, Any]:
-        return {
-            **super().get_init_kwargs_for_world(world),
-            "buffer_zone_distance": self.buffer_zone_distance,
-            "violated_distance": self.violated_distance,
-        }
 
 
 @dataclass
@@ -163,7 +163,7 @@ class AvoidAllCollisions(AvoidCollisionRule):
             self.added_collision_checks.add(collision_check)
 
 
-@dataclass
+@dataclass(eq=False)
 class AvoidExternalCollisions(AvoidCollisionRule, SubclassJSONSerializer):
     """
     Adds collision checks between all bodies managed by the rule and all bodies that do not belong to the robot.
@@ -228,6 +228,11 @@ class AvoidExternalCollisions(AvoidCollisionRule, SubclassJSONSerializer):
                 for body_id in body_subset_ids
             }
         return cls(robot=robot, body_subset=body_subset)
+
+    def __eq__(self, other):
+        if not isinstance(other, AvoidExternalCollisions):
+            return False
+        return self.robot == other.robot and self.body_subset == other.body_subset
 
 
 @dataclass
@@ -705,10 +710,12 @@ class SelfCollisionMatrixRule(AllowCollisionRule, SubclassJSONSerializer):
     allowed_collision_pairs: set[CollisionCheck] = field(default_factory=set)
     """
     Set of collision checks that are allowed to occur.
+    This is redeclared from super to set init=True
     """
     allowed_collision_bodies: set[Body] = field(default_factory=set)
     """
     Set of bodies that are allowed to collide.
+    This is redeclared from super to set init=True
     """
 
     def get_init_kwargs_for_world(self, world: World) -> dict[str, Any]:

@@ -1197,6 +1197,7 @@ class World(HasSimulatorProperties):
                 self.add_connection(root_connection)
 
             self.collision_manager.merge_collision_manager(other.collision_manager)
+            other.clear()
 
     # %% Subgraph Targeting
 
