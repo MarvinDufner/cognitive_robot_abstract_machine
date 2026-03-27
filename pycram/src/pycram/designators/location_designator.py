@@ -4,13 +4,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Union, Iterator, Iterable, Tuple
 
 import numpy as np
-import rclpy
 import rustworkx as rx
 from box import Box
-from random_events.interval import closed
-from random_events.polytope import Polytope, NoOptimalSolutionError
-from random_events.product_algebra import Event, SimpleEvent
-from random_events.variable import Continuous
 from scipy.spatial import ConvexHull
 from sortedcontainers import SortedSet
 
@@ -37,29 +32,6 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,
     ProductUnit,
 )
-from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
-    VizMarkerPublisher,
-)
-from semantic_digital_twin.collision_checking.collision_rules import (
-    AvoidExternalCollisions,
-)
-from semantic_digital_twin.datastructures.variables import SpatialVariables
-from semantic_digital_twin.robots.abstract_robot import AbstractRobot
-from semantic_digital_twin.spatial_types import Point3, Vector3, Quaternion
-from semantic_digital_twin.spatial_types.spatial_types import (
-    HomogeneousTransformationMatrix,
-    Pose,
-)
-from semantic_digital_twin.world import World
-from semantic_digital_twin.world_description.connections import FixedConnection
-from semantic_digital_twin.world_description.geometry import BoundingBox
-from semantic_digital_twin.world_description.graph_of_convex_sets import (
-    GraphOfConvexSets,
-)
-from semantic_digital_twin.world_description.shape_collection import (
-    BoundingBoxCollection,
-)
-from semantic_digital_twin.world_description.world_entity import Body
 from pycram.config.action_conf import ActionConfig
 from pycram.costmaps import (
     OccupancyCostmap,
@@ -87,6 +59,30 @@ from pycram.pose_validator import (
 )
 from pycram.utils import link_pose_for_joint_config
 from pycram.view_manager import ViewManager
+from random_events.interval import closed
+from random_events.polytope import Polytope, NoOptimalSolutionError
+from random_events.product_algebra import Event, SimpleEvent
+from random_events.variable import Continuous
+from semantic_digital_twin.collision_checking.collision_rules import (
+    AvoidExternalCollisions,
+)
+from semantic_digital_twin.datastructures.variables import SpatialVariables
+from semantic_digital_twin.robots.abstract_robot import AbstractRobot
+from semantic_digital_twin.spatial_types import Point3, Vector3, Quaternion
+from semantic_digital_twin.spatial_types.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Pose,
+)
+from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.connections import FixedConnection
+from semantic_digital_twin.world_description.geometry import BoundingBox
+from semantic_digital_twin.world_description.graph_of_convex_sets import (
+    GraphOfConvexSets,
+)
+from semantic_digital_twin.world_description.shape_collection import (
+    BoundingBoxCollection,
+)
+from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger("pycram")
 
@@ -292,8 +288,12 @@ class CostmapLocation(LocationDesignatorDescription):
 
             for pose_candidate in final_map:
                 logger.debug(f"Testing candidate pose at {pose_candidate}")
+                odom_height = test_world.compute_forward_kinematics(
+                    test_world.root,
+                    test_robot.root.parent_kinematic_structure_entity,
+                ).z
                 pose_candidate = Pose(
-                    Point3(pose_candidate.x, pose_candidate.y, 0),
+                    Point3(pose_candidate.x, pose_candidate.y, odom_height),
                     pose_candidate.to_quaternion(),
                     reference_frame=target.reference_frame,
                 )
