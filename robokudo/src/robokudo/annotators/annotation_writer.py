@@ -5,15 +5,17 @@ This module provides annotators for writing and publishing annotations.
 
 import os
 import shutil
+import json
 from timeit import default_timer
 
-import rospy
 from py_trees.common import Status
+from rclpy.publisher import Publisher
 from std_msgs.msg import String
 from typing_extensions import Optional
 
 from robokudo.annotators.core import BaseAnnotator
-from robokudo.utils import serialization as serializer
+from robokudo.io.cas_annotation_codecs import serialize_annotations
+from robokudo.io.ros import get_node
 
 
 class AnnotationStorageWriter(BaseAnnotator):
@@ -65,8 +67,8 @@ class AnnotationStorageWriter(BaseAnnotator):
         """
         start_timer = default_timer()
 
-        # encode data as json string
-        json_data_string = serializer.encode(self.get_cas().annotations)
+        # Encode annotations via KRROOD serializer and dump to JSON.
+        json_data_string = json.dumps(serialize_annotations(self.get_cas().annotations))
 
         dir_path = os.path.join(self.descriptor.parameters.basic_path, self.name)
 
@@ -122,19 +124,19 @@ class AnnotationPublisherWriter(BaseAnnotator):
         super().__init__(name, descriptor)
         self.rk_logger.debug("%s.__init__()" % self.__class__.__name__)
 
-        self.pub: Optional[rospy.Publisher] = None
+        self.pub: Optional[Publisher] = None
         """ROS publisher for annotations"""
 
     def setup(self, timeout: float) -> None:
-        """Set up the ROS publisher. Useful for delayed initialization. For example ROS pub/sub, drivers.
+        """Set up the ROS2 publisher for annotation messages.
 
         :param timeout: Maximum time to wait for setup completion
-        :return: True if setup was successful
         """
         self.rk_logger.debug("%s.setup()" % self.__class__.__name__)
 
-        self.pub = rospy.Publisher(
-            self.descriptor.parameters.topic_name, String, queue_size=10
+        node = get_node()
+        self.pub = node.create_publisher(
+            String, self.descriptor.parameters.topic_name, 10
         )
 
     def update(self) -> Status:
@@ -147,11 +149,14 @@ class AnnotationPublisherWriter(BaseAnnotator):
         """
         start_timer = default_timer()
 
-        # encode data as json string
-        json_data_string = serializer.encode(self.get_cas().annotations)
+        # Encode annotations via KRROOD serializer and dump to JSON.
+        json_data_string = json.dumps(serialize_annotations(self.get_cas().annotations))
 
         # publish encoded data
-        self.pub.publish(json_data_string)
+        if self.pub is None:
+            raise RuntimeError("Publisher is not initialized. Call setup() first.")
+        msg = String(data=json_data_string)
+        self.pub.publish(msg)
 
         end_timer = default_timer()
         self.feedback_message = f"Processing took {(end_timer - start_timer):.4f}s"

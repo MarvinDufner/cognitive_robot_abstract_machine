@@ -16,7 +16,7 @@ The pipeline consists of the following steps:
     This demo uses the MongoDB storage interface and requires a properly configured
     MongoDB database with stored camera data.
 """
-
+from robokudo.annotators.cluster_pose_bb import ClusterPoseBBAnnotator
 from robokudo.descriptors import CrDescriptorFactory
 
 from robokudo.analysis_engine import AnalysisEngineInterface
@@ -80,6 +80,7 @@ class AnalysisEngine(AnalysisEngineInterface):
                 PlaneAnnotator(),
                 PointCloudClusterExtractor(),
                 OutlierRemovalOnObjectHypothesisAnnotator(),
+                ClusterPoseBBAnnotator(),
                 # SlowAnnotator("SlowAnnotator",sleep_in_s=0),
             ]
         )
