@@ -22,6 +22,7 @@ from semantic_digital_twin.world_description.world_entity import (
     SemanticAnnotation,
 )
 
+
 @dataclass
 class ObjectSpec:
     """
@@ -63,7 +64,7 @@ class BaseWorldDescriptor:
     def __init__(
         self,
         world: Optional[World] = None,
-        root_name: str = "root",
+        root_name: str = "descriptor_world_root",
         root_prefix: Optional[str] = "world",
     ) -> None:
         """
@@ -91,9 +92,7 @@ class BaseWorldDescriptor:
             -center_x, -center_y, -center_z, 0, 0, 0
         )
 
-    def build_objects(
-        self, root: Body, specs: List[Any]
-    ) -> Dict[str, Connection6DoF]:
+    def build_objects(self, root: Body, specs: List[Any]) -> Dict[str, Connection6DoF]:
         """Create bodies, connections, annotations, and poses from object specs."""
         connections: Dict[str, Connection6DoF] = {}
 

@@ -7,6 +7,7 @@ world descriptor entities, and color information.
 
 The pipeline implements the following functionality:
 - Reading stored camera data from MongoDB
+- Bootstrapping static world descriptor entities into the shared world
 - Image preprocessing
 - Static object detection with predefined parameters
 - Visualization of object hypotheses
@@ -25,6 +26,9 @@ from robokudo.annotators.cluster_color import ClusterColorAnnotator
 from robokudo.annotators.collection_reader import CollectionReaderAnnotator
 from robokudo.annotators.image_preprocessor import ImagePreprocessorAnnotator
 from robokudo.annotators.object_hypothesis_visualizer import ObjectHypothesisVisualizer
+from robokudo.annotators.world_descriptor_bootstrap import (
+    WorldDescriptorBootstrapAnnotator,
+)
 from robokudo.annotators.world_visualizer import WorldVisualizer
 from robokudo.idioms import pipeline_init
 from robokudo.pipeline import Pipeline
@@ -75,6 +79,8 @@ class AnalysisEngine(AnalysisEngineInterface):
         :return: The configured pipeline for object detection and visualization
         """
         cr_storage_config = CrDescriptorFactory.create_descriptor("mongo")
+        bootstrap = WorldDescriptorBootstrapAnnotator.Descriptor()
+        bootstrap.parameters.world_descriptor_name = "world_iai_kitchen20"
 
         sod = StaticObjectDetectorAnnotator.Descriptor()
         sod.parameters.bounding_box_x = 397
@@ -97,6 +103,7 @@ class AnalysisEngine(AnalysisEngineInterface):
             [
                 pipeline_init(),
                 CollectionReaderAnnotator(descriptor=cr_storage_config),
+                WorldDescriptorBootstrapAnnotator(descriptor=bootstrap),
                 ImagePreprocessorAnnotator("ImagePreprocessor"),
                 StaticObjectDetectorAnnotator(descriptor=sod),
                 ObjectHypothesisVisualizer(),

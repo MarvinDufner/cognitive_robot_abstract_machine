@@ -23,6 +23,9 @@ from robokudo.analysis_engine import AnalysisEngineInterface
 from robokudo.annotators.collection_reader import CollectionReaderAnnotator
 from robokudo.annotators.image_preprocessor import ImagePreprocessorAnnotator
 from robokudo.annotators.region_filter import RegionFilter
+from robokudo.annotators.world_descriptor_bootstrap import (
+    WorldDescriptorBootstrapAnnotator,
+)
 from robokudo.descriptors import CrDescriptorFactory
 from robokudo.idioms import pipeline_init
 from robokudo.pipeline import Pipeline
@@ -67,9 +70,10 @@ class AnalysisEngine(AnalysisEngineInterface):
 
         1. Initialize pipeline
         2. Read stored camera data
-        3. Preprocess image
-        4. Apply region filter
-        5. Optional: Visualize camera viewpoint
+        3. Bootstrap world descriptor entities into the shared world
+        4. Preprocess image
+        5. Apply region filter
+        6. Optional: Visualize camera viewpoint
 
         :return: The configured pipeline for region-based filtering
 
@@ -79,6 +83,8 @@ class AnalysisEngine(AnalysisEngineInterface):
             debugging and development.
         """
         cr_storage_config = CrDescriptorFactory.create_descriptor("mongo")
+        bootstrap = WorldDescriptorBootstrapAnnotator.Descriptor()
+        bootstrap.parameters.world_descriptor_name = "world_iai_kitchen20"
 
         seq = Pipeline("StoragePipeline")
         seq.add_children(
@@ -86,6 +92,7 @@ class AnalysisEngine(AnalysisEngineInterface):
                 # PipelineTrigger(),
                 pipeline_init(),
                 CollectionReaderAnnotator(descriptor=cr_storage_config),
+                WorldDescriptorBootstrapAnnotator(descriptor=bootstrap),
                 ImagePreprocessorAnnotator("ImagePreprocessor"),
                 RegionFilter(),
                 # CameraViewpointVisualizer(),

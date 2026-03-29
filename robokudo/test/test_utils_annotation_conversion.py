@@ -7,18 +7,41 @@ from geometry_msgs.msg import PoseStamped
 from scipy.spatial.transform import Rotation as R
 
 from robokudo.cas import CAS, CASViews
-from robokudo.types.annotation import PoseAnnotation, StampedPoseAnnotation, PositionAnnotation, SemanticColor, \
-    Classification, StampedPositionAnnotation, Shape, Cuboid, Sphere, LocationAnnotation
+from robokudo.types.annotation import (
+    PoseAnnotation,
+    StampedPoseAnnotation,
+    PositionAnnotation,
+    SemanticColor,
+    Classification,
+    StampedPositionAnnotation,
+    Shape,
+    Cuboid,
+    Sphere,
+    LocationAnnotation,
+)
 from robokudo.types.core import Annotation
 from robokudo.types.cv import BoundingBox3D
 from robokudo.types.tf import StampedTransform
-from robokudo.utils.annotation_conversion import PoseAnnotationToStampedPoseAnnotationConverter, \
-    PositionAnnotationToStampedPoseAnnotationConverter, SemanticColor2ODConverter, Classification2ODConverter, \
-    StampedPose2ODConverter, Pose2ODConverter, Position2ODConverter, StampedPosition2ODConverter, \
-    BoundingBox3DForShapeSizeConverter, Shape2ODConverter, Cuboid2ODConverter, Sphere2ODConverter, Location2ODConverter
+from robokudo.utils.annotation_conversion import (
+    PoseAnnotationToStampedPoseAnnotationConverter,
+    PositionAnnotationToStampedPoseAnnotationConverter,
+    SemanticColor2ODConverter,
+    Classification2ODConverter,
+    StampedPose2ODConverter,
+    Pose2ODConverter,
+    Position2ODConverter,
+    StampedPosition2ODConverter,
+    BoundingBox3DForShapeSizeConverter,
+    Shape2ODConverter,
+    Cuboid2ODConverter,
+    Sphere2ODConverter,
+    Location2ODConverter,
+)
 from robokudo_msgs.msg import ObjectDesignator, ShapeSize
 
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.world_description.world_entity import Region
 from . import _assertions
 
 
@@ -31,14 +54,16 @@ class TestUtilsAnnotationConversion(object):
         # tf.rotation = (-0.5, 0.5, -0.5, 0.5)
         # tf.translation = (0.5, 0.5, 0.5)
         # cas.set(CASViews.VIEWPOINT_CAM_TO_WORLD, tf)
-        cas.cam_to_world_transform = HomogeneousTransformationMatrix.from_xyz_quaternion(
-            pos_x=0.5,
-            pos_y=0.5,
-            pos_z=0.5,
-            quat_x=-0.5,
-            quat_y=0.5,
-            quat_z=-0.5,
-            quat_w=0.5
+        cas.cam_to_world_transform = (
+            HomogeneousTransformationMatrix.from_xyz_quaternion(
+                pos_x=0.5,
+                pos_y=0.5,
+                pos_z=0.5,
+                quat_x=-0.5,
+                quat_y=0.5,
+                quat_z=-0.5,
+                quat_w=0.5,
+            )
         )
 
         kinect_cam_info = sensor_msgs.msg.CameraInfo()
@@ -64,7 +89,9 @@ class TestUtilsAnnotationConversion(object):
 
         assert converter.can_convert(pose_annotation, PoseAnnotation) == False
 
-        assert converter.can_convert(position_annotation, StampedPoseAnnotation) == False
+        assert (
+            converter.can_convert(position_annotation, StampedPoseAnnotation) == False
+        )
 
     def test_pose_annotation_to_stamped_pose_annotation_convert(self):
         converter = PoseAnnotationToStampedPoseAnnotationConverter()
@@ -78,7 +105,9 @@ class TestUtilsAnnotationConversion(object):
 
         assert stamped_pose_annotation.source == pose_annotation.source
         assert np.all(stamped_pose_annotation.rotation == pose_annotation.rotation)
-        assert np.all(stamped_pose_annotation.translation == pose_annotation.translation)
+        assert np.all(
+            stamped_pose_annotation.translation == pose_annotation.translation
+        )
 
     def test_position_annotation_to_stamped_pose_annotation_can_convert(self):
         converter = PositionAnnotationToStampedPoseAnnotationConverter()
@@ -198,7 +227,9 @@ class TestUtilsAnnotationConversion(object):
         pose: PoseStamped = od.pose[0]
         assert pose.header.frame_id == kinect_cam_info.header.frame_id
         assert pose.header.stamp.sec == kinect_cam_info.header.stamp.sec
-        assert pose.header.stamp.nanosec == 0  # TODO: Nanoseconds are ignored in RoboKudo?
+        assert (
+            pose.header.stamp.nanosec == 0
+        )  # TODO: Nanoseconds are ignored in RoboKudo?
         assert pose.pose.position.x == pose_annotation.translation[0]
         assert pose.pose.position.y == pose_annotation.translation[1]
         assert pose.pose.position.z == pose_annotation.translation[2]
@@ -222,13 +253,17 @@ class TestUtilsAnnotationConversion(object):
 
         converter.convert(pose_annotation, cas_with_tf, od)
 
-        new_rotation = (R.from_quat(cam_to_world_quat) * R.from_quat(pose_annotation.rotation)).as_quat(True)
+        new_rotation = (
+            R.from_quat(cam_to_world_quat) * R.from_quat(pose_annotation.rotation)
+        ).as_quat(True)
 
         assert len(od.pose) == 1
         pose: PoseStamped = od.pose[0]
         assert pose.header.frame_id == "map"
         assert pose.header.stamp.sec == kinect_cam_info.header.stamp.sec
-        assert pose.header.stamp.nanosec == 0  # TODO: Nanoseconds are ignored in RoboKudo?
+        assert (
+            pose.header.stamp.nanosec == 0
+        )  # TODO: Nanoseconds are ignored in RoboKudo?
         assert pose.pose.position.x == pose_annotation.translation[2] + 0.5
         assert pose.pose.position.y == -pose_annotation.translation[0] + 0.5
         assert pose.pose.position.z == -pose_annotation.translation[1] + 0.5
@@ -329,7 +364,9 @@ class TestUtilsAnnotationConversion(object):
 
         converter.convert(bbox3d, cas, od)
 
-        assert od.size == ""  # TODO: Correct assertion when implementation of converter is complete
+        assert (
+            od.size == ""
+        )  # TODO: Correct assertion when implementation of converter is complete
         assert len(od.shape_size) == 1
         shape_size: ShapeSize = od.shape_size[0]
         assert shape_size.dimensions.x == float(bbox3d.x_length)
@@ -406,7 +443,19 @@ class TestUtilsAnnotationConversion(object):
         converter = Location2ODConverter()
 
         loc = LocationAnnotation()
-        loc.name = "some_weird_non_default_name"
+        loc.region = Region(name=PrefixedName(name="some_weird_non_default_name"))
+
+        converter.convert(loc, CAS(), od)
+
+        assert od.location == str(loc.region.name)
+
+    def test_location_2_od_converter_convert_with_legacy_name_fallback(self):
+        od = ObjectDesignator()
+
+        converter = Location2ODConverter()
+
+        loc = LocationAnnotation()
+        loc.name = "legacy_location_name"
 
         converter.convert(loc, CAS(), od)
 

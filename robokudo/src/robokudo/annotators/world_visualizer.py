@@ -15,20 +15,19 @@ import robokudo.annotators.core
 import robokudo.utils.annotator_helper
 import robokudo.utils.error_handling
 import robokudo.utils.o3d_helper
-import robokudo.utils.world_descriptor
+import robokudo.world as rk_world
 from robokudo.cas import CASViews
+from robokudo.world_descriptor import PredefinedObject
 from robokudo.utils.region import region_obb_in_cam_coordinates
 from semantic_digital_twin.world_description.world_entity import Body, Region
 
 
 class WorldVisualizer(robokudo.annotators.core.ThreadedAnnotator):
-    """Visualize predefined objects and regions from a world descriptor."""
+    """Visualize predefined objects and regions from the shared world."""
 
     class Descriptor(robokudo.annotators.core.BaseAnnotator.Descriptor):
         class Parameters:
             def __init__(self) -> None:
-                self.world_descriptor_ros_package: str = "robokudo"
-                self.world_descriptor_name: str = "world_iai_kitchen20"
                 self.visualize_objects: bool = True
                 self.visualize_regions: bool = True
 
@@ -40,13 +39,6 @@ class WorldVisualizer(robokudo.annotators.core.ThreadedAnnotator):
         descriptor: "WorldVisualizer.Descriptor" = Descriptor(),
     ) -> None:
         super().__init__(name=name, descriptor=descriptor)
-        self.world_descriptor = None
-        self.load_world_descriptor()
-
-    def load_world_descriptor(self) -> None:
-        self.world_descriptor = robokudo.utils.world_descriptor.load_world_descriptor(
-            self
-        )
 
     @staticmethod
     def _body_size(body: Body) -> np.ndarray | None:
@@ -64,8 +56,7 @@ class WorldVisualizer(robokudo.annotators.core.ThreadedAnnotator):
     def compute(self) -> py_trees.common.Status:
         start_timer = default_timer()
         cloud = self.get_cas().get(CASViews.CLOUD)
-
-        self.load_world_descriptor()
+        runtime_world = rk_world.world_instance()
 
         try:
             world_to_cam_transform = (
@@ -80,7 +71,13 @@ class WorldVisualizer(robokudo.annotators.core.ThreadedAnnotator):
         visualized_geometries = []
 
         if self.descriptor.parameters.visualize_objects:
-            for body in self.world_descriptor.get_predefined_object_bodies():
+            predefined_objects = runtime_world.get_semantic_annotations_by_type(
+                PredefinedObject
+            )
+            for predefined_object in predefined_objects:
+                body = predefined_object.body
+                if body is None:
+                    continue
                 size = self._body_size(body)
                 if size is None:
                     continue
@@ -92,16 +89,14 @@ class WorldVisualizer(robokudo.annotators.core.ThreadedAnnotator):
                 visualized_geometries.append({"name": str(body.name), "geometry": obb})
 
         if self.descriptor.parameters.visualize_regions:
-            regions = (
-                self.world_descriptor.world.get_kinematic_structure_entity_by_type(
-                    Region
-                )
-            )
+            regions = runtime_world.get_kinematic_structure_entity_by_type(Region)
             for region in regions:
                 obb = region_obb_in_cam_coordinates(
-                    self.world_descriptor.world, region, world_to_cam_transform
+                    runtime_world, region, world_to_cam_transform
                 )
-                visualized_geometries.append({"name": str(region.name), "geometry": obb})
+                visualized_geometries.append(
+                    {"name": str(region.name), "geometry": obb}
+                )
 
         visualized_geometries.append({"name": "cloud", "geometry": cloud})
 

@@ -15,12 +15,7 @@ from timeit import default_timer
 import open3d as o3d
 from py_trees.common import Status
 
-import robokudo.annotators
-import robokudo.annotators.core
-import robokudo.types.scene
-import robokudo.utils.annotator_helper
-import robokudo.utils.error_handling
-import robokudo.utils.world_descriptor
+import robokudo.world as rk_world
 from robokudo.annotators.core import ThreadedAnnotator, BaseAnnotator
 from robokudo.cas import CASViews
 from robokudo.types.scene import RegionHypothesis
@@ -41,22 +36,11 @@ class RegionFilter(ThreadedAnnotator):
         """Configuration descriptor for region filtering."""
 
         class Parameters:
-            """Parameters for configuring region filtering.
-            , defaults to "map"
-            :ivar world_descriptor_ros_package: , defaults to "robokudo"
-            :ivar world_descriptor_name: , defaults to "world_iai_kitchen20"
-            :ivar active_region: , empty for all regions
-            """
+            """Parameters for configuring region filtering."""
 
             def __init__(self) -> None:
                 self.world_frame_name: str = "map"
                 """Name of the world coordinate frame"""
-
-                self.world_descriptor_ros_package: str = "robokudo"
-                """ROS package containing world descriptor"""
-
-                self.world_descriptor_name: str = "world_iai_kitchen20"
-                """Name of world descriptor module. Should be in descriptors/worlds/."""
 
                 self.active_region: str = ""
                 """Name of active region to filter. Does not define a specific region but can be used to check the active regions."""
@@ -79,19 +63,8 @@ class RegionFilter(ThreadedAnnotator):
         self.world_frame_name: str = self.descriptor.parameters.world_frame_name
         """Name of the world coordinate frame read from parameters"""
 
-        self.world_descriptor = None
-        """The world descriptor instance"""
-
-        self.load_world_descriptor()
-
         self.active_region = self.descriptor.parameters.active_region
         """Name of the active region to filter read from parameters"""
-
-    def load_world_descriptor(self) -> None:
-        """Load world descriptor from configured package and module."""
-        self.world_descriptor = robokudo.utils.world_descriptor.load_world_descriptor(
-            self
-        )
 
     @catch_and_raise_to_blackboard
     def compute(self) -> Status:
@@ -118,11 +91,9 @@ class RegionFilter(ThreadedAnnotator):
         if self.get_cas().contains(CASViews.QUERY):
             query = self.get_cas().get(CASViews.QUERY)
 
-        self.load_world_descriptor()
+        runtime_world = rk_world.world_instance()
 
-        regions = self.world_descriptor.world.get_kinematic_structure_entity_by_type(
-            Region
-        )
+        regions = runtime_world.get_kinematic_structure_entity_by_type(Region)
         all_regions = {str(region.name): region for region in regions}
         active_regions = all_regions
 
@@ -138,8 +109,8 @@ class RegionFilter(ThreadedAnnotator):
                     active_regions[queried_location] = all_regions[queried_location]
                 except KeyError:
                     raise Exception(
-                    f"Couldn't find requested location {queried_location} in world descriptor"
-                )
+                        f"Couldn't find requested location {queried_location} in world descriptor"
+                    )
 
         visualized_geometries = []
         filtered_indices = set()
@@ -160,7 +131,7 @@ class RegionFilter(ThreadedAnnotator):
             region_hypothesis = RegionHypothesis()
 
             obb = region_obb_in_cam_coordinates(
-                self.world_descriptor.world, region, world_to_cam_transform
+                runtime_world, region, world_to_cam_transform
             )
             region_hypothesis.annotations.append(region_pose_annotation(region))
 

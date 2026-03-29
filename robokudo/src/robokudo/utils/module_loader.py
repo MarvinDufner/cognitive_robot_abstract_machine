@@ -33,12 +33,13 @@ from pathlib import Path
 
 from typing_extensions import TYPE_CHECKING, List, Any, Optional
 
-from robokudo.descriptors.camera_configs.base_camera_config import BaseCameraConfig
-
 if TYPE_CHECKING:
     from types import ModuleType
     from robokudo.analysis_engine import AnalysisEngineInterface
     from robokudo.world_descriptor import BaseWorldDescriptor
+    from robokudo.descriptors.camera_configs.base_camera_config import (
+        BaseCameraConfig,
+    )
 
 
 class RobokudoModuleType(enum.Enum):
@@ -152,6 +153,10 @@ class ModuleLoader:
         :param module_name: Name of camera config module
         :return: Loaded camera configuration
         """
+        from robokudo.descriptors.camera_configs.base_camera_config import (
+            BaseCameraConfig,
+        )
+
         module_type = RobokudoModuleType.CameraConfig
         loaded_module = self._load_module(ros_pkg_name, module_type, module_name)
         for name, obj in loaded_module.__dict__.items():

@@ -459,4 +459,7 @@ class Location2ODConverter(Annotation2ODConverter[LocationAnnotation]):
         cas: CAS,
         object_designator: ObjectDesignator,
     ) -> None:
+        if annotation.region is not None:
+            object_designator.location = str(annotation.region.name)
+            return
         object_designator.location = annotation.name

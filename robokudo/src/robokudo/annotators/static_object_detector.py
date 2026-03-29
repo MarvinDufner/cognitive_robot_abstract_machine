@@ -53,8 +53,8 @@ from robokudo.utils.transform import (
     get_quaternion_from_transform_matrix,
     get_quaternion_from_rotation_matrix,
 )
-from robokudo.utils.world_descriptor import load_world_descriptor
-from robokudo.world_descriptor import BaseWorldDescriptor
+import robokudo.world as rk_world
+from robokudo.world_descriptor import PredefinedObject
 from semantic_digital_twin.world_description.world_entity import Body
 
 if TYPE_CHECKING:
@@ -73,7 +73,7 @@ class StaticObjectDetectorAnnotator(BaseAnnotator):
     This annotator can:
 
     * Create object hypotheses at fixed locations using manual bounding box coordinates
-    * Load a world descriptor to automatically infer bounding boxes
+    * Read predefined objects from the shared world to automatically infer bounding boxes
     * Generate pose annotations in either camera or world coordinates
     * Create masks for the detected regions
 
@@ -133,15 +133,6 @@ class StaticObjectDetectorAnnotator(BaseAnnotator):
                 self.create_mask: bool = True
                 """If this is a true, a mask based on the ROI will be generated that marks every pixel as ON"""
 
-                self.world_descriptor_ros_package: str = "robokudo"
-                """If you use a world descriptor to generate the detection, provide the package name here"""
-
-                self.world_descriptor_name: str = "world_iai_kitchen20"
-                """If you use a world descriptor to generate the detection, provide the descriptor name here"""
-
-                self.object_knowledge_instance: Optional[Body] = None
-                """Optional direct SDT Body override (reserved for future use)."""
-
         # Overwrite the parameters explicitly to enable auto-completion
         parameters = Parameters()
 
@@ -161,7 +152,6 @@ class StaticObjectDetectorAnnotator(BaseAnnotator):
         self.depth: Optional[npt.NDArray] = None
         self.cloud: Optional[o3d.geometry.PointCloud] = None
         self.cam_intrinsics = None
-        self.world_descriptor: Optional[BaseWorldDescriptor] = None
         self.object_body: Optional[Body] = None
         self.object_bodies_by_name: Dict[str, Body] = {}
 
@@ -371,15 +361,21 @@ class StaticObjectDetectorAnnotator(BaseAnnotator):
         world_frame_required = False
         world_to_cam_transform_matrix = None
         if self.descriptor.parameters.mode == StaticObjectMode.WORLD_DESCRIPTOR:
-            self.world_descriptor = load_world_descriptor(
-                self
+            predefined_object_annotations = (
+                rk_world.world_instance().get_semantic_annotations_by_type(
+                    PredefinedObject
+                )
             )
-            object_bodies = self.world_descriptor.get_predefined_object_bodies()
+            object_bodies = [
+                annotation.body
+                for annotation in predefined_object_annotations
+                if annotation.body is not None
+            ]
             self.object_bodies_by_name = {
                 self._body_name(body): body for body in object_bodies
             }
             self.rk_logger.info(
-                f"Loaded world descriptor bodies: {list(self.object_bodies_by_name.keys())}"
+                f"Loaded shared world descriptor bodies: {list(self.object_bodies_by_name.keys())}"
             )
 
             # Do some sanity checks and quit early if necessary

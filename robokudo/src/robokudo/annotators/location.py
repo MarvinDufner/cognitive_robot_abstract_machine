@@ -29,7 +29,7 @@ from robokudo.types.annotation import LocationAnnotation
 from robokudo.types.scene import ObjectHypothesis
 from robokudo.utils.annotator_helper import get_world_to_cam_transform_matrix
 from robokudo.utils.error_handling import catch_and_raise_to_blackboard
-import robokudo.utils.world_descriptor
+import robokudo.world as rk_world
 from robokudo.utils.region import region_obb_in_cam_coordinates
 from semantic_digital_twin.world_description.world_entity import Region
 
@@ -67,12 +67,6 @@ class LocationAnnotator(ThreadedAnnotator):
                 self.world_frame_name: str = "map"
                 """Name of the world coordinate frame"""
 
-                self.world_descriptor_ros_package: str = "robokudo"
-                """ROS package containing world descriptor"""
-
-                self.world_descriptor_name: str = "world_iai_kitchen20"
-                """Name of world descriptor. Should be in descriptors/worlds/"""
-
                 self.desired_regions: List[str] = ["kitchen_island"]
                 """List of region names to consider. Leave empty to include all regions."""
 
@@ -90,20 +84,9 @@ class LocationAnnotator(ThreadedAnnotator):
         :param descriptor: Configuration descriptor, defaults to Descriptor()
         """
         super().__init__(name=name, descriptor=descriptor)
-        self.load_world_descriptor()
-
-        self.world_descriptor = None
-        """The currently loaded world descriptor instance."""
-
-    def load_world_descriptor(self) -> None:
-        """Load a world descriptor from the configured package and name."""
-        self.world_descriptor = robokudo.utils.world_descriptor.load_world_descriptor(
-            self
-        )
 
     def add_location_in_object_hypotheses(
         self,
-        region_name: str,
         region: Region,
         world_to_cam_transform_matrix: npt.NDArray,
         object_hypotheses: Iterable[ObjectHypothesis],
@@ -117,13 +100,13 @@ class LocationAnnotator(ThreadedAnnotator):
         * Calculates containment percentage
         * Creates location annotation if above threshold
 
-        :param region_name: Name of the region to check
         :param region: Semantic map region entry
         :param world_to_cam_transform_matrix: Transform from world to camera frame
         :param object_hypotheses: List of object hypotheses to check
         """
+        runtime_world = rk_world.world_instance()
         obb = region_obb_in_cam_coordinates(
-            self.world_descriptor.world, region, world_to_cam_transform_matrix
+            runtime_world, region, world_to_cam_transform_matrix
         )
         for object_hypothesis in object_hypotheses:
             # Extract the indices of an object that lies inside the region
@@ -139,8 +122,8 @@ class LocationAnnotator(ThreadedAnnotator):
             if percentage_indices_inside >= self.descriptor.parameters.percentage:
                 # Create a location annotation object
                 location_annotation = LocationAnnotation()
-                # Insert the region name to the location annotation
-                location_annotation.name = region_name
+                location_annotation.region = region
+                location_annotation.name = str(region.name)
                 object_hypothesis.annotations.append(location_annotation)
 
     @catch_and_raise_to_blackboard
@@ -159,10 +142,8 @@ class LocationAnnotator(ThreadedAnnotator):
         :return: SUCCESS after processing
         """
         start_timer = default_timer()
-        self.load_world_descriptor()
-        regions = self.world_descriptor.world.get_kinematic_structure_entity_by_type(
-            Region
-        )
+        runtime_world = rk_world.world_instance()
+        regions = runtime_world.get_kinematic_structure_entity_by_type(Region)
         active_regions = {str(region.name): region for region in regions}
         # TODO Filter active regions by FRUSTUM CULLING
 
@@ -175,7 +156,6 @@ class LocationAnnotator(ThreadedAnnotator):
 
             if len(self.descriptor.parameters.desired_regions) == 0:
                 self.add_location_in_object_hypotheses(
-                    region_name,
                     region,
                     world_to_cam_transform_matrix,
                     object_hypotheses,
@@ -183,7 +163,6 @@ class LocationAnnotator(ThreadedAnnotator):
 
             elif region_name in self.descriptor.parameters.desired_regions:
                 self.add_location_in_object_hypotheses(
-                    region_name,
                     region,
                     world_to_cam_transform_matrix,
                     object_hypotheses,

@@ -24,6 +24,7 @@ from robokudo.types.tf import (
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+    from semantic_digital_twin.world_description.world_entity import Region
 
 
 @dataclass
@@ -78,12 +79,17 @@ class SemanticColor(Annotation):
 class LocationAnnotation(Annotation):
     """Location annotation for objects.
 
-    This class represents a named location in the environment.
+    This class represents a semantic location in the environment.
+    """
+
+    region: Region | None = None
+    """
+    Referenced semantic region
     """
 
     name: str = ""
     """
-    Name of the location
+    Legacy fallback location name
     """
 
 
