@@ -61,7 +61,7 @@ jobs:
 
       - name: Build ROS2 packages
         run: |
-          cd /opt/ros/cognitive_robot_abstract_machine
+          pwd
           ll
           source /opt/ros/overlay_ws/install/setup.bash
           source /opt/ros/cram-env/bin/activate
