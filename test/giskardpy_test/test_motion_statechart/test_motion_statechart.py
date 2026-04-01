@@ -4013,11 +4013,9 @@ class TestCollisionAvoidance:
 
         kin_sim.tick_until_end(500)
 
-    def test_tracy_arm_does_not_penetrate_obstacle(self, tracy_world, rclpy_node):
+    def test_collision_for_robot_with_static_base(self, tracy_world):
         world = deepcopy(tracy_world)
         robot = Tracy.from_world(world)
-
-        VizMarkerPublisher(_world=world, node=rclpy_node).with_tf_publisher()
 
         tool_frame = world.get_body_by_name("r_gripper_tool_frame")
         with world.modify_world():
@@ -4047,7 +4045,7 @@ class TestCollisionAvoidance:
                         goal_point=Point3(0.5, 0.5, 1, reference_frame=world.root),
                     ),
                     ExternalCollisionAvoidance(robot=robot),
-                    SelfCollisionAvoidance(),
+                    SelfCollisionAvoidance(robot=robot),
                 ],
                 minimum_success=1,
             )
