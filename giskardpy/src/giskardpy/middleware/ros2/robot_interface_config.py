@@ -3,8 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Union
 
-from controller_manager_msgs.msg import ControllerState
-from controller_manager_msgs.srv._list_controllers import ListControllers_Response
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
@@ -179,6 +177,9 @@ class RobotInterfaceConfig(ABC):
         :param whitelist: list all controllers that should get added, if None, giskard will search automatically
         """
         import controller_manager as cm
+        from controller_manager_msgs.srv._list_controllers import (
+            ListControllers_Response,
+        )
 
         controllers: ListControllers_Response = cm.list_controllers(
             node=rospy.node, controller_manager_name=controller_manager_name
@@ -214,8 +215,10 @@ class RobotInterfaceConfig(ABC):
                     self.add_base_cmd_velocity(controller.name)
 
     def __filter_controllers_with_whitelist(
-        self, controllers: List[ControllerState], whitelist: Optional[List[str]]
-    ) -> List[ControllerState]:
+        self, controllers: list, whitelist: Optional[List[str]]
+    ) -> list:
+        from controller_manager_msgs.msg import ControllerState
+
         controllers_to_add: List[ControllerState]
         if whitelist is None:
             return controllers

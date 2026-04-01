@@ -65,14 +65,8 @@ jobs:
           source /opt/ros/overlay_ws/install/setup.bash
           cd /opt/ros/overlay_ws/src
           ln -s "${GITHUB_WORKSPACE}/cognitive_robot_abstract_machine/cram_ros2_packages" cram_ros2_packages
+          cd ..
           colcon build --merge-install
-          echo "PYTHONPATH: $PYTHONPATH"
-          pip list | grep json
-          source /opt/ros/overlay_ws/install/setup.bash
-          pip list | grep json
-
-      - name: Setup upterm session
-        uses: owenthereal/action-upterm@v1
 
       - name: Run tests
         run: |
