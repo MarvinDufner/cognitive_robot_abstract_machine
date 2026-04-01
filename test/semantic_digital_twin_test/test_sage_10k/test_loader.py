@@ -20,3 +20,8 @@ def test_loader(rclpy_node):
     # )
     # pub.with_tf_publisher()
     print([type(a) for a in world.semantic_annotations])
+    from semantic_digital_twin.spatial_computations.raytracer import RayTracer
+
+    rt = RayTracer(world)
+    rt.update_scene()
+    rt.scene.show("gl")

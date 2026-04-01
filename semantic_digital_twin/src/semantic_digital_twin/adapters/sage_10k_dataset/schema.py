@@ -17,7 +17,11 @@ from krrood.utils import get_full_class_name
 from krrood.adapters.exceptions import JSON_TYPE_NAME
 from krrood.adapters.json_serializer import SubclassJSONSerializer, to_json, from_json
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Floor, Wall
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Floor,
+    Wall,
+    Door,
+)
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
@@ -407,7 +411,7 @@ class Sage10kDoor(SubclassJSONSerializer):
 
     position_on_wall: float
     """
-    Position on wall as percentage of total length?
+    Position on wall w. r. t. its starting point in meters?
     """
 
     width: float
@@ -474,15 +478,53 @@ class Sage10kDoor(SubclassJSONSerializer):
             door_material=data["door_material"],
         )
 
-    def create_in_world(self, world: World, directory_path: Path, parent: Body) -> Body:
+    def create_in_world(
+        self,
+        world: World,
+        directory_path: Path,
+        parent: Body,
+        sage_10k_wall: Sage10kWall,
+    ) -> Door:
         """
-        The parent is the wall always.
-        :param world:
-        :param directory_path:
-        :param parent:
-        :return:
+        The parent is the wall body always.
         """
-        ...
+        name = PrefixedName(name=self.id, prefix=sage_10k_wall.id)
+
+        scale = Scale(x=sage_10k_wall.thickness, y=self.width, z=self.height)
+
+        parent_T_body = HomogeneousTransformationMatrix.from_xyz_rpy(
+            y=self.position_on_wall,
+            reference_frame=parent,
+        )
+
+        with world.modify_world():
+            annotation = Door.create_with_new_body_in_world(
+                name=name,
+                scale=scale,
+                world=world,
+                world_root_T_self=parent_T_body,
+            )
+
+        body = annotation.root
+
+        geometry_with_texture = ShapeCollection(
+            [
+                Mesh.from_trimesh(
+                    origin=HomogeneousTransformationMatrix(reference_frame=body),
+                    mesh=body.collision.combined_mesh,
+                    texture_file_path=str(
+                        directory_path
+                        / "materials"
+                        / f"{self.door_material}_texture.png"
+                    ),
+                )
+            ],
+            reference_frame=body,
+        )
+        body.collision = geometry_with_texture
+        body.visual = geometry_with_texture
+
+        return annotation
 
 
 @dataclass
@@ -577,10 +619,10 @@ class Sage10kRoom(SubclassJSONSerializer):
 
             # create doors
             for door in doors_of_this_wall:
-                door.create_in_world(world, directory_path, wall_annotation.root)
+                door.create_in_world(world, directory_path, wall_annotation.root, wall)
 
         # create the objects
-        for sage_object in tqdm.tqdm(self.objects, desc=f"Parsing objects"):
+        for sage_object in self.objects:
             sage_object.create_in_world(world, directory_path, parent=parent)
 
         return world.root
