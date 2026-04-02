@@ -13,12 +13,6 @@ from semantic_digital_twin.adapters.sage_10k_dataset.schema import Sage10kScene
 class Sage10kDatasetLoader:
     """
     Loader for scenes from the Sage10k dataset.
-
-    """
-
-    scene_url: str
-    """
-    The URL where the scene is located.
     """
 
     directory: Path = field(default_factory=lambda: Path.home() / "sage-10k-scenes")
@@ -26,21 +20,21 @@ class Sage10kDatasetLoader:
     The directory where the scene should be downloaded to.
     """
 
-    def _download_scene(self) -> Path:
+    def _download_scene(self, scene_url: str) -> Path:
         """
         Download the scene from the Sage10k dataset and return it as a Path.
         :return: The path to the scene downloaded.
         """
         self.directory.mkdir(parents=True, exist_ok=True)
 
-        filename = Path(urlparse(self.scene_url).path).name
+        filename = Path(urlparse(scene_url).path).name
         target_path = self.directory / filename
 
         # check if the target file already exists
         if target_path.exists():
             return target_path
 
-        with requests.get(self.scene_url, stream=True, timeout=60) as response:
+        with requests.get(scene_url, stream=True, timeout=60) as response:
             response.raise_for_status()
             with target_path.open("wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -88,16 +82,18 @@ class Sage10kDatasetLoader:
         raw_json = json_file.read_text()
         json_dict = json.loads(raw_json)
         result = Sage10kScene._from_json(json_dict)
-        result.directory_path = extracted_dir
+        result.directory = extracted_dir
+
         return result
 
-    def create_scene(self) -> Sage10kScene:
+    def create_scene(self, scene_url: str) -> Sage10kScene:
         """
         Create a scene from the given URL by downloading it and loading it into the memory.
 
+        :param scene_url: The URL of the scene to be loaded.
         :return: The Sage10kScene object.
         """
-        target_path = self._download_scene()
+        target_path = self._download_scene(scene_url)
         unzipped = self._unzip_scene(target_path)
         scene = self._parse_json(unzipped)
         return scene
@@ -108,6 +104,7 @@ class Sage10kDatasetLoader:
     ) -> list[str]:
         """
         Use this to select random scenes from the dataset.
+        Requires the extra requirement huggingface_hu.
 
         :param repository: The repo id of the dataset.
         :param folder_path: The path to the folder containing the scenes in the repository.

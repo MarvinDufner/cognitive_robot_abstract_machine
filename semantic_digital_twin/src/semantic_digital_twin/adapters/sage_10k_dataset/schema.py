@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Any, Self
 
-import trimesh
-import trimesh.visual
 from typing_extensions import Optional, Tuple, assert_never
 
 from krrood.adapters.exceptions import JSON_TYPE_NAME
@@ -25,7 +23,7 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     Connection6DoF,
 )
-from semantic_digital_twin.world_description.geometry import Mesh, Scale, Box, Color
+from semantic_digital_twin.world_description.geometry import Mesh, Scale, Box
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import (
     Body,
@@ -59,7 +57,7 @@ class Sage10kWithID(Sage10kBase):
     def create_in_world(
         self,
         world: World,
-        directory_path: Path,
+        directory: Path,
         parent: KinematicStructureEntity,
         **kwargs,
     ) -> WorldEntity:
@@ -68,7 +66,7 @@ class Sage10kWithID(Sage10kBase):
         Spawn bodies, regions, connections, and semantic annotations.
 
         :param world: The world to create the instances in.
-        :param directory_path: The directory where the `layout*.json` and all its referenced files are found.
+        :param directory: The directory where the `layout*.json` and all its referenced files are found.
         :param parent: The parent of the newly created entities
 
         :return: The relevant created body
@@ -267,7 +265,7 @@ class Sage10kWall(Sage10kWithID):
             assert_never(self)
         return wall_length, yaw
 
-    def create_in_world(self, world: World, directory_path: Path, parent: Body) -> Wall:
+    def create_in_world(self, world: World, directory: Path, parent: Body) -> Wall:
         wall_name = PrefixedName(name=self.id)
 
         wall_length, yaw = self.wall_length_and_yaw
@@ -301,7 +299,7 @@ class Sage10kWall(Sage10kWithID):
                     origin=HomogeneousTransformationMatrix(reference_frame=body),
                     mesh=body.collision.combined_mesh,
                     texture_file_path=str(
-                        directory_path / "materials" / f"{self.material}.png"
+                        directory / "materials" / f"{self.material}.png"
                     ),
                 )
             ],
@@ -366,9 +364,11 @@ class Sage10kObject(Sage10kWithID):
     Physical rendering parameters. Currently unused
     """
 
-    def create_in_world(self, world: World, directory_path: Path, parent: Body) -> Body:
-        ply_file = directory_path / "objects" / f"{self.source_id}.ply"
-        texture_file = directory_path / "objects" / f"{self.source_id}_texture.png"
+    def create_in_world(
+        self, world: World, directory: Path, parent: KinematicStructureEntity, **kwargs
+    ) -> Body:
+        ply_file = directory / "objects" / f"{self.source_id}.ply"
+        texture_file = directory / "objects" / f"{self.source_id}_texture.png"
         body = Body(name=PrefixedName(self.id))
 
         # Define the pose for the object in the world
@@ -522,13 +522,14 @@ class Sage10kDoor(Sage10kWithID):
     def create_in_world(
         self,
         world: World,
-        directory_path: Path,
-        parent: Body,
+        directory: Path,
+        parent: KinematicStructureEntity,
         sage_10k_wall: Sage10kWall,
         wall_annotation: Wall,
+        **kwargs,
     ) -> Door:
         """
-        The parent is always the wall body.
+        The parent must always be the wall body.
 
         :param sage_10k_wall: The sage 10k wall that is referenced by `self.wall_id`.
         :param wall_annotation: The wall annotation created in `world` before this call.
@@ -562,9 +563,7 @@ class Sage10kDoor(Sage10kWithID):
                     origin=HomogeneousTransformationMatrix(reference_frame=body),
                     mesh=body.collision.combined_mesh,
                     texture_file_path=str(
-                        directory_path
-                        / "materials"
-                        / f"{self.door_material}_texture.png"
+                        directory / "materials" / f"{self.door_material}_texture.png"
                     ),
                 )
             ],
@@ -580,7 +579,14 @@ class Sage10kDoor(Sage10kWithID):
         self._create_hinge_in_world(world, annotation)
         return annotation
 
-    def _create_handle_in_world(self, world: World, door: Door):
+    def _create_handle_in_world(self, world: World, door: Door) -> Handle:
+        """
+        Create the handle of the door.
+
+        :param world: The world where the handle is created.
+        :param door: The door to create the handle for.
+        :return: The handle of the door.
+        """
         door_T_handle = HomogeneousTransformationMatrix.from_xyz_rpy(
             y=0.1,
             reference_frame=door.root,
@@ -596,8 +602,15 @@ class Sage10kDoor(Sage10kWithID):
                 scale=Scale(x=0.1, y=0.1, z=0.05),
             )
             door.add_handle(handle)
+        return handle
 
-    def _create_hinge_in_world(self, world: World, door: Door):
+    def _create_hinge_in_world(self, world: World, door: Door) -> Hinge:
+        """
+        Create the hinge (the joint that makes the door openable) of the door.
+        :param world: The world where the hinge is created.
+        :param door: The door to create the hinge for.
+        :return: The hinge
+        """
         world_root_T_hinge = door.calculate_world_T_hinge_based_on_handle(Vector3.Z())
 
         with world.modify_world():
@@ -653,7 +666,17 @@ class Sage10kRoom(Sage10kWithID):
     The doors of the room
     """
 
-    def _create_floor(self, world: World, directory_path: Path, parent: Body):
+    def _create_floor(
+        self, world: World, directory: Path, parent: KinematicStructureEntity
+    ) -> Floor:
+        """
+        Create the floor of this room.
+
+        :param world: The world to create the floor in.
+        :param directory: The directory of this scene
+        :param parent: The parent kinematic structure entity.
+        :return: The annotation of the created floor.
+        """
         # create the floor
         floor_name = PrefixedName(name="floor", prefix=self.id)
         floor_mesh = Box(
@@ -687,7 +710,7 @@ class Sage10kRoom(Sage10kWithID):
                     origin=HomogeneousTransformationMatrix(reference_frame=floor_body),
                     mesh=floor_mesh,
                     texture_file_path=str(
-                        directory_path / "materials" / f"{self.floor_material}.png"
+                        directory / "materials" / f"{self.floor_material}.png"
                     ),
                 )
             ],
@@ -696,14 +719,16 @@ class Sage10kRoom(Sage10kWithID):
         floor_body.collision = floor_geometry_with_texture
         floor_body.visual = floor_geometry_with_texture
 
-        return floor_body
+        return floor_annotation
 
-    def create_in_world(self, world: World, directory_path: Path, parent: Body) -> Body:
-        self._create_floor(world, directory_path, parent)
+    def create_in_world(
+        self, world: World, directory: Path, parent: KinematicStructureEntity, **kwargs
+    ) -> Body:
+        self._create_floor(world, directory, parent)
 
         # create walls
         for wall in self.walls:
-            wall_annotation = wall.create_in_world(world, directory_path, parent)
+            wall_annotation = wall.create_in_world(world, directory, parent)
             doors_of_this_wall = [
                 door for door in self.doors if door.wall_id == wall.id
             ]  # join doors on this wall
@@ -711,12 +736,12 @@ class Sage10kRoom(Sage10kWithID):
             # create doors
             for door in doors_of_this_wall:
                 door.create_in_world(
-                    world, directory_path, wall_annotation.root, wall, wall_annotation
+                    world, directory, wall_annotation.root, wall, wall_annotation
                 )
 
         # create the objects
         for sage_object in self.objects:
-            sage_object.create_in_world(world, directory_path, parent=parent)
+            sage_object.create_in_world(world, directory, parent=parent)
 
         return world.root
 
@@ -778,10 +803,10 @@ class Sage10kScene(Sage10kWithID):
     The rooms of the scene.
     """
 
-    directory_path: Optional[Path] = None
+    directory: Optional[Path] = None
     """
-    The directory path of the scenes json file.
-    Usually named like `layout*.json`.
+    The directory of the scenes json file.
+    The layout files are named like `layout*.json`.
     """
 
     def to_json(self) -> Dict[str, Any]:
@@ -815,7 +840,5 @@ class Sage10kScene(Sage10kWithID):
             world.add_body(root)
 
         for room in self.rooms:
-            room.create_in_world(
-                world=world, directory_path=self.directory_path, parent=root
-            )
+            room.create_in_world(world=world, directory=self.directory, parent=root)
         return world

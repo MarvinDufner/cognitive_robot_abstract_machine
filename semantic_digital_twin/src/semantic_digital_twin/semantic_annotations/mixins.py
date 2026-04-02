@@ -443,8 +443,6 @@ class HasApertures(HasRootBody, ABC):
         :param aperture: The aperture whose geometry should be removed.
         """
 
-        import plotly.graph_objects as go
-
         world = self._world
         world.update_forward_kinematics()
         hole_event = aperture.root.area.as_bounding_box_collection_in_frame(
