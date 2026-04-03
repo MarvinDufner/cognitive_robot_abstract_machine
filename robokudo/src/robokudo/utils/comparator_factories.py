@@ -9,6 +9,7 @@ from robokudo.types.annotation import (
     StampedPositionAnnotation,
     StampedPoseAnnotation,
     StampedTransformAnnotation,
+    PoseAnnotation,
 )
 from robokudo.types.core import Annotation
 from robokudo.types.core import Type as RkType
@@ -31,7 +32,6 @@ from robokudo.utils.comparators import (
     TranslationComparator,
     PoseComparator,
 )
-from test.krrood_test.dataset.cyclic_imports import PoseAnnotation
 
 
 class FeatureComparatorFactory:
@@ -42,7 +42,6 @@ class FeatureComparatorFactory:
         Classification: ClassificationComparator,
         ColorHistogram: HistogramComparator,
         SemanticColor: SemanticColorComparator,
-        ImageROI: ImageROIComparator,
         PositionAnnotation: TranslationComparator,
         StampedPositionAnnotation: TranslationComparator,
         PoseAnnotation: PoseComparator,
@@ -53,6 +52,7 @@ class FeatureComparatorFactory:
 
     type_comparators: Dict[Type[RkType], Type[FeatureComparator]] = {
         Rect: RoiComparator,
+        ImageROI: ImageROIComparator,
         Position: TranslationComparator,
         StampedPosition: TranslationComparator,
         Pose: PoseComparator,
@@ -63,7 +63,7 @@ class FeatureComparatorFactory:
 
     @classmethod
     def for_annotation(
-        cls, annotation: Type[Annotation], weight: float
+        cls, annotation: Type[Annotation], weight: float, **kwargs
     ) -> Optional[FeatureComparator]:
         """Get a feature comparator for the given annotation type and assign it the given weight.
 
@@ -73,11 +73,13 @@ class FeatureComparatorFactory:
         """
         if annotation not in cls.annotator_comparators:
             return None
-        return FeatureComparatorFactory.annotator_comparators[annotation](weight)
+        return FeatureComparatorFactory.annotator_comparators[annotation](
+            weight, **kwargs
+        )
 
     @classmethod
     def for_type(
-        cls, rk_type: Type[RkType], weight: float
+        cls, rk_type: Type[RkType], weight: float, **kwargs
     ) -> Optional[FeatureComparator]:
         """Get a feature comparator for the given robokudo type and assign it the given weight.
 
@@ -85,6 +87,6 @@ class FeatureComparatorFactory:
         :param weight: The weight to assign the annotation type.
         :return: A feature comparator instance for the given annotation type or None if the type is not supported.
         """
-        if rk_type not in cls.annotator_comparators:
+        if rk_type not in cls.type_comparators:
             return None
-        return FeatureComparatorFactory.annotator_comparators[rk_type](weight)
+        return FeatureComparatorFactory.type_comparators[rk_type](weight, **kwargs)
