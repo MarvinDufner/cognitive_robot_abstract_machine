@@ -129,7 +129,7 @@ class IndexBox:
         mins = origin + pitch * np.array([self.x0, self.y0, self.z0], dtype=float)
         maxs = origin + pitch * np.array([self.x1, self.y1, self.z1], dtype=float)
         position = (mins + maxs) / 2.0
-        size = (maxs - mins) / 2.0
+        size = maxs - mins
         return FrozenBox(
             x=float(position[0]),
             y=float(position[1]),
@@ -628,9 +628,6 @@ class BoxDecomposer(MeshDecomposer):
                     box.x,
                     box.y,
                     box.z,
-                    0,
-                    0,
-                    0,
                     reference_frame=mesh.origin.reference_frame,
                 ),
                 scale=box.scale,

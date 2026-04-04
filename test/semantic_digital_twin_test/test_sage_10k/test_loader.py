@@ -9,10 +9,6 @@ from semantic_digital_twin.adapters.sage_10k_dataset.schema import Sage10kScene
 from semantic_digital_twin.pipeline.mesh_decomposition.box_decomposer import (
     BoxDecomposer,
 )
-from semantic_digital_twin.pipeline.mesh_decomposition.coacd import (
-    PreprocessingMode,
-    COACDMeshDecomposer,
-)
 from semantic_digital_twin.pipeline.pipeline import Pipeline
 from semantic_digital_twin.world import World
 
@@ -61,7 +57,7 @@ def test_different_decomposition_methods(
     for room in scene.rooms:
         new_objects = []
         for obj in room.objects:
-            if obj.type in ["bookshelf"]:  # , "sideboard", "table"]:
+            if obj.type in ["bookshelf", "sideboard", "table"]:
                 new_objects.append(obj)
         room.objects = new_objects
 
