@@ -1153,6 +1153,18 @@ class TestCollisionAvoidanceGoals:
                 x=0.15, y=-0.04, reference_frame=pocky_pose_setup.r_tip
             ),
         )
+        pocky_pose_setup.giskard.world_config.world.get_kinematic_structure_entity_by_name(
+            "box"
+        )
+        pocky_pose_setup.giskard.world_config.world.get_kinematic_structure_entity_by_name(
+            "b1"
+        )
+        pocky_pose_setup.giskard.world_config.world.get_kinematic_structure_entity_by_name(
+            "bl"
+        )
+        pocky_pose_setup.giskard.world_config.world.get_kinematic_structure_entity_by_name(
+            "br"
+        )
 
         box = pocky_pose_setup.api.world.get_kinematic_structure_entity_by_name("box")
 
