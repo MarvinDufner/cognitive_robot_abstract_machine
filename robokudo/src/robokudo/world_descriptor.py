@@ -8,19 +8,18 @@ It builds semantic_digital_twin entities into a shared World instance.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from typing_extensions import Any, Dict, List, Optional
-
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import Connection6DoF
-from semantic_digital_twin.world_description.geometry import Box, FileMesh, Scale, Color
+from semantic_digital_twin.world_description.geometry import Box, Mesh, Scale, Color
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import (
     Body,
     Region,
     SemanticAnnotation,
 )
+from typing_extensions import Any, Dict, List, Optional
 
 
 @dataclass
@@ -82,7 +81,7 @@ class BaseWorldDescriptor:
                 self.world.add_body(body=root)
 
     @staticmethod
-    def _center_mesh_origin(mesh: FileMesh) -> None:
+    def _center_mesh_origin(mesh: Mesh) -> None:
         """Shift mesh origin to the center of its local bounding box."""
         bb = mesh.local_frame_bounding_box
         center_x = (bb.min_x + bb.max_x) / 2
@@ -102,7 +101,7 @@ class BaseWorldDescriptor:
                 collision: ShapeCollection
 
                 if spec.mesh_path is not None:
-                    mesh = FileMesh(
+                    mesh = Mesh(
                         origin=HomogeneousTransformationMatrix(),
                         filename=str(spec.mesh_path),
                     )
