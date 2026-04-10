@@ -56,7 +56,7 @@ jobs:
         if: ${{inputs.lib == 'random_events'}}
         run: |
           cd cognitive_robot_abstract_machine/${{ inputs.lib }}/src/random_events_lib
-          sudo apt-get install g++ unzip zip
+          sudo apt-get install -y g++ unzip zip
           BAZEL_VERSION=7.0.0
           curl -L -o bazel.sh \
             https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-installer-linux-x86_64.sh
