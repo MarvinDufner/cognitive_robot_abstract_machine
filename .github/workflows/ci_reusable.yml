@@ -62,7 +62,7 @@ jobs:
             https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-installer-linux-x86_64.sh
           chmod +x bazel.sh
           ./bazel.sh --user
-          echo "$HOME/bin" >> $GITHUB_PATH
+          export PATH="$HOME/bin:$PATH"
           
           bazel build //test:test_all
           bazel test //test:test_all
