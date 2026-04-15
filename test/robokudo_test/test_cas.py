@@ -1,27 +1,12 @@
-import pytest
-
 import robokudo.cas
 import robokudo.types.annotation
 import robokudo.types.scene
 
 
-@pytest.fixture(scope="module")
-def module_setup(request):
-    pass
-
-
-@pytest.fixture()
-def function_setup(request, module_setup):
-    """
-    :rtype: WorldObject
-    """
-    pass
-
-
 class TestCASObject(object):
     cls = robokudo.cas.CAS
 
-    def test_annotations(self, function_setup):
+    def test_annotations(self):
         cas = self.cls()
 
         classification = robokudo.types.annotation.Classification()
@@ -48,7 +33,7 @@ class TestCASObject(object):
         assert color_list[0] == color1
         assert color_list[1] == color2
 
-    def test_ohs_with_criteria(self, function_setup):
+    def test_ohs_with_criteria(self):
         cas = self.cls()
 
         classification = robokudo.types.annotation.Classification()

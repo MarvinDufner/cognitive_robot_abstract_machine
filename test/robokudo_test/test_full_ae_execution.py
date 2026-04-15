@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import py_trees
-import pytest
 
 import robokudo.cas
 import robokudo.defs
@@ -21,19 +20,6 @@ from robokudo.annotators.pointcloud_cluster_extractor import PointCloudClusterEx
 from robokudo.annotators.pointcloud_crop import PointcloudCropAnnotator
 from robokudo.descriptors import CrDescriptorFactory
 from robokudo.pipeline import Pipeline
-
-
-@pytest.fixture(scope="module")
-def module_setup(request):
-    pass
-
-
-@pytest.fixture()
-def function_setup(request, module_setup):
-    """
-    :rtype: WorldObject
-    """
-    pass
 
 
 class TestFullAEExecution(object):

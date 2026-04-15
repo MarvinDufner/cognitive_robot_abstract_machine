@@ -1,5 +1,4 @@
 import py_trees
-import pytest
 
 from robokudo.annotators.core import BaseAnnotator
 from robokudo.annotators.testing import (
@@ -8,19 +7,6 @@ from robokudo.annotators.testing import (
     SlowAnnotator,
 )
 from robokudo.pipeline import Pipeline
-
-
-@pytest.fixture(scope="module")
-def module_setup(request):
-    pass
-
-
-@pytest.fixture()
-def function_setup(request, module_setup):
-    """
-    :rtype: WorldObject
-    """
-    pass
 
 
 def create_test_tree():
@@ -38,7 +24,7 @@ def create_test_tree():
 
 
 class TestPipeline(object):
-    def test_find_cas_direct(self, function_setup):
+    def test_find_cas_direct(self):
         root = Pipeline("Sequence")
         annotator1 = BaseAnnotator("1")
         annotator2 = BaseAnnotator("2")
@@ -47,7 +33,7 @@ class TestPipeline(object):
 
         assert root.cas == annotator1.get_cas()
 
-    def test_find_cas_from_deeper_leaf(self, function_setup):
+    def test_find_cas_from_deeper_leaf(self):
         root = Pipeline("Sequence")
         annotator1 = BaseAnnotator("1")
         annotator2 = BaseAnnotator("2")
@@ -66,7 +52,7 @@ class TestPipeline(object):
 
         assert root.cas == annotatorInSelector.get_cas()
 
-    def test_get_annotators_nested(self, function_setup):
+    def test_get_annotators_nested(self):
         root = Pipeline("Sequence")
         annotator1 = BaseAnnotator("1")
         annotator3 = BaseAnnotator("3")
@@ -81,7 +67,7 @@ class TestPipeline(object):
 
         assert root.get_annotators() == [annotator1, annotator2, annotator3]
 
-    def test_pipeline_children1(self, function_setup):
+    def test_pipeline_children1(self):
         root = Pipeline("Sequence")
         annotator1 = BaseAnnotator("1")
         annotator3 = BaseAnnotator("3")
@@ -101,7 +87,7 @@ class TestPipeline(object):
             annotator3,
         ]
 
-    def test_pipeline_children2(self, function_setup):
+    def test_pipeline_children2(self):
         root = Pipeline("Sequence")
         annotator1 = BaseAnnotator("1")
         annotator3 = BaseAnnotator("3")
@@ -116,7 +102,7 @@ class TestPipeline(object):
 
         assert root.pipeline_children() == [annotator1, annotator3]
 
-    def test_pipeline_children3(self, function_setup):
+    def test_pipeline_children3(self):
         root = Pipeline("Sequence")
         annotator1 = BaseAnnotator("1")
         annotator3 = BaseAnnotator("3")

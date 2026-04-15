@@ -8,6 +8,11 @@ import robokudo.defs
 
 @pytest.fixture(scope="session", autouse=True)
 def ros_default():
+    # RoboKudo keeps its own ROS lifecycle fixture on purpose.
+    # We do not use test/conftest.py::rclpy_node here because:
+    # 1) RoboKudo tests need a session-wide ROS context for many tests/files.
+    # 2) Several tests create their own additional Nodes (sometimes multiple per test).
+    # 3) We want explicit control over init/shutdown order in this suite.
     py_trees.logging.level = py_trees.logging.Level.DEBUG
     # init once (default/global context)
     if not rclpy.ok():
