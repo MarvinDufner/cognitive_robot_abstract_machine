@@ -378,6 +378,9 @@ class TriangleMeshMemoryMap(GeometryMemoryMap):
     triangle_uvs: ArrayMemoryMap
     """Memory map of the mesh triangle uvs."""
 
+    triangle_material_ids: ArrayMemoryMap
+    """Memory map of the mesh triangle material ids."""
+
     # adjacency_list: ArrayMemoryMap
     # """Memory map of the mesh adjacency list."""
 
@@ -388,10 +391,11 @@ class TriangleMeshMemoryMap(GeometryMemoryMap):
         ("triangles", o3d.utility.Vector3iVector),
         ("triangle_normals", o3d.utility.Vector3dVector),
         ("triangle_uvs", o3d.utility.Vector2dVector),
-        # ("adjacency_list", o3d.utility.Vector3dVector), # Not useful or visualization
-        # TODO:
-        # ("textures", o3d.utility.Vector3dVector)
-        # ("triangle_material_ids", o3d.utility.Vector3dVector),
+        ("triangle_material_ids", o3d.utility.IntVector),
+        # TODO: Transfer textures too
+        # ("textures", o3d.geometry.Image),
+        # Not useful or visualization
+        # ("adjacency_list", o3d.utility.Vector3dVector),
     ]
 
 
@@ -576,17 +580,22 @@ class MultiprocessedViewer3DClient(object):
         self.cmd_conn = cmd_conn
         """Communication connection for sending and receiving commands from the main process."""
 
-        self.name_to_shm = {}
+        self.name_to_shm: Dict[str, shared_memory.SharedMemory] = {}
         """Mapping of shared memory names to shared memory instances."""
 
-        self.name_to_shm_manager = defaultdict(SharedMemoryManager)
+        self.name_to_shm_manager: Dict[str, SharedMemoryManager] = defaultdict(
+            SharedMemoryManager
+        )
         """Mapping of shared memory names to shared memory instances."""
 
         self.visualized_geometries: List[str] = []
         """List of the names of the currently visualized geometries"""
 
-        self.geometries_lock = Lock()
-        self.geometries = []
+        self.geometries_lock: Lock = Lock()
+        """Lock for synchronizing access to the geometries list."""
+
+        self.geometries: List[Union[Dict, o3d.geometry.Geometry3D]] = []
+        """List of the geometries to use for updating the viewer."""
 
         self.receiver_thread = Thread(target=self.listen, daemon=True)
         """A thread for listening to commands from the main process."""
@@ -654,7 +663,7 @@ class MultiprocessedViewer3DClient(object):
                 shm_manager.reset()
 
                 # Load into memory manager
-                _ = shm_manager.extend(cmd.memory_maps)
+                shm_manager.extend(cmd.memory_maps)
 
                 # Reconstruct geometries
                 with self.geometries_lock:
@@ -845,7 +854,7 @@ class MultiprocessedViewer3D(object):
         self._swap()  # Swap buffers
 
         self.parent_cmd_conn.send(transport)
-        _ = self.parent_cmd_conn.recv()
+        self.parent_cmd_conn.recv()
 
     def close(self) -> None:
         """Clean up shared memory and process resources."""

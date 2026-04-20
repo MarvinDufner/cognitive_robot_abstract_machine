@@ -123,7 +123,7 @@ class TestVisGeometryMaps(object):
 
         mesh_size = (
             (np.dtype(np.float64).itemsize * (3 + 3 + 3 + 3 + 2))
-            + (np.dtype(np.int32).itemsize * 3)
+            + (np.dtype(np.int32).itemsize * (3 + 1))
         ) * 1000
 
         shm = shared_memory.SharedMemory(
@@ -147,6 +147,9 @@ class TestVisGeometryMaps(object):
             )
             input_mesh.triangle_uvs = o3d.utility.Vector2dVector(
                 np.random.rand(1000, 2)
+            )
+            input_mesh.triangle_material_ids = o3d.utility.IntVector(
+                np.random.randint(0, 10, size=1000, dtype=np.int32)
             )
 
             memory_map = GeometryMemoryMapFactory.from_geometry(
@@ -189,6 +192,10 @@ class TestVisGeometryMaps(object):
             assert np.all(
                 np.asarray(output_mesh.triangle_uvs)
                 == np.asarray(input_mesh.triangle_uvs)
+            )
+            assert np.all(
+                np.asarray(output_mesh.triangle_material_ids)
+                == np.asarray(input_mesh.triangle_material_ids)
             )
 
     def test_oriented_bounding_box_maps(
