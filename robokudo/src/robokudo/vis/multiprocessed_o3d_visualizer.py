@@ -381,6 +381,9 @@ class TriangleMeshMemoryMap(GeometryMemoryMap):
     triangle_material_ids: ArrayMemoryMap
     """Memory map of the mesh triangle material ids."""
 
+    # textures: ArrayMemoryMap
+    # """Memory map of the mesh textures."""
+
     # adjacency_list: ArrayMemoryMap
     # """Memory map of the mesh adjacency list."""
 
@@ -403,7 +406,7 @@ class TriangleMeshMemoryMap(GeometryMemoryMap):
     slots=True,
     frozen=True,
 )
-class OrientedBoundingBoxMap(GeometryMemoryMap):
+class OrientedBoundingBoxMemoryMap(GeometryMemoryMap):
     center: ArrayMemoryMap
     """Memory map of the oriented bounding box center."""
 
@@ -428,7 +431,7 @@ class OrientedBoundingBoxMap(GeometryMemoryMap):
     slots=True,
     frozen=True,
 )
-class AxisAlignedBoundingBoxMap(GeometryMemoryMap):
+class AxisAlignedBoundingBoxMemoryMap(GeometryMemoryMap):
     color: ArrayMemoryMap
     """Memory map of the axis aligned bounding box color."""
 
@@ -442,6 +445,28 @@ class AxisAlignedBoundingBoxMap(GeometryMemoryMap):
         ("color", np.ndarray),
         ("max_bound", np.ndarray),
         ("min_bound", np.ndarray),
+    ]
+
+
+@dataclass(slots=True, frozen=True)
+class TetraMeshMemoryMap(GeometryMemoryMap):
+    tetras: ArrayMemoryMap
+    """Memory map of the tetra mesh tetras."""
+
+    vertex_colors: ArrayMemoryMap
+    """Memory map of the tetra mesh vertex colors."""
+
+    vertex_normals: ArrayMemoryMap
+    """Memory map of the tetra mesh vertex normals."""
+
+    vertices: ArrayMemoryMap
+    """Memory map of the tetra mesh vertices."""
+
+    mapped_attributes = [
+        ("tetras", o3d.utility.Vector4iVector),
+        ("vertex_colors", o3d.utility.Vector3dVector),
+        ("vertex_normals", o3d.utility.Vector3dVector),
+        ("vertices", o3d.utility.Vector3dVector),
     ]
 
 
@@ -485,9 +510,10 @@ class GeometryMemoryMapFactory:
     geometry_proxies: Dict[Type, Type[GeometryMemoryMap]] = {
         o3d.geometry.PointCloud: PointCloudMemoryMap,
         o3d.geometry.MeshBase: MeshBaseMemoryMap,
+        o3d.geometry.TetraMesh: TetraMeshMemoryMap,
         o3d.geometry.TriangleMesh: TriangleMeshMemoryMap,
-        o3d.geometry.OrientedBoundingBox: OrientedBoundingBoxMap,
-        o3d.geometry.AxisAlignedBoundingBox: AxisAlignedBoundingBoxMap,
+        o3d.geometry.OrientedBoundingBox: OrientedBoundingBoxMemoryMap,
+        o3d.geometry.AxisAlignedBoundingBox: AxisAlignedBoundingBoxMemoryMap,
         o3d.geometry.LineSet: LineSetMemoryMap,
     }
     """Map of open3d geometry types to their corresponding memory map types."""

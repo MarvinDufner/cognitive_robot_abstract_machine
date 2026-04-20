@@ -198,6 +198,66 @@ class TestVisGeometryMaps(object):
                 == np.asarray(input_mesh.triangle_material_ids)
             )
 
+    def test_tetra_mesh_maps(self, write_manager: SharedMemoryManager) -> None:
+        """Test writing and reading base meshes with the shared memory manager."""
+        iterations = 3
+        read_idx = 0
+
+        mesh_size = (
+            (np.dtype(np.float64).itemsize * (3 + 3 + 3))
+            + (np.dtype(np.int64).itemsize * 4)
+        ) * 1000
+
+        shm = shared_memory.SharedMemory(
+            create=True,
+            size=mesh_size * iterations,
+        )
+
+        input_meshes = []
+        for _ in range(iterations):
+            input_mesh = o3d.geometry.TetraMesh()
+            input_mesh.vertices = o3d.utility.Vector3dVector(np.random.rand(1000, 3))
+            input_mesh.vertex_colors = o3d.utility.Vector3dVector(
+                np.random.rand(1000, 3)
+            )
+            input_mesh.vertex_normals = o3d.utility.Vector3dVector(
+                np.random.rand(1000, 3)
+            )
+            input_mesh.tetras = o3d.utility.Vector4iVector(np.random.rand(1000, 4))
+
+            memory_map = GeometryMemoryMapFactory.from_geometry(
+                "TriangleMesh", input_mesh
+            )
+            write_idx = write_manager.append(memory_map)
+            memory_map.write_geometry(shm, write_idx, input_mesh)
+
+            input_meshes.append(input_mesh)
+
+        for i, (read_ixd, memory_map) in enumerate(write_manager.read()):
+            input_mesh = input_meshes[i]
+
+            geometry_dict, read_idx = memory_map.as_geometry_dict(shm, read_idx)
+            output_mesh = geometry_dict["geometry"]
+
+            assert (
+                output_mesh != input_mesh
+            ), "Output and input meshes should be different objects"
+
+            assert np.all(
+                np.asarray(output_mesh.vertices) == np.asarray(input_mesh.vertices)
+            )
+            assert np.all(
+                np.asarray(output_mesh.vertex_colors)
+                == np.asarray(input_mesh.vertex_colors)
+            )
+            assert np.all(
+                np.asarray(output_mesh.vertex_normals)
+                == np.asarray(input_mesh.vertex_normals)
+            )
+            assert np.all(
+                np.asarray(output_mesh.tetras) == np.asarray(input_mesh.tetras)
+            )
+
     def test_oriented_bounding_box_maps(
         self, write_manager: SharedMemoryManager
     ) -> None:
