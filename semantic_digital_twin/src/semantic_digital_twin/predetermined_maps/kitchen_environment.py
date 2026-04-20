@@ -230,13 +230,7 @@ class KitchenEnvironment:
 
 
             # Creating doors manually and attaching them directly to the cupboard
-            door_height = 1.055
-            # Position Z: Bottom of cupboard is at -cupboard_scale.z / 2.
-            # Door center should be at Bottom + door_height / 2
-            door_z_rel = -(cupboard_scale.z / 2) + (door_height / 2)
-
-            door_x_rel = -(cupboard_scale.x / 2) - 0.01
-            door_scale = Scale(0.02, 0.40, door_height)
+            door_scale = Scale(0.02, 0.40, 1.055)
 
             # Define limits for doors
             # Left door opens outwards (0 to +90 degrees)
@@ -249,67 +243,15 @@ class KitchenEnvironment:
             right_upper = DerivativeMap[float](position=0.0)
             right_door_limits = DegreeOfFreedomLimits(lower=right_lower, upper=right_upper)
 
-            # Left Door (Open via Hinge)
-            # Create Hinge for the left door
-            hinge_left_body = Body(name=PrefixedName("cupboard_hinge_left_body"))
-            hinge_left = Hinge(
-                root=hinge_left_body,
-                name=PrefixedName("cupboard_hinge_left"),
-            )
-
-            cupboard_C_hinge_left = RevoluteConnection.create_with_dofs(
-                world=world,
-                parent=cupboard.root,
-                child=hinge_left_body,
-                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    x=door_x_rel, y=-0.40, z=door_z_rel
-                ),
-                axis=Vector3.Z(),
-                dof_limits=left_door_limits,
-            )
-            world.add_connection(cupboard_C_hinge_left)
-            world.add_semantic_annotation(hinge_left)
-
+            # Left Door
             left_door = Door.create_with_new_body_in_world(
                 world=world,
                 name=PrefixedName("cupboard_left_door"),
                 world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    x=4.325, y=4.52, z=0.5275#, yaw=np.pi/2
+                    x=4.325, y=4.52, z=0.5275  # , yaw=np.pi/2
                 ),
                 scale=door_scale,
             )
-
-
-
-            # Right Door (Closed via Hinge)
-            hinge_right_body = Body(name=PrefixedName("cupboard_hinge_right_body"))
-            hinge_right = Hinge(
-                root=hinge_right_body,
-                name=PrefixedName("cupboard_hinge_right"),
-            )
-
-            cupboard_C_hinge_right = RevoluteConnection.create_with_dofs(
-                world=world,
-                parent=cupboard.root,
-                child=hinge_right_body,
-                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    x=door_x_rel, y=0.40, z=door_z_rel
-                ),
-                axis=Vector3.Z(),
-                dof_limits=right_door_limits,
-            )
-            world.add_connection(cupboard_C_hinge_right)
-            world.add_semantic_annotation(hinge_right)
-
-            right_door = Door.create_with_new_body_in_world(
-                world=world,
-                name=PrefixedName("cupboard_right_door"),
-                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    x=4.325, y=4.92, z=0.5275  # , yaw=np.pi/2
-                ),
-                scale=door_scale,
-            )
-
 
             left_door_handle = Handle.create_with_new_body_in_world(
                 world=world,
@@ -318,6 +260,27 @@ class KitchenEnvironment:
                     x=4.315, y=4.68, z=0.5275, yaw=np.pi
                 ),
                 scale=Scale(0.04, 0.02, 0.02),
+            )
+
+            cupboard_left_door_hinge = Hinge.create_with_new_body_in_world(
+                world=world,
+                name=PrefixedName("cupboard_left_door_hinge"),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=4.325, y=4.32, z=0.5275
+                ),
+            )
+            left_door.add_handle(left_door_handle)
+            left_door.add_hinge(cupboard_left_door_hinge)
+
+
+            # Right Door
+            right_door = Door.create_with_new_body_in_world(
+                world=world,
+                name=PrefixedName("cupboard_right_door"),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=4.325, y=4.92, z=0.5275  # , yaw=np.pi/2
+                ),
+                scale=door_scale,
             )
 
             right_door_handle = Handle.create_with_new_body_in_world(
@@ -329,9 +292,16 @@ class KitchenEnvironment:
                 scale=Scale(0.04, 0.02, 0.02),
             )
 
-
-            left_door.add_handle(left_door_handle)
+            cupboard_right_door_hinge = Hinge.create_with_new_body_in_world(
+                world=world,
+                name=PrefixedName("cupboard_right_door_hinge"),
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=4.325, y=5.12, z=0.5275
+                )
+            )
             right_door.add_handle(right_door_handle)
+            right_door.add_hinge(cupboard_right_door_hinge)
+
 
             oven = Oven.create_with_new_body_in_world(
                 world=world,

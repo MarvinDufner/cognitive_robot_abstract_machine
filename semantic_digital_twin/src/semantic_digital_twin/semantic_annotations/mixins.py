@@ -736,18 +736,11 @@ class HasSupportingSurface(HasStorageSpace, ABC):
 
     def infer_objects_on_surface(self):
         """
-        Infers and processes objects present on a specific surface.
+        Infer and add objects that are supported by this surface to the storage space.
 
-        This method identifies objects that are supported by a specific body
-        in the world. It utilizes semantic annotations and collision
-        information to determine which objects are located on the surface. If the
-        inferred objects are not already known, they are added to the set of
-        recognized objects.
-
-        Raises:
-            TypeError: If the input criteria for entities are not met.
-            EvaluationError: If conditions fail to evaluate an entity.
-
+        This method queries the world for bodies that are supported by this annotation's root body,
+        finds their corresponding semantic annotations, and adds them to the objects list if they
+        are not already present.
         """
         bodies = variable_from(self._world.bodies_with_collision)
         body = entity(bodies).where(
