@@ -326,9 +326,7 @@ class RippleDownRules(SubclassJSONSerializer, ABC):
                 f"Make sure the file exists and is valid."
             )
             if rdr is None:
-                raise RDRLoadError(
-                    f"Could not load the rdr model {model_name} from {model_dir}, error is {e}"
-                )
+                raise RDRLoadError(model_name, model_dir)
             rdr.save(
                 save_dir=load_dir, model_name=model_name, package_name=package_name
             )
