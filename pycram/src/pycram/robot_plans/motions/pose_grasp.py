@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from enum import Enum, auto
 from typing import List
 
 from giskardpy.motion_statechart.goals.collision_avoidance import (
@@ -19,25 +18,13 @@ from semantic_digital_twin.collision_checking.collision_rules import (
     AvoidExternalCollisions,
 )
 from semantic_digital_twin.robots.abstract_robot import AbstractRobot
-from semantic_digital_twin.spatial_types import (
-    HomogeneousTransformationMatrix,
-    Vector3,
-)
+from semantic_digital_twin.spatial_types import Vector3
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.world_entity import Body
 
-from pycram.datastructures.enums import Arms
+from pycram.datastructures.enums import Arms, RetractDirection
 from pycram.robot_plans.motions.base import BaseMotion
 from pycram.view_manager import ViewManager
-
-
-class RetractDirection(Enum):
-    """Direction to retract the gripper after grasping."""
-
-    WORLD_Z = auto()
-    """Lift along the world root's positive Z axis."""
-    GRIPPER_Z = auto()
-    """Retract along the gripper's negative Z axis (pull back)."""
 
 
 def make_rule_for_allowing_collision_between_two_groups(
@@ -107,42 +94,32 @@ class CollisionAwareArmMotion(BaseMotion):
 class PoseGraspMotion(CollisionAwareArmMotion):
     """
     Motion that moves to a grasp pose with collision avoidance.
-    First moves to a pre-grasp pose (offset along the negative z-axis of the
-    grasp pose), then moves to the actual grasp pose.
+    Executes the provided pose_sequence (pre_grasp → grasp) as a Sequence.
     """
 
-    grasp_pose: Pose
-    pre_grasp_distance: float = 0.1
-    """Distance to offset the pre-grasp pose along the negative z-axis of the grasp pose (in meters)."""
-    pre_grasp_threshold: float = 0.25
+    pose_sequence: List[Pose]
+    pre_grasp_threshold: float = 0.01
+    grasp_approach_velocity: float = 0.05
+    """Linear velocity when moving from pre-grasp to grasp pose."""
 
     @property
     def _motion_chart(self) -> Task:
         world = self.world
         tool_frame = ViewManager.get_end_effector_view(self.arm, self.robot).tool_frame
 
-        grasp_rotation = self.grasp_pose.to_rotation_matrix()
-        grasp_z_axis = grasp_rotation.z_vector()
-        pre_grasp_position = (
-            self.grasp_pose.to_position() - grasp_z_axis * self.pre_grasp_distance
-        )
-        pre_grasp_pose = HomogeneousTransformationMatrix.from_point_rotation_matrix(
-            point=pre_grasp_position,
-            rotation_matrix=grasp_rotation,
-        )
+        pre_grasp_pose, grasp_pose = self.pose_sequence
 
         move_to_pre_grasp = CartesianPose(
             goal_pose=pre_grasp_pose,
             root_link=world.root,
             tip_link=tool_frame,
-            reference_angular_velocity=0.5,
-            reference_linear_velocity=0.5,
             threshold=self.pre_grasp_threshold,
         )
         move_to_grasp = CartesianPose(
-            goal_pose=self.grasp_pose,
+            goal_pose=grasp_pose,
             root_link=world.root,
             tip_link=tool_frame,
+            reference_linear_velocity=self.grasp_approach_velocity,
         )
         grasp_sequence = Sequence([move_to_pre_grasp, move_to_grasp])
         return self._with_collision_avoidance([grasp_sequence])
@@ -171,9 +148,12 @@ class RetractMotion(CollisionAwareArmMotion):
                 0, 0, self.distance, reference_frame=self.world.root
             )
         else:
-            gripper_z = tool_frame.global_pose.to_rotation_matrix().z_vector()
+            gripper_approach_axis = (
+                tool_frame.global_pose.to_rotation_matrix().z_vector()
+            )
             goal_point = (
-                tool_frame.global_pose.to_position() - gripper_z * self.distance
+                tool_frame.global_pose.to_position()
+                - gripper_approach_axis * self.distance
             )
 
         return CartesianPosition(

@@ -89,6 +89,7 @@ class TaskStatus(int, Enum):
     INTERRUPTED = 4
     PAUSE = 5
 
+
 class JointType(Enum):
     """
     Enum for readable joint types.
@@ -176,6 +177,15 @@ class GripperType(Enum):
     HYDRAULIC = auto()
     PNEUMATIC = auto()
     CUSTOM = auto()
+
+
+class RetractDirection(Enum):
+    """Direction to retract the gripper after grasping."""
+
+    WORLD_Z = auto()
+    """Lift along the world root's positive Z axis."""
+    GRIPPER_APPROACH_AXIS = auto()
+    """Retract along the gripper's local approach axis (pull back the way the gripper came)."""
 
 
 class ImageEnum(Enum):

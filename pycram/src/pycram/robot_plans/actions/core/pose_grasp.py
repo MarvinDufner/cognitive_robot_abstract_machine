@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
-from pycram.datastructures.enums import Arms
+from pycram.datastructures.enums import Arms, RetractDirection
+from pycram.datastructures.grasp import GraspDescription
 from pycram.plans.factories import sequential, execute_single
 from pycram.plans.failures import PlanFailure, BodyUnfetchable
 from semantic_digital_twin.spatial_types.spatial_types import Pose
@@ -10,7 +11,6 @@ from pycram.robot_plans.motions.gripper import MoveGripperMotion
 from pycram.robot_plans.motions.pose_grasp import (
     PoseGraspMotion,
     RetractMotion,
-    RetractDirection,
 )
 from pycram.view_manager import ViewManager
 from semantic_digital_twin.datastructures.definitions import (
@@ -35,9 +35,6 @@ class PoseGraspAction(ActionDescription):
     arm: Arms
     """The arm to use for grasping."""
 
-    pre_grasp_distance: float = 0.15
-    """Distance to offset the pre-grasp pose along the negative z-axis of the grasp pose (in meters)."""
-
     use_collision_avoidance: bool = True
     """Whether to enable collision avoidance during the grasp motion."""
 
@@ -45,15 +42,21 @@ class PoseGraspAction(ActionDescription):
     """Grasp pose resolved during precondition validation, consumed in execute."""
 
     def execute(self) -> None:
+        manipulator = ViewManager.get_end_effector_view(self.arm, self.robot)
+        grasp_desc = GraspDescription.calculate_grasp_descriptions(
+            manipulator, Pose(reference_frame=self.target.root)
+        )[0]
+        pose_sequence = grasp_desc.approach_sequence(
+            self._resolved_grasp_pose, self.target.root
+        )
         self.add_subplan(
             sequential(
                 [
                     MoveGripperMotion(gripper=self.arm, motion=GripperState.OPEN),
                     PoseGraspMotion(
                         arm=self.arm,
-                        grasp_pose=self._resolved_grasp_pose,
+                        pose_sequence=pose_sequence,
                         allowed_collision_bodies=list(self.target.bodies),
-                        pre_grasp_distance=self.pre_grasp_distance,
                         use_collision_avoidance=self.use_collision_avoidance,
                     ),
                     MoveGripperMotion(gripper=self.arm, motion=GripperState.CLOSE),
@@ -71,9 +74,11 @@ class PoseGraspAction(ActionDescription):
 
         target_bodies = set(self.target.bodies)
         actual_blocking = [
-            cp
-            for cp in blocking_bods
-            if cp.body_a not in target_bodies and cp.body_b not in target_bodies
+            collision_pair
+            for collision_pair in blocking_bods
+            if collision_pair.body_a not in target_bodies
+            and collision_pair.body_b not in target_bodies
+            and collision_pair.distance < 0
         ]
 
         return not actual_blocking
@@ -109,9 +114,6 @@ class PoseGraspAndLiftAction(ActionDescription):
     arm: Arms
     """The arm to use for grasping."""
 
-    pre_grasp_distance: float = 0.15
-    """Distance to offset the pre-grasp pose along the negative z-axis of the grasp pose (in meters)."""
-
     retract_distance: float = 0.1
     """Distance to retract after grasping (in meters)."""
 
@@ -132,7 +134,6 @@ class PoseGraspAndLiftAction(ActionDescription):
                 PoseGraspAction(
                     target=self.target,
                     arm=self.arm,
-                    pre_grasp_distance=self.pre_grasp_distance,
                     use_collision_avoidance=self.use_collision_avoidance,
                 )
             )
