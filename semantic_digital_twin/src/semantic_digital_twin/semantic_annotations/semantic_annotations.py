@@ -655,7 +655,10 @@ class Bowl(HasSupportingSurface, IsPerceivable):
 
 # Food Items
 @dataclass(eq=False)
-class Food(HasRootBody, IsPerceivable): ...
+class Food(HasRootBody):
+    """
+    A Group class for Food.
+    """
 
 
 @dataclass(eq=False)
@@ -709,7 +712,7 @@ class TomatoSoup(Food):
 
 
 @dataclass(eq=False)
-class Candy(Food):
+class Candy(Food, IsPerceivable):
     """
     A candy.
     """
@@ -718,7 +721,7 @@ class Candy(Food):
 
 
 @dataclass(eq=False)
-class Noodles(Food):
+class Noodles(Food, IsPerceivable):
     """
     A container of noodles.
     """
@@ -727,7 +730,7 @@ class Noodles(Food):
 
 
 @dataclass(eq=False)
-class Cereal(Food):
+class Cereal(Food, IsPerceivable):
     """
     A container of cereal.
     """
@@ -736,7 +739,7 @@ class Cereal(Food):
 
 
 @dataclass(eq=False)
-class Milk(Food):
+class Milk(Food, IsPerceivable):
     """
     A container of milk.
     """
@@ -745,7 +748,7 @@ class Milk(Food):
 
 
 @dataclass(eq=False)
-class SaltContainer(HasRootBody):
+class SaltContainer(HasRootBody, IsPerceivable):
     """
     A container of salt.
     """

@@ -7266,10 +7266,6 @@ class FoodDAO(
         use_existing_column=True,
     )
 
-    class_label: Mapped[typing.Optional[builtins.str]] = mapped_column(
-        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
-    )
-
     __mapper_args__ = {
         "polymorphic_identity": "FoodDAO",
         "inherit_condition": database_id == HasRootBodyDAO.database_id,
@@ -7308,6 +7304,10 @@ class CandyDAO(
         ForeignKey(FoodDAO.database_id), primary_key=True, use_existing_column=True
     )
 
+    class_label: Mapped[typing.Optional[builtins.str]] = mapped_column(
+        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
+    )
+
     __mapper_args__ = {
         "polymorphic_identity": "CandyDAO",
         "inherit_condition": database_id == FoodDAO.database_id,
@@ -7325,6 +7325,10 @@ class CerealDAO(
 
     database_id: Mapped[builtins.int] = mapped_column(
         ForeignKey(FoodDAO.database_id), primary_key=True, use_existing_column=True
+    )
+
+    class_label: Mapped[typing.Optional[builtins.str]] = mapped_column(
+        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
     )
 
     __mapper_args__ = {
@@ -7384,6 +7388,10 @@ class MilkDAO(
         ForeignKey(FoodDAO.database_id), primary_key=True, use_existing_column=True
     )
 
+    class_label: Mapped[typing.Optional[builtins.str]] = mapped_column(
+        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
+    )
+
     __mapper_args__ = {
         "polymorphic_identity": "MilkDAO",
         "inherit_condition": database_id == FoodDAO.database_id,
@@ -7401,6 +7409,10 @@ class NoodlesDAO(
 
     database_id: Mapped[builtins.int] = mapped_column(
         ForeignKey(FoodDAO.database_id), primary_key=True, use_existing_column=True
+    )
+
+    class_label: Mapped[typing.Optional[builtins.str]] = mapped_column(
+        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
     )
 
     __mapper_args__ = {
@@ -8667,6 +8679,10 @@ class SaltContainerDAO(
         ForeignKey(HasRootBodyDAO.database_id),
         primary_key=True,
         use_existing_column=True,
+    )
+
+    class_label: Mapped[typing.Optional[builtins.str]] = mapped_column(
+        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
     )
 
     __mapper_args__ = {

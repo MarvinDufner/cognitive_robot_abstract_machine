@@ -128,7 +128,7 @@ def test_annotation_class_by_label():
     """
     Tests the annotation_class_by_label function by verifying the retrieval of the semantic class
     """
-    assert annotation_class_by_label("salt_aquasale_mill_transparent") == Salt
+    assert annotation_class_by_label("candy_autodrop_box_cadillacs") == Candy
     assert annotation_class_by_label("milk_jumbo_pack_voll") == Milk
     assert annotation_class_by_label("bowl_collapsable_yellowgrey") == Bowl
 
