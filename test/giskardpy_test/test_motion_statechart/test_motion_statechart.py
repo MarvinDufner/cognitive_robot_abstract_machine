@@ -22,6 +22,7 @@ from giskardpy.motion_statechart.exceptions import (
     NodeAlreadyBelongsToDifferentNodeError,
 )
 from giskardpy.motion_statechart.goals.templates import Sequence, Parallel
+from giskardpy.motion_statechart.goals.tracebot import InsertCylinder
 from giskardpy.motion_statechart.graph_node import (
     EndMotion,
     CancelMotion,
@@ -61,12 +62,17 @@ from krrood.symbolic_math.symbolic_math import (
     trinary_logic_or,
     FloatVariable,
 )
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
     Vector3,
     Point3,
 )
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.connections import Connection6DoF
+from semantic_digital_twin.world_description.geometry import Cylinder
+from semantic_digital_twin.world_description.shape_collection import ShapeCollection
+from semantic_digital_twin.world_description.world_entity import Body
 
 
 def test_condition_to_str():
@@ -1692,3 +1698,51 @@ class TestLifeCycleTransitions:
         msc.plot_gantt_chart()
 
         assert len(msc.history) == 5
+
+
+def test_insert_cylinder_goal_structure(tmp_path):
+    world = World()
+    with world.modify_world():
+        root_body = Body(name=PrefixedName("world"))
+        cylinder = Body(
+            name=PrefixedName("cylinder"),
+            collision=ShapeCollection(shapes=[Cylinder(width=0.05, height=0.2)]),
+        )
+        connection = Connection6DoF.create_with_dofs(
+            world=world, parent=root_body, child=cylinder
+        )
+        world.add_connection(connection)
+
+    msc = MotionStatechart()
+    hole_point = Point3(0.5, 0.0, 0.2, reference_frame=world.root)
+
+    insert_goal = InsertCylinder(
+        cylinder_name=cylinder,
+        hole_point=hole_point,
+        cylinder_height=0.2,
+    )
+    msc.add_node(insert_goal)
+    msc.add_node(EndMotion.when_true(insert_goal))
+
+    executor = Executor(MotionStatechartContext(world=world))
+    executor.compile(motion_statechart=msc)
+
+    msc.draw(str(tmp_path / "insert_cylinder.pdf"))
+
+    assert insert_goal.life_cycle_state == LifeCycleValues.RUNNING
+    assert insert_goal.reach_top.life_cycle_state == LifeCycleValues.RUNNING
+    assert insert_goal.tilt_task.life_cycle_state == LifeCycleValues.RUNNING
+    assert insert_goal.stay_on_line.life_cycle_state == LifeCycleValues.RUNNING
+    assert insert_goal.insert_task.life_cycle_state == LifeCycleValues.NOT_STARTED
+    assert (
+        insert_goal.tilt_straight_task.life_cycle_state == LifeCycleValues.NOT_STARTED
+    )
+
+    executor.tick()
+
+    assert insert_goal.reach_top.observation_state == ObservationStateValues.FALSE
+    assert insert_goal.tilt_task.observation_state == ObservationStateValues.FALSE
+    assert insert_goal.insert_task.life_cycle_state == LifeCycleValues.NOT_STARTED
+    assert (
+        insert_goal.tilt_straight_task.life_cycle_state == LifeCycleValues.NOT_STARTED
+    )
