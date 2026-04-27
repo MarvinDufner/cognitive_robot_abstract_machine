@@ -1711,6 +1711,7 @@ def test_insert_cylinder_goal_structure(tmp_path):
         connection = Connection6DoF.create_with_dofs(
             world=world, parent=root_body, child=cylinder
         )
+        connection.has_hardware_interface = True
         world.add_connection(connection)
 
     msc = MotionStatechart()
