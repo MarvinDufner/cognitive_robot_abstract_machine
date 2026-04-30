@@ -62,6 +62,9 @@ from krrood.symbolic_math.symbolic_math import (
     trinary_logic_or,
     FloatVariable,
 )
+from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
+    VizMarkerPublisher,
+)
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
@@ -1700,8 +1703,9 @@ class TestLifeCycleTransitions:
         assert len(msc.history) == 5
 
 
-def test_insert_cylinder_goal_structure(tmp_path):
+def test_insert_cylinder_goal_structure(tmp_path, rclpy_node):
     world = World()
+    VizMarkerPublisher(_world=world, node=rclpy_node).with_tf_publisher()
     with world.modify_world():
         root_body = Body(name=PrefixedName("world"))
         cylinder = Body(
@@ -1747,3 +1751,5 @@ def test_insert_cylinder_goal_structure(tmp_path):
     assert (
         insert_goal.tilt_straight_task.life_cycle_state == LifeCycleValues.NOT_STARTED
     )
+
+    executor.tick_until_end()

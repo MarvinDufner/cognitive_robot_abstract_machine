@@ -29,7 +29,7 @@ class _ReachTopTask(Task):
         root_T_tip = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         )
-        tip_P_cylinder_bottom = Vector3.Z() * self.cylinder_height / 2
+        tip_P_cylinder_bottom = -Vector3.Z() * self.cylinder_height / 2
         root_P_tip = root_T_tip.to_position() + root_T_tip @ tip_P_cylinder_bottom
         root_P_top = self.root_P_hole + self.root_V_up * self.pre_grasp_height
         distance_to_top = root_P_tip.euclidean_distance(root_P_top)
@@ -56,7 +56,7 @@ class _SlightlyTiltedTask(Task):
         root_T_tip = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         )
-        root_V_cylinder_z = root_T_tip @ -Vector3.Z()
+        root_V_cylinder_z = root_T_tip @ Vector3.Z()
         tilt_error = root_V_cylinder_z.angle_between(self.root_V_up)
 
         artifacts = NodeArtifacts()
@@ -83,7 +83,7 @@ class _StayOnLineTask(Task):
         root_T_tip = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         )
-        tip_P_cylinder_bottom = Vector3.Z() * self.cylinder_height / 2
+        tip_P_cylinder_bottom = -Vector3.Z() * self.cylinder_height / 2
         root_P_tip = root_T_tip.to_position() + root_T_tip @ tip_P_cylinder_bottom
         root_P_top = self.root_P_hole + self.root_V_up * self.pre_grasp_height
         distance_to_line, root_P_on_line = root_P_tip.distance_to_line_segment(
@@ -113,7 +113,7 @@ class _InsertTask(Task):
         root_T_tip = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         )
-        tip_P_cylinder_bottom = Vector3.Z() * self.cylinder_height / 2
+        tip_P_cylinder_bottom = -Vector3.Z() * self.cylinder_height / 2
         root_P_tip = root_T_tip.to_position() + root_T_tip @ tip_P_cylinder_bottom
         distance_to_hole = root_P_tip.euclidean_distance(self.root_P_hole)
 
@@ -139,7 +139,7 @@ class _TiltStraightTask(Task):
         root_T_tip = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         )
-        root_V_cylinder_z = root_T_tip @ -Vector3.Z()
+        root_V_cylinder_z = root_T_tip @ Vector3.Z()
         tilt_error = root_V_cylinder_z.angle_between(self.root_V_up)
 
         artifacts = NodeArtifacts()
