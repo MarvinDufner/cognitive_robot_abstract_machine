@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from dataclasses import field, dataclass
-from typing import Self
+from typing import Self, Set
 
 from importlib.resources import files
 from pathlib import Path
@@ -35,6 +35,7 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     FixedConnection,
     ActiveConnection,
+    ActiveConnection1DOF,
 )
 
 
@@ -174,7 +175,26 @@ class Tracy(AbstractRobot, SpecifiesLeftRightArm, HasNeck):
         )
 
     def _setup_velocity_limits(self):
-        self.tighten_dof_velocity_limits_proportionally(maximum_velocity=0.2)
+        # Limiting the speed of the simulated gripper opening/closing can
+        # cause motions to not terminate, so exclude them
+        self.tighten_dof_velocity_limits_proportionally(
+            maximum_velocity=0.2,
+            excluded_connections=self._gripper_velocity_connections(),
+        )
+
+    def _gripper_velocity_connections(self) -> Set[ActiveConnection1DOF]:
+        """Collects the 1-DOF connections that belong to the robot's grippers."""
+        gripper_connections: Set[ActiveConnection1DOF] = set()
+        for manipulator in self.manipulators:
+            for (
+                entity
+            ) in self._world.compute_descendent_child_kinematic_structure_entities(
+                manipulator.root
+            ):
+                connection = entity.parent_connection
+                if isinstance(connection, ActiveConnection1DOF):
+                    gripper_connections.add(connection)
+        return gripper_connections
 
     def _setup_hardware_interfaces(self):
         controlled_joints = [

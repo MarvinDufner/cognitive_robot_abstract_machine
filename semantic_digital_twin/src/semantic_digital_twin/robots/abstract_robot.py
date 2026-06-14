@@ -616,7 +616,9 @@ class AbstractRobot(Agent, ABC):
             )
 
     def tighten_dof_velocity_limits_proportionally(
-        self, maximum_velocity: float
+        self,
+        maximum_velocity: float,
+        excluded_connections: Optional[Iterable[ActiveConnection1DOF]] = None,
     ) -> None:
         """
         Tightens the velocity limits of all 1-DOF active connections proportionally,
@@ -631,11 +633,16 @@ class AbstractRobot(Agent, ABC):
 
         :param maximum_velocity: The target velocity for the joint with the
             highest current velocity limit.
+        :param excluded_connections: Connections to leave untouched. They keep their
+            original velocity limits and are not counted when determining the maximum,
+            so e.g. gripper joints are not throttled together with the arm.
         """
+        excluded = set(excluded_connections or ())
         connections_with_velocity_limits = [
             (connection, connection.raw_dof.limits.upper.velocity)
             for connection in self._world.get_connections_by_type(ActiveConnection1DOF)
             if connection.raw_dof.limits.upper.velocity is not None
+            and connection not in excluded
         ]
         if not connections_with_velocity_limits:
             return
