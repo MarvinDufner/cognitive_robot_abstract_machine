@@ -1,15 +1,25 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List
 
 from giskardpy.motion_statechart.data_types import DefaultWeights
-from giskardpy.motion_statechart.goals.templates import Sequence
+from giskardpy.motion_statechart.goals.collision_avoidance import (
+    ExternalCollisionAvoidance,
+    SelfCollisionAvoidance,
+    UpdateTemporaryCollisionRules,
+)
+from giskardpy.motion_statechart.goals.templates import Parallel, Sequence
+from giskardpy.motion_statechart.graph_node import Task
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPose,
     CartesianPosition,
 )
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList, JointState
+from semantic_digital_twin.collision_checking.collision_rules import (
+    AllowCollisionBetweenGroups,
+    AvoidExternalCollisions,
+)
 from semantic_digital_twin.datastructures.definitions import GripperState
-from semantic_digital_twin.robots.abstract_robot import Manipulator
+from semantic_digital_twin.robots.abstract_robot import AbstractRobot, Manipulator
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.world_entity import Body
 from pycram.robot_plans.motions.base import BaseMotion
@@ -18,76 +28,147 @@ from pycram.datastructures.enums import (
     MovementType,
     WaypointsMovementType,
 )
-from pycram.datastructures.grasp import GraspDescription
 from pycram.view_manager import ViewManager
-from pycram.utils import translate_pose_along_local_axis
 
 
-@dataclass
-class ReachMotion(BaseMotion):
-    """ """
+def make_rule_for_allowing_collision_between_two_groups(
+    bodies1: List[Body],
+    bodies2: List[Body],
+    robot: AbstractRobot,
+    buffer_zone_distance: Optional[float] = None,
+) -> UpdateTemporaryCollisionRules:
+    """Create a temporary collision rule that allows collisions between two groups of bodies.
 
-    object_designator: Body
+    If ``buffer_zone_distance`` is given it overrides the robot's default external-collision
+    standoff for the duration of the motion; otherwise the robot's default is kept.
     """
-    Object designator_description describing the object that should be picked up
-    """
-    arm: Arms
-    """
-    The arm that should be used for pick up
-    """
-    grasp_description: GraspDescription
-    """
-    The grasp description that should be used for picking up the object
-    """
-    movement_type: MovementType = MovementType.CARTESIAN
-    """
-    The type of movement that should be performed.
-    """
-    reverse_pose_sequence: bool = False
-    """
-    Reverses the sequence of poses, i.e., moves away from the object instead of towards it. Used for placing objects.
-    """
-
-    def _calculate_pose_sequence(self) -> List[Pose]:
-        end_effector = ViewManager.get_end_effector_view(self.arm, self.robot_view)
-
-        target_pose = GraspDescription.get_grasp_pose(
-            self.grasp_description, end_effector, self.object_designator
+    external_collisions = (
+        AvoidExternalCollisions(robot=robot)
+        if buffer_zone_distance is None
+        else AvoidExternalCollisions(
+            robot=robot, buffer_zone_distance=buffer_zone_distance
         )
-        target_pose.rotate_by_quaternion(
-            GraspDescription.calculate_grasp_orientation(
-                self.grasp_description,
-                end_effector.front_facing_orientation.to_np(),
+    )
+    return UpdateTemporaryCollisionRules(
+        temporary_rules=[
+            external_collisions,
+            AllowCollisionBetweenGroups(
+                body_group_a=[
+                    b for b in bodies1 if b is not None and b.has_collision()
+                ],
+                body_group_b=[
+                    b for b in bodies2 if b is not None and b.has_collision()
+                ],
+            ),
+        ]
+    )
+
+
+def make_external_collision_buffer_rule(
+    robot: AbstractRobot, buffer_zone_distance: float
+) -> UpdateTemporaryCollisionRules:
+    """Temporarily override the robot's external-collision buffer (soft standoff) distance."""
+    return UpdateTemporaryCollisionRules(
+        temporary_rules=[
+            AvoidExternalCollisions(
+                robot=robot, buffer_zone_distance=buffer_zone_distance
             )
-        )
-        target_pre_pose = translate_pose_along_local_axis(
-            target_pose,
-            end_effector.front_facing_axis.to_np()[:3],
-            -0.05,  # TODO: Maybe put these values in the semantic annotates
-        )
+        ]
+    )
 
-        pose = self.world.transform(target_pre_pose, self.world.root)
 
-        sequence = [target_pre_pose, pose]
-        return sequence.reverse() if self.reverse_pose_sequence else sequence
+@dataclass(kw_only=True)
+class ReachMotion(BaseMotion):
+    """
+    Moves the tool frame through a pose sequence (pre_grasp -> grasp), optionally avoiding
+    collisions with everything except the bodies being manipulated.
+    """
+
+    arm: Arms
+    """The arm performing the motion."""
+
+    pose_sequence: List[Pose]
+    """The [pre_grasp, grasp] poses the tool frame should move through."""
+
+    allowed_collision_bodies: List[Body] = field(default_factory=list)
+    """Bodies to allow collision with (typically the object being grasped)."""
+
+    use_collision_avoidance: bool = False
+    """Whether to avoid collisions (except with the allowed bodies) while reaching."""
+
+    collision_buffer_distance: Optional[float] = None
+    """Override for the external-collision buffer (soft standoff) distance in meters.
+    None keeps the robot's default."""
+
+    pre_grasp_threshold: float = 0.01
+    """Goal threshold for the pre-grasp pose."""
+
+    grasp_approach_velocity: float = 0.05
+    """Linear velocity when moving from pre-grasp to grasp pose."""
 
     def perform(self):
         pass
 
     @property
-    def _motion_chart(self):
-        tip = ViewManager().get_end_effector_view(self.arm, self.robot_view).tool_frame
-        nodes = [
-            CartesianPose(
-                root_link=self.robot_view.root,
-                tip_link=tip,
-                goal_pose=pose,
-                threshold=0.005,
-                name="Reach",
+    def _motion_chart(self) -> Task:
+        hand = ViewManager.get_end_effector_view(self.arm, self.robot)
+        tool_frame = hand.tool_frame
+        pre_grasp_pose, grasp_pose = self.pose_sequence
+
+        move_to_pre_grasp = CartesianPose(
+            goal_pose=pre_grasp_pose,
+            root_link=self.world.root,
+            tip_link=tool_frame,
+            threshold=self.pre_grasp_threshold,
+        )
+        move_to_grasp = CartesianPose(
+            goal_pose=grasp_pose,
+            root_link=self.world.root,
+            tip_link=tool_frame,
+            reference_linear_velocity=self.grasp_approach_velocity,
+        )
+
+        if not self.use_collision_avoidance:
+            return Sequence([move_to_pre_grasp, move_to_grasp])
+
+        pre_grasp_step = Parallel(
+            [
+                move_to_pre_grasp,
+                ExternalCollisionAvoidance(robot=hand._robot),
+                SelfCollisionAvoidance(robot=hand._robot),
+            ],
+            minimum_success=1,
+        )
+        if self.collision_buffer_distance is not None:
+            pre_grasp_step = Parallel(
+                [
+                    make_external_collision_buffer_rule(
+                        hand._robot, self.collision_buffer_distance
+                    ),
+                    pre_grasp_step,
+                ]
             )
-            for pose in self._calculate_pose_sequence()
-        ]
-        return Sequence(nodes=nodes)
+        grasp_step = self._grasp_step_with_collision_avoidance(move_to_grasp, hand)
+        return Sequence([pre_grasp_step, grasp_step])
+
+    def _grasp_step_with_collision_avoidance(self, task: Task, hand) -> Task:
+        arm = ViewManager.get_arm_view(self.arm, self.robot)
+        manipulating_bodies = list({*arm.bodies, *hand.bodies})
+        allow_rule = make_rule_for_allowing_collision_between_two_groups(
+            manipulating_bodies,
+            self.allowed_collision_bodies,
+            robot=hand._robot,
+            buffer_zone_distance=self.collision_buffer_distance,
+        )
+        motion = Parallel(
+            [
+                task,
+                ExternalCollisionAvoidance(robot=hand._robot),
+                SelfCollisionAvoidance(robot=hand._robot),
+            ],
+            minimum_success=1,
+        )
+        return Parallel([allow_rule, motion])
 
 
 @dataclass

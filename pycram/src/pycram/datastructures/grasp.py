@@ -40,17 +40,19 @@ class GraspDescription:
     which to grasp e.g. FRONT, LEFT, etc and the vertical alignment (TOP, BOTTOM).
     """
 
-    approach_direction: ApproachDirection
+    approach_direction: Optional[ApproachDirection] = None
     """
     The direction from which the body should be grasped. These are the four directions in the x-y plane (FRONT, BACK, LEFT, RIGHT).
+    Only used for discrete grasps; ignored (and left None) when an explicit_orientation is given.
     """
 
-    vertical_alignment: VerticalAlignment
+    vertical_alignment: Optional[VerticalAlignment] = None
     """
     The alignment of the gripper with the body in the z-axis (TOP, BOTTOM).
+    Only used for discrete grasps; ignored (and left None) when an explicit_orientation is given.
     """
 
-    manipulator: Manipulator
+    manipulator: Manipulator = None
     """
     The manipulator that is used to grasp the body.
     """
@@ -64,6 +66,47 @@ class GraspDescription:
     """
     The offset between the center of the pose in the grasp sequence
     """
+
+    explicit_orientation: Optional[Quaternion] = None
+    """
+    An explicit gripper orientation (in the grasped body's frame) to use instead of the
+    discrete approach_direction/vertical_alignment. When set, the whole pose sequence (grasp
+    orientation and standoff) is derived from this orientation, so an arbitrary, non-discrete
+    grasp can be expressed and reused by the normal pick-up pipeline.
+    """
+
+    explicit_position: Optional[Point3] = None
+    """
+    An explicit grasp point (in the grasped body's frame) to use instead of the body origin.
+    When set, the gripper is moved to this point on the body rather than its origin, so a
+    specific grasp location (e.g. a handle) can be expressed. None means the body origin.
+    """
+
+    @classmethod
+    def from_grasp_pose(
+        cls,
+        manipulator: Manipulator,
+        grasp_pose: Pose,
+        manipulation_offset: float = 0.05,
+    ) -> GraspDescription:
+        """
+        Build a GraspDescription that reproduces an explicit grasp pose (e.g. an annotated
+        grasp pose) instead of a discrete approach configuration. Both the orientation and the
+        position of the grasp pose are used directly, so the gripper grasps at the annotated
+        point on the body with the annotated orientation.
+
+        :param manipulator: The manipulator that is used to grasp the body.
+        :param grasp_pose: The grasp pose (in the body's frame) whose orientation and position
+            should be used directly.
+        :param manipulation_offset: The offset between the grasp and the pre-grasp pose.
+        :return: A GraspDescription using the explicit grasp pose.
+        """
+        return cls(
+            manipulator=manipulator,
+            manipulation_offset=manipulation_offset,
+            explicit_orientation=grasp_pose.to_quaternion(),
+            explicit_position=grasp_pose.to_position(),
+        )
 
     def _pose_sequence(
         self, target_T_grasp_pose: Pose, body: Body = None, reverse: bool = False
@@ -90,8 +133,25 @@ class GraspDescription:
             target_T_grasp_pose.to_rotation_matrix()
             @ grasp_pose_R_gripper_goal.to_rotation_matrix()
         )
+
+        # The grasp point is the target pose, optionally shifted by an explicit (annotated)
+        # offset expressed in the grasped body's frame, so a specific grasp point on the body
+        # can be reached instead of its origin. With no explicit offset this is identity and
+        # the behaviour is unchanged.
+        body_T_grasp_point = (
+            HomogeneousTransformationMatrix.from_xyz_rpy(
+                self.explicit_position.x,
+                self.explicit_position.y,
+                self.explicit_position.z,
+            )
+            if self.explicit_position is not None
+            else HomogeneousTransformationMatrix.from_xyz_rpy()
+        )
+        target_T_grasp_point = (
+            target_T_grasp_pose.to_homogeneous_matrix() @ body_T_grasp_point
+        )
         target_T_gripper_goal: Pose = Pose(
-            position=target_T_grasp_pose.to_position(),
+            position=target_T_grasp_point.to_position(),
             orientation=target_R_gripper_goal.to_quaternion(),
             reference_frame=target,
         )
@@ -110,9 +170,8 @@ class GraspDescription:
         target_T_gripper_goal_copy = deepcopy(target_T_gripper_goal)
 
         # Lift pose calculation. We want the lift pose to be moved along the global z-axis, but the final pose should be in the target frame.
-        map_T_grasp = world.transform(
-            target_T_grasp_pose.to_homogeneous_matrix(), world.root
-        )
+        # It is computed above the grasp point (which may be an explicit annotated offset), not the body origin.
+        map_T_grasp = world.transform(target_T_grasp_point, world.root)
         grasp_T_lift = HomogeneousTransformationMatrix.from_xyz_rpy(
             z=self.manipulation_offset
         )
@@ -204,9 +263,11 @@ class GraspDescription:
 
     def grasp_orientation(self) -> Quaternion:
         """
-        The orientation of the grasp. Takes into account the approach direction and vertical
-        alignment.
+        The orientation of the grasp. If an explicit orientation was provided it is used
+        directly, otherwise it is derived from the approach direction and vertical alignment.
         """
+        if self.explicit_orientation is not None:
+            return self.explicit_orientation
         rotation = Rotations.SIDE_ROTATIONS[self.approach_direction]
         rotation = quaternion_multiply(
             rotation, Rotations.VERTICAL_ROTATIONS[self.vertical_alignment]
@@ -228,18 +289,30 @@ class GraspDescription:
         """
         The offset between the center of the body and its edge in the direction of the approach axis.
 
+        For a discrete grasp this is half the bounding-box dimension along the approached face.
+        For an explicit (non-discrete) orientation the bounding box is projected onto the gripper's
+        actual approach axis - the same direction the pre-grasp pose backs off along - so an
+        arbitrary grasp orientation still gets a sensible standoff.
+
         :param body: The body to calculate the edge offset for.
         :return: The edge offset.
         """
-        rim_direction_index = self.approach_direction.value[0].value.index(1)
-
-        rim_offset = (
+        dimensions = np.array(
             body.collision.as_bounding_box_collection_in_frame(body)
             .bounding_box()
-            .dimensions[rim_direction_index]
-            / 2
+            .dimensions
         )
-        return rim_offset
+
+        if self.explicit_orientation is None:
+            rim_direction_index = self.approach_direction.value[0].value.index(1)
+            return float(dimensions[rim_direction_index]) / 2
+
+        local_approach_axis = np.array(self.manipulation_axis(), dtype=float)
+        local_approach_axis /= np.linalg.norm(local_approach_axis)
+        rotation = self.grasp_orientation().to_rotation_matrix().to_np()[:3, :3]
+        approach_axis_in_body = np.abs(rotation @ local_approach_axis)
+
+        return 0.5 * float(approach_axis_in_body @ dimensions)
 
     def grasp_pose(self, body: Body, grasp_edge: bool = False) -> Pose:
         """

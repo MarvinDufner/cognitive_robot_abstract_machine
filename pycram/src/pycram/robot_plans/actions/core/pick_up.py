@@ -4,7 +4,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 
-from typing_extensions import Any, Dict
+from typing_extensions import Any, Dict, Optional
 
 from krrood.entity_query_language.core.base_expressions import SymbolicExpression
 from krrood.entity_query_language.factories import and_, or_, not_, variable_from
@@ -23,6 +23,7 @@ from pycram.robot_plans.actions.base import ActionDescription
 from pycram.robot_plans.motions.gripper import (
     MoveGripperMotion,
     MoveToolCenterPointMotion,
+    ReachMotion,
 )
 from pycram.view_manager import ViewManager
 from semantic_digital_twin.datastructures.definitions import GripperState
@@ -62,24 +63,29 @@ class ReachAction(ActionDescription):
 
     reverse_reach_order: bool = False
 
+    use_collision_avoidance: bool = False
+    """Whether to avoid collisions (except with the grasped object) while approaching."""
+
+    collision_buffer_distance: Optional[float] = None
+    """Override for the external-collision buffer (soft standoff) distance in meters.
+    None keeps the robot's default."""
+
     def execute(self) -> None:
 
         target_pre_pose, target_pose, _ = self.grasp_description._pose_sequence(
             self.target_pose, self.object_designator, reverse=self.reverse_reach_order
         )
         self.add_subplan(
-            sequential(
-                children=[
-                    MoveToolCenterPointMotion(
-                        target_pre_pose, self.arm, allow_gripper_collision=False
-                    ),
-                    MoveToolCenterPointMotion(
-                        target_pose,
-                        self.arm,
-                        allow_gripper_collision=False,
-                        movement_type=MovementType.CARTESIAN,
-                    ),
-                ]
+            execute_single(
+                ReachMotion(
+                    arm=self.arm,
+                    pose_sequence=[target_pre_pose, target_pose],
+                    allowed_collision_bodies=[
+                        b for b in [self.object_designator] if b is not None
+                    ],
+                    use_collision_avoidance=self.use_collision_avoidance,
+                    collision_buffer_distance=self.collision_buffer_distance,
+                )
             )
         ).perform()
 
@@ -149,6 +155,13 @@ class PickUpAction(ActionDescription):
     The GraspDescription that should be used for picking up the object
     """
 
+    use_collision_avoidance: bool = False
+    """Whether to avoid collisions (except with the grasped object) while approaching."""
+
+    collision_buffer_distance: Optional[float] = None
+    """Override for the external-collision buffer (soft standoff) distance in meters.
+    None keeps the robot's default."""
+
     def execute(self) -> None:
         self.add_subplan(
             sequential(
@@ -159,6 +172,8 @@ class PickUpAction(ActionDescription):
                         object_designator=self.object_designator,
                         arm=self.arm,
                         grasp_description=self.grasp_description,
+                        use_collision_avoidance=self.use_collision_avoidance,
+                        collision_buffer_distance=self.collision_buffer_distance,
                     ),
                     MoveGripperMotion(motion=GripperState.CLOSE, gripper=self.arm),
                 ]
