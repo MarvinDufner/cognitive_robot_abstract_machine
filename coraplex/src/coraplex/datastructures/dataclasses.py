@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from coraplex.plans.plan import Plan
     from semantic_digital_twin.world import World
     from coraplex.alternative_motion_mapping import AlternativeMotion
+    from giskardpy.middleware.ros2.input_synchronization import (
+        InputSynchronizer,
+    )
 
 try:
     import rclpy
@@ -79,6 +82,13 @@ class Context(PlanEntity):
     """
 
     ros_node: Optional[rclpy.node.Node] = field(default=None)
+    world_inputs: List[InputSynchronizer] = field(default_factory=list)
+    """
+    Readings written into the world before each simulated control cycle, such as a wrench
+    from a contact model.
+
+    Empty on the real robot, whose controller follows the sensors' own topics.
+    """
     """
     A ROS node that should be used for communication in this plan.
     """

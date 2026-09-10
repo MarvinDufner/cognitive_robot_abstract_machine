@@ -5,10 +5,10 @@ Tests for the synchronizers that write ROS topics and tf frames into the world s
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import pytest
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, WrenchStamped
 from nav_msgs.msg import Odometry
 from numpy.testing import assert_allclose
 from sensor_msgs.msg import JointState
@@ -21,12 +21,14 @@ from giskardpy.middleware.ros2.exceptions import (
 from giskardpy.middleware.ros2.input_synchronization import (
     LatestJointStateSynchronizer,
     OdometrySynchronizer,
+    WrenchSynchronizer,
     PendingJointStateSynchronizer,
     TfFrameSynchronizer,
     TopicInputSynchronizer,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     Connection6DoF,
@@ -151,6 +153,10 @@ def test_joint_state_synchronizers_read_joint_state_messages():
 
 def test_odometry_synchronizer_reads_odometry_messages():
     assert OdometrySynchronizer.message_type() is Odometry
+
+
+def test_wrench_synchronizer_reads_wrench_messages():
+    assert WrenchSynchronizer.message_type() is WrenchStamped
 
 
 def test_synchronizer_without_bound_message_type_is_rejected():
@@ -313,3 +319,55 @@ def test_tracking_a_connection_without_six_degrees_of_freedom_is_rejected(
 
     with pytest.raises(ConnectionCannotBeTrackedByTfFrameError):
         synchronizer.track(connection, tf_parent_frame="map", tf_child_frame="odom")
+
+
+# %% writing a wrench into a sensor
+
+
+def wrench_message(force: List[float], torque: List[float]) -> WrenchStamped:
+    message = WrenchStamped()
+    message.wrench.force.x, message.wrench.force.y, message.wrench.force.z = force
+    message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z = torque
+    return message
+
+
+def test_apply_writes_the_measured_wrench_into_the_sensor(
+    init_rospy, hsr_world_copy: World
+):
+    sensor = hsr_world_copy.get_semantic_annotations_by_type(ForceTorqueSensor)[0]
+    synchronizer = WrenchSynchronizer(
+        world=hsr_world_copy, topic_name=sensor.wrench_topic, sensor=sensor
+    )
+    synchronizer.latest_message = wrench_message([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+
+    synchronizer.apply()
+
+    assert sensor.has_received_wrench
+    assert_allclose(sensor.force.evaluate().flatten()[:3], [1.0, 2.0, 3.0])
+    assert_allclose(sensor.torque.evaluate().flatten()[:3], [4.0, 5.0, 6.0])
+
+
+def test_a_wrench_leaves_the_kinematic_state_alone(init_rospy, hsr_world_copy: World):
+    """
+    A wrench is a measurement, not a degree of freedom.
+
+    Reporting a write would recompute the forward kinematics and reach every observer
+    once per reading, and readings arrive far faster than the robot moves.
+    """
+    sensor = hsr_world_copy.get_semantic_annotations_by_type(ForceTorqueSensor)[0]
+    synchronizer = WrenchSynchronizer(
+        world=hsr_world_copy, topic_name=sensor.wrench_topic, sensor=sensor
+    )
+    synchronizer.latest_message = wrench_message([0.0, 0.0, 9.0], [0.0, 0.0, 0.0])
+
+    assert synchronizer.apply() is False
+
+
+def test_a_sensor_without_a_reading_is_left_idle(init_rospy, hsr_world_copy: World):
+    sensor = hsr_world_copy.get_semantic_annotations_by_type(ForceTorqueSensor)[0]
+    synchronizer = WrenchSynchronizer(
+        world=hsr_world_copy, topic_name=sensor.wrench_topic, sensor=sensor
+    )
+
+    assert synchronizer.apply() is False
+    assert not sensor.has_received_wrench

@@ -12,6 +12,7 @@ except ImportError:
 
 from giskardpy.executor import Executor
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
+from giskardpy.middleware.ros2.input_synchronization import WorldStateInputs
 from giskardpy.motion_statechart.ros_context import RosContextExtension
 
 if TYPE_CHECKING:
@@ -45,9 +46,22 @@ class Ros2Executor(Executor):
     The publisher visualizing the debug expressions, created on compile when enabled.
     """
 
+    inputs: WorldStateInputs | None = field(kw_only=True, default=None)
+    """
+    Readings written into the world before each tick, such as a measured wrench.
+
+    ``None`` where something else already synchronizes them, which is the case on the
+    robot: its control loop reads the inputs itself and then ticks the executor.
+    """
+
     def __post_init__(self):
         super().__post_init__()
         self.context.add_extension(RosContextExtension(self.ros_node))
+
+    def tick(self):
+        if self.inputs is not None:
+            self.inputs.synchronize()
+        super().tick()
 
     def compile(self, motion_statechart: MotionStatechart):
         super().compile(motion_statechart)

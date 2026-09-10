@@ -26,6 +26,7 @@ from giskardpy.motion_statechart.graph_node import CancelMotion
 from giskardpy.motion_statechart.graph_node import EndMotion, Task
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.qp.qp_controller_config import QPControllerConfig
+from giskardpy.middleware.ros2.input_synchronization import WorldStateInputs
 from giskardpy.ros_executor import Ros2Executor
 from krrood.entity_query_language.factories import evaluate_condition
 from krrood.symbolic_math.symbolic_math import (
@@ -312,6 +313,9 @@ class GiskardExecutable(Executable):
                 ),
             ),
             ros_node=self.context.ros_node,
+            inputs=WorldStateInputs(
+                world=self.context.world, synchronizers=self.context.world_inputs
+            ),
         )
         motion_state_chart = self.motion_state_chart
         executor.compile(motion_state_chart)

@@ -480,7 +480,7 @@ def test_hsrb_semantic_annotation(_hsr_world_setup):
     assert len(hsrb.get_end_effectors()) == 1
     assert len(hsrb.get_arms()) == 1
 
-    assert len(hsrb.get_sensors()) == 5
+    assert len(hsrb.get_sensors()) == 6
     assert hsrb.mobile_base.torso is not None
 
 
