@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing_extensions import TYPE_CHECKING, Type
 
 from krrood.exceptions import DataclassException
+from semantic_digital_twin.spatial_types import Vector3
 from krrood.symbolic_math.symbolic_math import FloatVariable, Scalar
 from semantic_digital_twin.collision_checking.collision_detector import ClosestPoints
 
@@ -133,6 +134,28 @@ class NodeAlreadyBelongsToDifferentNodeError(NodeInitializationError):
 
     def suggest_correction(self) -> str:
         return "Create a copy of the node or remove it from its current parent first."
+
+
+@dataclass
+class NonPositiveVirtualMassError(NodeInitializationError):
+    """
+    Raised when an admittance is given a virtual mass that is not positive on every
+    axis, which no integration step can keep stable.
+    """
+
+    mass: Vector3
+    """
+    The rejected virtual mass.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f'Admittance "{self.node.unique_name}" was given the virtual mass '
+            f"{self.mass.to_np()[:3].flatten()}, which is not positive on every axis."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Give every axis of the mass a value greater than zero."
 
 
 @dataclass
