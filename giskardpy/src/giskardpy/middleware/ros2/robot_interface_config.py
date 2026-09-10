@@ -21,7 +21,9 @@ from giskardpy.middleware.ros2.command_publishing import (
     MinimumVelocity,
 )
 from giskardpy.middleware.ros2.control_loop import ControlLoop
+from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from giskardpy.middleware.ros2.input_synchronization import (
+    WrenchSynchronizer,
     LatestJointStateSynchronizer,
     PendingJointStateSynchronizer,
     OdometrySynchronizer,
@@ -159,6 +161,23 @@ class RobotInterfaceConfig(ABC):
         self.control_loop.inputs.synchronizers.append(
             LatestJointStateSynchronizer(world=self.world, topic_name=topic_name)
         )
+
+    def sync_force_torque_sensors(self) -> None:
+        """
+        Follow the topic of every force/torque sensor the robot annotates.
+
+        Sensors that name no topic are skipped: those are written directly, by a
+        simulation or a test, rather than read from ROS.
+        """
+        for sensor in self.world.get_semantic_annotations_by_type(ForceTorqueSensor):
+            if sensor.wrench_topic is None:
+                continue
+            synchronizer = WrenchSynchronizer(
+                world=self.world, topic_name=sensor.wrench_topic, sensor=sensor
+            )
+            self.motion_server.inputs.synchronizers.append(synchronizer)
+            if self.server_config.is_closed_loop:
+                self.control_loop.inputs.synchronizers.append(synchronizer)
 
     # %% commanding the robot
 

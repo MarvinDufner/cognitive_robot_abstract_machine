@@ -111,6 +111,9 @@ class Giskard:
         self.motion_server = self.create_motion_server()
         self.robot_interface_config.attach(self)
         self.robot_interface_config.setup()
+        # Annotated sensors carry their own topic, so following them needs no per-robot
+        # wiring the way joints and odometry do.
+        self.robot_interface_config.sync_force_torque_sensors()
         self.sanity_check()
 
     def create_motion_server(self) -> MotionServer:

@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, Generic, List, Tuple, Type, Union
 
+import numpy as np
+from geometry_msgs.msg import WrenchStamped
 from nav_msgs.msg import Odometry
 from rclpy.subscription import Subscription
 from sensor_msgs.msg import JointState
@@ -18,6 +20,7 @@ from giskardpy.middleware.ros2.exceptions import (
 from krrood.patterns.subclass_safe_generic import SubClassSafeGeneric
 from semantic_digital_twin.adapters.ros.tfwrapper import TFWrapper
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     ActiveConnection1DOF,
@@ -274,6 +277,40 @@ class OdometrySynchronizer(TopicInputSynchronizer[Odometry]):
             quat_y=pose.orientation.y,
             quat_z=pose.orientation.z,
         )
+
+
+# %% force torque
+
+
+@dataclass
+class WrenchSynchronizer(TopicInputSynchronizer[WrenchStamped]):
+    """
+    Writes a measured wrench into a force/torque sensor annotation.
+    """
+
+    sensor: ForceTorqueSensor = field(kw_only=True)
+    """
+    The sensor whose live reading follows the topic.
+    """
+
+    def apply_message(self, message: WrenchStamped) -> None:
+        force, torque = message.wrench.force, message.wrench.torque
+        self.sensor.write_wrench(
+            np.array([force.x, force.y, force.z]),
+            np.array([torque.x, torque.y, torque.z]),
+        )
+
+    def apply(self) -> bool:
+        """
+        Write the latest reading, and report that nothing has to be announced.
+
+        A wrench is a measurement rather than a degree of freedom, so the kinematic
+        state is unchanged by it. Reporting a write would recompute the forward
+        kinematics and reach every observer of the world once per reading, which arrive
+        far faster than the robot moves.
+        """
+        super().apply()
+        return False
 
 
 @dataclass
