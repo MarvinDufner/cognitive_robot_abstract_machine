@@ -9,6 +9,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from typing_extensions import Any, List, Optional, Tuple, Union
 
+from semantic_digital_twin.spatial_types import Vector3
+
 from semantic_digital_twin.datastructures.alignment import AlignmentPair
 from semantic_digital_twin.robots.robot_part_mixins import HasMobileBase
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Tool
@@ -165,6 +167,15 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
             return []
         return self.tool.tool_alignment(target)
 
+    desired_force: Optional[Vector3] = None
+    """
+    Contact force to hold against the target while the tool moves, in the world frame.
+
+    ``None`` follows the tool path as generated, which keeps the tool just clear of the
+    surface. Only wiping presses; the other tool motions cut, mix and pour in free
+    space.
+    """
+
     @property
     def _action_plan(self) -> PlanNode:
         """
@@ -181,6 +192,7 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
                     tip=self.tool.get_tool_frame(),
                     position_threshold=self.position_threshold,
                     orientation_threshold=self.orientation_threshold,
+                    desired_force=self.desired_force,
                 )
             ]
         )
@@ -324,7 +336,13 @@ class WipingAction(ToolMotionAction):
 
     def _build_tool_path(self) -> ToolPath:
         if self.surface is not None:
-            return build_surface_path(self.surface, technique=self.technique)
+            if self.desired_force is None:
+                return build_surface_path(self.surface, technique=self.technique)
+            # Pressing puts the path on the surface and lets the admittance regulate how
+            # hard; the default clearance would keep the tool just above it instead.
+            return build_surface_path(
+                self.surface, technique=self.technique, approach_clearance=0.0
+            )
         if self.technique is WipingTechnique.SPREAD:
             return ToolPath(
                 [

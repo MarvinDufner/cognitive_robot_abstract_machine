@@ -6,6 +6,9 @@ from giskardpy.motion_statechart.goals.templates import Parallel, Sequence
 from giskardpy.motion_statechart.graph_node import Task
 from giskardpy.motion_statechart.binding_policy import GoalBindingPolicy
 from giskardpy.motion_statechart.tasks.align_planes import AlignPlanes
+from giskardpy.motion_statechart.tasks.admittance_tasks import (
+    AdmittanceCartesianTrajectory,
+)
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPose,
     CartesianPosition,
@@ -360,6 +363,16 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
     Defaults to the arm's tool frame.
     """
 
+    desired_force: Optional[Vector3] = None
+    """
+    Contact force to hold against the surface while following the waypoints, in the
+    waypoints' own frame.
+
+    ``None`` follows the waypoints as given. Set it to press: the tip then yields to the
+    measured wrench instead of tracking the waypoints rigidly, which needs a
+    force/torque sensor on the chain to the tip.
+    """
+
     def perform(self):
         return
 
@@ -413,7 +426,14 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         )
         if self.position_threshold is not None:
             trajectory_kwargs["threshold"] = self.position_threshold
-        tasks = [CartesianPositionTrajectory(**trajectory_kwargs)]
+        if self.desired_force is None:
+            tasks = [CartesianPositionTrajectory(**trajectory_kwargs)]
+        else:
+            tasks = [
+                AdmittanceCartesianTrajectory(
+                    desired_force=self.desired_force, **trajectory_kwargs
+                )
+            ]
         tasks.extend(
             AlignPlanes(
                 tip_link=tip_link,
@@ -427,11 +447,22 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         if isinstance(self.robot, Justin):
             tasks.append(self._upright_torso_task(tip_link, root_link))
         motion_statechart_nodes = (
-            self._only_allow_gripper_collision_rules(self.arm)
+            # Pressing means touching, so the tool is allowed onto what it presses on;
+            # without that, collision avoidance cancels the motion on first contact.
+            self._only_allow_gripper_collision_rules(
+                self.arm,
+                also_touching=[tip_link] if self.desired_force is not None else None,
+            )
             if self.allow_gripper_collision
             else []
         )
-        motion_statechart_nodes.append(Parallel(tasks))
+        tracking = Parallel(tasks)
+        if self.desired_force is not None:
+            # Pressing ends when the trajectory is covered or when the arm can get no
+            # further, whichever comes first; the wrench source only produces and never
+            # reports success, so it cannot end the motion by itself.
+            tracking = Parallel([tracking, LocalMinimumReached()], minimum_success=1)
+        motion_statechart_nodes.append(tracking)
         return Parallel(motion_statechart_nodes)
 
 
