@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import StrEnum
+from itertools import product
 from typing import (
     Optional,
     Self,
@@ -21,6 +23,7 @@ from typing import (
 )
 from uuid import UUID
 
+import numpy as np
 from typing_extensions import get_origin, get_args, Generic, TypeVar, Unpack
 
 from krrood.adapters.json_serializer import list_like_classes
@@ -29,6 +32,8 @@ from krrood.class_diagrams.attribute_introspector import (
 )
 from krrood.entity_query_language.factories import variable, contains, a, entity
 from krrood.ormatic.utils import classproperty
+from krrood.symbolic_math.float_variable_data import FloatVariableData
+from krrood.symbolic_math.symbolic_math import VariableParameters
 from krrood.utils import get_generic_type_parameters
 from semantic_digital_twin.datastructures.definitions import JointStateType
 from semantic_digital_twin.datastructures.field_of_view import FieldOfView
@@ -38,6 +43,8 @@ from semantic_digital_twin.exceptions import (
     UselessConceptError,
     DuplicateRobotAssignmentsError,
     MissingDefaultCameraError,
+    NoForceTorqueSensorForFrameError,
+    NoForceTorqueSensorForTipError,
 )
 from semantic_digital_twin.robots.robot_part_mixins import (
     HasEndEffector,
@@ -57,7 +64,7 @@ from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
 )
 from semantic_digital_twin.spatial_types.spatial_types import Pose
-from semantic_digital_twin.spatial_types.derivatives import DerivativeMap
+from semantic_digital_twin.spatial_types.derivatives import DerivativeMap, Derivatives
 from semantic_digital_twin.world_description.connections import (
     ActiveConnection,
     FixedConnection,
@@ -509,6 +516,169 @@ class Camera(Sensor, ABC):
         )
 
 
+class WrenchTopic(StrEnum):
+    """
+    The topics a force/torque reading travels on between the sensor and its consumers.
+    """
+
+    RAW = "/wrist_wrench/raw"
+    """What the sensor itself publishes, still carrying the weight of the tool."""
+
+    COMPENSATED = "/wrist_wrench/compensated"
+    """The external contact wrench, once the load and the bias have been removed."""
+
+
+@dataclass(frozen=True)
+class ForceTorqueSensorLoad:
+    """
+    The static load a force/torque sensor carries, in the sensor frame.
+
+    Describes what is mounted past the sensor, so a reading at rest can be predicted and
+    subtracted, leaving only the external contact wrench:
+    ``force_raw = force_offset + mass * gravity_in_sensor`` and
+    ``torque_raw = torque_offset + first_moment x gravity_in_sensor``.
+    """
+
+    mass: float = 0.0
+    """Mass mounted past the sensor, in kg."""
+
+    first_moment: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    """First mass moment ``mass * centre_of_mass``, in kg m."""
+
+    force_offset: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    """Constant force bias of the unloaded sensor, in N."""
+
+    torque_offset: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    """Constant torque bias of the unloaded sensor, in N m."""
+
+
+@dataclass(eq=False)
+class ForceTorqueSensor(Sensor, ABC):
+    """
+    A six-axis force/torque sensor, measuring the wrench acting at its root frame.
+
+    The sensor owns the symbolic force and torque of its live wrench together with the
+    values behind them, mirroring how a degree of freedom owns its position symbol.
+    Consumers reach the symbols through the robot annotation; producers push new
+    readings through :meth:`write_wrench`.
+    """
+
+    force: Vector3 = field(init=False, default=None, compare=False, repr=False)
+    """
+    Symbolic force in the sensor frame, its live value held in :attr:`wrench_data`.
+    """
+
+    torque: Vector3 = field(init=False, default=None, compare=False, repr=False)
+    """
+    Symbolic torque in the sensor frame, its live value held in :attr:`wrench_data`.
+    """
+
+    wrench_data: FloatVariableData = field(
+        init=False, default_factory=FloatVariableData, compare=False, repr=False
+    )
+    """
+    Values behind :attr:`force` and :attr:`torque`. Sensor-owned and therefore of fixed
+    size, so an expression compiled against it stays independent of how many nodes the
+    motion statechart holds.
+    """
+
+    has_received_wrench: bool = field(
+        init=False, default=False, compare=False, repr=False
+    )
+    """
+    Whether a reading has been written, so consumers can tell an idle sensor from one
+    measuring zero.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.force = Vector3.create_with_variables(f"{self.name}/force")
+        self.force.reference_frame = self.root
+        self.torque = Vector3.create_with_variables(f"{self.name}/torque")
+        self.torque.reference_frame = self.root
+        self.wrench_data.register_expression(self.force)
+        self.wrench_data.register_expression(self.torque)
+
+    def write_wrench(self, force: np.ndarray, torque: np.ndarray) -> None:
+        """
+        Overwrite the live wrench. The single entry point for every producer: a
+        real-robot subscriber, a simulation, or a test.
+
+        .. note:: Writes and returns; this never notifies the world of a state change.
+
+        :param force: Measured force in the sensor frame.
+        :param torque: Measured torque in the sensor frame.
+        """
+        self.wrench_data.set_value(self.force, force)
+        self.wrench_data.set_value(self.torque, torque)
+        self.has_received_wrench = True
+
+    @classmethod
+    def with_root(
+        cls, world: World, frame: KinematicStructureEntity
+    ) -> ForceTorqueSensor:
+        """
+        Return the sensor in ``world`` rooted at ``frame``.
+
+        Resolving by frame rather than holding the annotation keeps consumers correct
+        across the world's JSON round trip: the frame survives serialization, and the
+        live annotation is looked up from the world that is actually executed.
+
+        :param world: World holding the sensor annotation.
+        :param frame: Frame the wanted sensor is rooted at.
+        :raises NoForceTorqueSensorForFrameError: If no sensor is rooted at the frame.
+        """
+        for sensor in world.get_semantic_annotations_by_type(cls):
+            if sensor.root == frame:
+                return sensor
+        raise NoForceTorqueSensorForFrameError(frame=frame)
+
+    @classmethod
+    def for_tip(cls, world: World, tip: KinematicStructureEntity) -> ForceTorqueSensor:
+        """
+        Return the sensor whose measurements pertain to ``tip``: the one rooted at a
+        kinematic ancestor of ``tip``, closest to it when several lie on the chain.
+
+        Resolving by the controlled tip keeps a caller agnostic of the robot's wiring
+        and disambiguates multi-arm robots, where each arm's tip selects its own sensor.
+
+        :param world: World holding the sensor annotation.
+        :param tip: Tip whose measurements are wanted.
+        :raises NoForceTorqueSensorForTipError: If no sensor lies on the chain.
+        """
+        chain = world.compute_chain_of_kinematic_structure_entities(world.root, tip)
+        depth_by_entity = {entity: depth for depth, entity in enumerate(chain)}
+        sensors_on_chain = [
+            sensor
+            for sensor in world.get_semantic_annotations_by_type(cls)
+            if sensor.root in depth_by_entity
+        ]
+        if not sensors_on_chain:
+            raise NoForceTorqueSensorForTipError(tip=tip)
+        return max(sensors_on_chain, key=lambda sensor: depth_by_entity[sensor.root])
+
+    @classproperty
+    def wrench_topic(cls) -> Optional[str]:
+        """
+        The topic this kind of sensor's readings arrive on.
+
+        ``None`` for a sensor that is not fed from ROS, which is every sensor written
+        directly by a simulation or a test.
+        """
+        return None
+
+    @classproperty
+    def load(cls) -> ForceTorqueSensorLoad:
+        """
+        The static load this kind of sensor carries.
+
+        A property of the sensor model rather than of one instance, so a tool that has no
+        world, such as an offline bag check, can still ask for it. Defaults to nothing
+        mounted, so an uncalibrated sensor compensates to its own raw reading.
+        """
+        return ForceTorqueSensorLoad()
+
+
 @dataclass(eq=False)
 class Finger(KinematicChain, ABC):
     """
@@ -568,6 +738,63 @@ class Arm(KinematicChain, HasEndEffector[TGenericEndEffector], ABC):
     """
     An arm is a kinematic chain that has an end effector attached to it.
     """
+
+    def maximum_reach(self, samples_per_degree_of_freedom: int = 5) -> float:
+        """
+        The largest horizontal distance between the robot's root and this arm's tool
+        frame, in m.
+
+        A purely kinematic upper bound: no inverse kinematics and no collision checking,
+        so a caller gets an optimistic reach that geometric planning can work with.
+
+        .. note:: Unlike :meth:`KinematicChain.approximate_length`, this measures how far
+            the tool can actually be placed horizontally rather than the length of the
+            chain, so a folded or vertically stacked arm is not overestimated.
+
+        :param samples_per_degree_of_freedom: How many positions each degree of freedom
+            is sampled at. Interior samples are required because the farthest reach sits
+            at an intermediate joint angle rather than at a limit.
+        """
+        # Both bounds are required: has_position_limits already holds when only one
+        # side is set, which is not an interval that can be sampled.
+        degrees_of_freedom = [
+            dof
+            for connection in self.connections
+            if isinstance(connection, ActiveConnection)
+            for dof in connection.active_dofs
+            if dof.has_position_limits
+            and dof.limits.lower.position is not None
+            and dof.limits.upper.position is not None
+        ]
+        root_P_tool = self._world.compose_forward_kinematics_expression(
+            self._robot.root, self.end_effector.tool_frame
+        ).to_position()
+        horizontal_distance = (
+            Vector3(x=root_P_tool.x, y=root_P_tool.y)
+            .norm()
+            .compile(
+                parameters=VariableParameters.from_lists(
+                    self._world.state.position_float_variables
+                )
+            )
+        )
+        samples = [
+            np.linspace(
+                dof.limits.lower.position,
+                dof.limits.upper.position,
+                samples_per_degree_of_freedom,
+            )
+            for dof in degrees_of_freedom
+        ]
+        initial_positions = self._world.state.positions.copy()
+        reach = 0.0
+        for configuration in product(*samples):
+            for dof, position in zip(degrees_of_freedom, configuration):
+                self._world.state[dof.id].position = position
+            reach = max(reach, horizontal_distance(self._world.state.positions).item())
+        self._world.state.set_derivative(Derivatives.position, initial_positions)
+        self._world.notify_state_change()
+        return reach
 
 
 @dataclass(eq=False)
@@ -636,6 +863,15 @@ class MobileBase(AbstractRobotPart, Generic[TGenericDrive], ABC):
         return self.root.collision.as_bounding_box_collection_in_frame(
             self._world.root
         ).bounding_box()
+
+    @property
+    def footprint_radius(self) -> float:
+        """
+        Horizontal radius of the base, in m: how far it extends from its own origin, and
+        therefore how close that origin can be placed to an obstacle.
+        """
+        box = self.bounding_box
+        return max(box.depth, box.width) / 2.0
 
 
 @dataclass(eq=False)

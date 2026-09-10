@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+import numpy as np
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.resources import files
@@ -37,6 +38,9 @@ from semantic_digital_twin.robots.robot_parts import (
     AbstractRobot,
     Arm,
     Camera,
+    ForceTorqueSensor,
+    ForceTorqueSensorLoad,
+    WrenchTopic,
     Finger,
     Neck,
     Torso,
@@ -197,7 +201,50 @@ class HSRBHandCamera(Camera):
 
 
 @dataclass(eq=False)
-class HSRBArm(Arm[HSRBGripper], HasSensors[HSRBHandCamera]):
+class HSRBWristForceTorqueSensor(ForceTorqueSensor):
+    """
+    The Minebea six-axis force/torque sensor between the HSRB's wrist and its gripper.
+    """
+
+    def setup_hardware_interfaces(self):
+        pass
+
+    def setup_joint_states(self) -> List[JointState]:
+        return []
+
+    @classmethod
+    def setup_default_configuration_in_world_below_robot_root(
+        cls, robot_root: KinematicStructureEntity
+    ) -> Self:
+        return cls(
+            root=robot_root._world.get_body_in_branch_by_name(
+                robot_root, "wrist_ft_sensor_frame"
+            )
+        )
+
+    @classproperty
+    def wrench_topic(cls) -> str:
+        return WrenchTopic.COMPENSATED
+
+    @classproperty
+    def load(cls) -> ForceTorqueSensorLoad:
+        """
+        The gripper hanging past the sensor, identified from a full-orientation sweep.
+
+        The offsets are a starting point rather than a constant: they drift across
+        power cycles, so a re-tare in free space corrects them per session, while the
+        mass and first moment stay put.
+        """
+        return ForceTorqueSensorLoad(
+            mass=0.5776,
+            first_moment=np.array([0.0010, 0.0011, -0.0292]),
+            force_offset=np.array([-9.290, 12.430, -57.135]),
+            torque_offset=np.array([-0.0585, -0.0315, 0.1374]),
+        )
+
+
+@dataclass(eq=False)
+class HSRBArm(Arm[HSRBGripper], HasSensors[HSRBHandCamera, HSRBWristForceTorqueSensor]):
 
     def setup_hardware_interfaces(self):
         controlled_joints = [
