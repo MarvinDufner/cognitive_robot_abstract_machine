@@ -67,14 +67,15 @@ doc = [
 ]
 
 [tool.uv]
-# make treon require docopt-ng instead of the unmaintained docopt
-override-dependencies = [
-    { package = { name = "treon" }, dependencies = ["docopt-ng"] },
-]
-exclude-dependencies = [
-    { package = { name = "treon" }, dependencies = ["docopt"] },
-    "pathlib",
-]
+# pathlib is in the standard library, and the package of that name on PyPI shadows it.
+exclude-dependencies = ["pathlib"]
+
+# treon declares the unmaintained docopt; restate its dependencies with the maintained
+# fork. Both keys above take requirement strings, so naming a package's own dependencies
+# needs this table rather than an entry in one of them.
+[[tool.uv.dependency-metadata]]
+name = "treon"
+requires-dist = ["nbconvert", "jupyter-client", "jupyter", "docopt-ng"]
 
 [tool.uv.workspace]
 members = [
