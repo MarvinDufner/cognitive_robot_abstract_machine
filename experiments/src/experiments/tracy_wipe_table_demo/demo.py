@@ -5,8 +5,9 @@ hand, regulating how hard it presses with the left wrist's force/torque sensor.
 The tool is brought over the patch, lowered until the sensor feels the bench, and only
 then wiped, so where the surface really is is measured rather than assumed.
 
-.. todo:: Nothing publishes Tracy's wrench topics yet, so a real run needs a wrench
-    compensation node per arm before the press is meaningful. See
+.. todo:: The sensor is taken as the control program leaves it, zeroed at start. Once
+    the tool has to change orientation under force, the load has to be removed properly:
+    run a wrench compensation node per arm and read its topic instead. See
     :class:`~semantic_digital_twin.robots.tracy.TracyWrenchTopic`.
 """
 
@@ -20,7 +21,6 @@ from typing_extensions import ClassVar, List
 
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import ExecutionType, WipingTechnique, Arms
-from coraplex.language import CodeNode
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
@@ -37,9 +37,7 @@ from experiments.wipe_table_demo.demo import (
     WipingDemonstration,
 )
 from giskardpy.middleware.ros2.input_synchronization import InputSynchronizer
-from giskardpy.ros2_tools.wrench_compensation_node import WrenchCompensationClient
 from semantic_digital_twin.api import RobotSpecification, WorldSpecification
-from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge
 from semantic_digital_twin.spatial_types import Point3, Vector3
@@ -122,7 +120,6 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         sponge = world.get_semantic_annotations_by_type(Sponge)[0]
         patch = self.wiped_pose(world)
         steps = [ParkArmsAction(arm=Arms.BOTH), self.build_approach(context, patch)]
-        steps.extend(self.build_retare_plan(context))
         steps.append(
             LowerUntilContactMotion(
                 goal_point=Point3(
@@ -171,26 +168,6 @@ class TracyWipeTableDemonstration(WipingDemonstration):
             end_effector=ViewManager.get_end_effector_view(self.arm, context.robot),
             allow_gripper_collision=True,
         )
-
-    def build_retare_plan(self, context: Context) -> List[PlanNode]:
-        """
-        :param context: Plan context holding the world.
-        :return: Zeroing the sensor of the wiping hand, or nothing in simulation, where
-            the contact model writes the wrench directly.
-
-        Zeroing happens where the tool waits above the bench: the hand hangs free there,
-        in the orientation it presses in, which is what makes one constant subtraction
-        valid for the whole wipe.
-        """
-        if self.execution_type is not ExecutionType.REAL:
-            return []
-        sensor = ForceTorqueSensor.for_tip(
-            context.world, context.world.get_body_by_name(SPONGE_NAME)
-        )
-        client = WrenchCompensationClient(
-            node=self.ros_node, service=sensor.retare_service
-        )
-        return [CodeNode(code=client.retare)]
 
     def world_inputs(self, world: World) -> List[InputSynchronizer]:
         """

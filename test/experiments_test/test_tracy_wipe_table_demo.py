@@ -19,7 +19,6 @@ from experiments.wipe_table_demo.demo import (
     SPONGE_NAME,
     SimulatedContactWrench,
 )
-from coraplex.language import CodeNode
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import Tracy, TracyLeftForceTorqueSensor
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge
@@ -112,9 +111,7 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
     centre = demonstration.wiped_pose(world).to_np()[:3, 3]
     # What the sponge sweeps: the patch, widened by the sponge it is wiped with and by
     # the gap the patch is meant to keep.
-    reach_x = (
-        WIPED_PATCH_LENGTH + swept.max_x - swept.min_x
-    ) / 2 + OBSTACLE_CLEARANCE
+    reach_x = (WIPED_PATCH_LENGTH + swept.max_x - swept.min_x) / 2 + OBSTACLE_CLEARANCE
     reach_y = (WIPED_PATCH_WIDTH + swept.max_y - swept.min_y) / 2 + OBSTACLE_CLEARANCE
     patch_min_x, patch_max_x = centre[0] - reach_x, centre[0] + reach_x
     patch_min_y, patch_max_y = centre[1] - reach_y, centre[1] + reach_y
@@ -152,40 +149,6 @@ def test_a_simulated_run_feels_the_bench_it_wipes():
 
     assert [type(reading) for reading in inputs] == [SimulatedContactWrench]
     assert inputs[0].surface is world.get_body_by_name(BENCH_NAME)
-
-
-# %% zeroing the sensor
-
-
-def test_a_simulated_run_has_nothing_to_zero():
-    """
-    The contact model writes the wrench itself, so there is no bias to subtract.
-    """
-    demonstration, world = populated_demonstration()
-
-    assert demonstration.build_retare_plan(demonstration.build_context(world)) == []
-
-
-def test_a_real_run_zeroes_the_sensor_of_the_hand_that_wipes():
-    demonstration, world = populated_demonstration(execution_type=ExecutionType.REAL)
-    context = demonstration.build_context(world)
-
-    steps = demonstration.build_retare_plan(context)
-
-    assert [type(step) for step in steps] == [CodeNode]
-
-
-def test_the_sensor_is_zeroed_before_it_is_pressed():
-    """
-    Zeroing while the tool already touches the bench would subtract the press itself.
-    """
-    demonstration, world = populated_demonstration(execution_type=ExecutionType.REAL)
-
-    steps = plan_steps(demonstration, world)
-
-    zeroing = index_of(steps, CodeNode)
-    assert zeroing < index_of(steps, LowerUntilContactMotion)
-    assert zeroing < index_of(steps, WipingAction)
 
 
 def test_the_wipe_presses_into_the_bench_and_travels_across_it():

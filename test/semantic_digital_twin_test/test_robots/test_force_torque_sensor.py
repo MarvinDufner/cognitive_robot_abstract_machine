@@ -185,10 +185,8 @@ def test_the_two_arms_of_a_two_armed_robot_read_their_own_topic():
     """
     One topic for both arms would feed each admittance the other hand's contact.
     """
-    assert TracyLeftForceTorqueSensor.wrench_topic is TracyWrenchTopic.LEFT_COMPENSATED
-    assert (
-        TracyRightForceTorqueSensor.wrench_topic is TracyWrenchTopic.RIGHT_COMPENSATED
-    )
+    assert TracyLeftForceTorqueSensor.wrench_topic is TracyWrenchTopic.LEFT_RAW
+    assert TracyRightForceTorqueSensor.wrench_topic is TracyWrenchTopic.RIGHT_RAW
 
 
 def test_each_arm_declares_everything_its_compensation_needs(tracy_world):
@@ -196,22 +194,19 @@ def test_each_arm_declares_everything_its_compensation_needs(tracy_world):
     A node is started per arm from these alone, so a name left pointing at the other arm
     would compensate one sensor against the other's readings.
     """
-    for sensor, raw, compensated, service in (
+    for sensor, raw, service in (
         (
             TracyLeftForceTorqueSensor,
             TracyWrenchTopic.LEFT_RAW,
-            TracyWrenchTopic.LEFT_COMPENSATED,
             TracyWrenchService.LEFT,
         ),
         (
             TracyRightForceTorqueSensor,
             TracyWrenchTopic.RIGHT_RAW,
-            TracyWrenchTopic.RIGHT_COMPENSATED,
             TracyWrenchService.RIGHT,
         ),
     ):
         assert sensor.raw_wrench_topic is raw
-        assert sensor.wrench_topic is compensated
         assert sensor.retare_service is service
         assert sensor.gravity_frame is TracyFrame.LEVEL
 
