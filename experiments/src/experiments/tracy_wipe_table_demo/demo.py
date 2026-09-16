@@ -96,10 +96,17 @@ PRESS_DAMPING = Vector3(x=600.0, y=600.0, z=600.0)
 """Virtual damping the press yields with, per axis, in N s/m.
 
 Six times the default the task carries, which was chosen against a simulated surface two
-orders of magnitude softer than this bench. Measured on the bench, the default pressed in
-a limit cycle at 12.5 Hz, peaking at 160 N against the 8 N asked for: the control loop runs
-at 80 Hz, so a period of six cycles means the offset was moving about as fast as the arm
-could follow it. Damping it this much moves the press well inside that.
+orders of magnitude softer than this bench. Measured on the bench, it brought the press
+from 2.5 to 1.6 times the force asked for and its peak from 143 N to 112 N.
+"""
+
+PRESS_MASS = Vector3(x=20.0, y=20.0, z=20.0)
+"""Virtual mass the press yields with, per axis, in kg.
+
+With :data:`PRESS_DAMPING` this gives the press a time constant of 33 ms, about three
+control cycles, so it follows the average of a contact that makes and breaks rather than
+each impact. At the default of 1 kg the time constant is under a cycle and the press
+chased every impact: measured on the bench it left the surface every 0.2 s.
 """
 
 DESCENT_OVERSHOOT = 0.02
@@ -168,6 +175,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 length=WIPED_PATCH_LENGTH,
                 width=WIPED_PATCH_WIDTH,
                 desired_force=Vector3(z=PRESS_FORCE),
+                admittance_mass=PRESS_MASS,
                 admittance_damping=PRESS_DAMPING,
             )
         )

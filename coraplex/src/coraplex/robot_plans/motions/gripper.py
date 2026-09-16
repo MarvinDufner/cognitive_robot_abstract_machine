@@ -466,6 +466,15 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
     Defaults to the arm's tool frame.
     """
 
+    admittance_mass: Optional[Vector3] = None
+    """
+    Virtual mass the press yields with, per axis, in kg.
+
+    ``None`` leaves the default the task was written with. Together with the damping it
+    sets how long the press takes to react, so raising it makes the press follow the
+    average of a chattering contact rather than each impact in it.
+    """
+
     admittance_damping: Optional[Vector3] = None
     """
     Virtual damping the press yields with, per axis, in N s/m.
@@ -525,6 +534,8 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         if self.desired_force is None:
             tasks = [CartesianPositionTrajectory(**trajectory_kwargs)]
         else:
+            if self.admittance_mass is not None:
+                trajectory_kwargs["mass"] = self.admittance_mass
             if self.admittance_damping is not None:
                 trajectory_kwargs["damping"] = self.admittance_damping
             tasks = [

@@ -210,6 +210,12 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
             return []
         return self.tool.tool_alignment(target)
 
+    admittance_mass: Optional[Vector3] = None
+    """
+    Virtual mass the press yields with, per axis, in kg.
+
+    ``None`` leaves the default. Only meaningful together with :attr:`desired_force`.
+    """
     admittance_damping: Optional[Vector3] = None
     """
     Virtual damping the press yields with, per axis, in N s/m.
@@ -242,6 +248,7 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
                     position_threshold=self.position_threshold,
                     orientation_threshold=self.orientation_threshold,
                     desired_force=self.desired_force,
+                    admittance_mass=self.admittance_mass,
                     admittance_damping=self.admittance_damping,
                 )
             ]
