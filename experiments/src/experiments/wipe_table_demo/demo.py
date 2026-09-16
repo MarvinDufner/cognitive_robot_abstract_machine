@@ -228,6 +228,19 @@ class WipingDemonstration(RobotDemonstration, ABC):
     Arm that holds the sponge.
     """
 
+    @property
+    def unmodelled_tool_length(self) -> float:
+        """
+        How much further from the hand the sponge really sits than the robot description
+        says, in m.
+
+        Zero when the description is complete. A positive value stands in for hardware it
+        is missing, and moves the whole motion that much further from the surface: the
+        press can only yield by :attr:`AdmittanceCartesianTrajectory.maximum_offset`, so a
+        description short by more than that drives the tool through the surface instead.
+        """
+        return 0.0
+
     def is_scene_populated(self, world: World) -> bool:
         return world.is_kinematic_structure_entity_in_world_by_name(SPONGE_NAME)
 
@@ -253,7 +266,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
                     child=sponge_body,
                     parent_T_connection_expression=(
                         HomogeneousTransformationMatrix.from_xyz_rpy(
-                            z=float(SPONGE_SCALE.z) / 2.0
+                            z=float(SPONGE_SCALE.z) / 2.0 + self.unmodelled_tool_length
                         )
                     ),
                 )

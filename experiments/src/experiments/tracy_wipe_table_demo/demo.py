@@ -74,6 +74,15 @@ Far enough to be clear of the surface wherever it really is, close enough that t
 descent that follows does not take long.
 """
 
+UNMODELLED_ADAPTER_LENGTH = 0.06
+"""Length of the adapter between the flange and the gripper, in m.
+
+.. todo:: Tracy's description is missing this piece, so every frame of the gripper sits
+    that much too close to the flange. Remove this once the description has it. Guessing
+    high is the safe direction: the descent feels for the surface either way, whereas
+    guessing low presses the tool through it by the difference.
+"""
+
 OBSTACLE_CLEARANCE = 0.03
 """Gap kept between the wiped patch and anything standing on the bench, in m.
 
@@ -99,6 +108,10 @@ class TracyWipeTableDemonstration(WipingDemonstration):
     """
 
     ros_node_name: ClassVar[str] = "tracy_wipe_table_demo_node"
+
+    @property
+    def unmodelled_tool_length(self) -> float:
+        return UNMODELLED_ADAPTER_LENGTH
 
     def build_simulated_world(self) -> World:
         return WorldSpecification(

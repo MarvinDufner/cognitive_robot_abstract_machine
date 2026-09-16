@@ -9,6 +9,7 @@ from experiments.tracy_wipe_table_demo.demo import (
     APPROACH_HEIGHT,
     BENCH_NAME,
     OBSTACLE_CLEARANCE,
+    UNMODELLED_ADAPTER_LENGTH,
     WIPED_PATCH_LENGTH,
     WIPED_PATCH_WIDTH,
     TracyWipeTableDemonstration,
@@ -17,6 +18,7 @@ from experiments.wipe_table_demo.demo import (
     CONTACT_STIFFNESS,
     PRESS_FORCE,
     SPONGE_NAME,
+    SPONGE_SCALE,
     SimulatedContactWrench,
 )
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
@@ -51,6 +53,23 @@ def test_the_sponge_hangs_off_the_wiping_hand():
 
     assert world.get_semantic_annotations_by_type(Sponge)
     assert sponge.parent_connection.parent.name.name == "l_gripper_tool_frame"
+
+
+def test_the_sponge_hangs_where_the_hardware_puts_it_not_where_the_description_does():
+    """
+    The description is missing an adapter, so a sponge placed by it alone would sit that
+    much too close to the hand, and every press would drive the tool that much through
+    the surface.
+    """
+    demonstration, world = populated_demonstration()
+    tool_frame = world.get_body_by_name("l_gripper_tool_frame")
+    sponge = world.get_body_by_name(SPONGE_NAME)
+
+    along_the_tool = world.compute_forward_kinematics_np(tool_frame, sponge)[2, 3]
+
+    assert along_the_tool == pytest.approx(
+        UNMODELLED_ADAPTER_LENGTH + float(SPONGE_SCALE.z) / 2
+    )
 
 
 def test_the_sponge_is_measured_by_the_sensor_of_the_arm_that_holds_it():
