@@ -164,6 +164,11 @@ class SimulatedContactWrench(InputSynchronizer):
     Extra stiffness per unit approach speed, in N s/m^2.
     """
 
+    maximum_force: float = field(default=MAXIMUM_CONTACT_FORCE, kw_only=True)
+    """
+    Largest force this surface pushes back with, in N.
+    """
+
     _penetration: float = field(init=False, default=0.0)
     """
     Penetration measured on the previous reading, in m.
@@ -204,7 +209,7 @@ class SimulatedContactWrench(InputSynchronizer):
         if penetration > 0.0:
             magnitude = min(
                 penetration * (self.stiffness + self.velocity_gain * approach_speed),
-                MAXIMUM_CONTACT_FORCE,
+                self.maximum_force,
             )
             world_R_sensor = self.world.compute_forward_kinematics_np(
                 self.world.root, sensor.root
