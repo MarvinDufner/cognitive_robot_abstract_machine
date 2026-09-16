@@ -125,9 +125,7 @@ def test_a_moving_sensor_is_refused():
     """
     Averaging while the arm moves would fold real motion into the bias.
     """
-    estimator = BiasEstimator(
-        required_samples=10, stationary_force_standard_deviation=0.5
-    )
+    estimator = BiasEstimator(required_samples=10, stationary_force_spread=0.5)
 
     for sample in range(estimator.required_samples):
         estimator.add(np.array([float(sample), 0.0, 0.0]), np.zeros(3))
@@ -151,6 +149,40 @@ def test_a_window_counts_what_it_collected():
     estimator.reset()
 
     assert estimator.collected == 0
+
+
+def test_a_window_reports_how_far_its_forces_spread():
+    """
+    A rejected window is only actionable if it says by how much, since the bar has to
+    sit above whatever the sensor reads at rest.
+    """
+    estimator = BiasEstimator(required_samples=2)
+
+    estimator.add(np.array([0.0, 0.0, 1.0]), np.zeros(3))
+    estimator.add(np.array([0.0, 0.0, 3.0]), np.zeros(3))
+
+    assert estimator.force_spread == pytest.approx(1.0)
+
+
+def test_noise_averages_out_between_the_halves_of_a_window():
+    """
+    A reading that only jitters has to look different from one that is walking away, or
+    a re-tare cannot say which stopped it.
+    """
+    estimator = BiasEstimator(required_samples=4)
+    for force in (-1.0, 1.0, -1.0, 1.0):
+        estimator.add(np.array([0.0, 0.0, force]), np.zeros(3))
+
+    assert estimator.force_shift == pytest.approx(0.0)
+
+
+def test_a_drifting_reading_shows_up_as_a_shift_across_the_window():
+    estimator = BiasEstimator(required_samples=4)
+    for force in (0.0, 1.0, 2.0, 3.0):
+        estimator.add(np.array([0.0, 0.0, force]), np.zeros(3))
+
+    # The halves average 0.5 and 2.5.
+    assert estimator.force_shift == pytest.approx(2.0)
 
 
 def test_a_short_window_is_not_a_result():

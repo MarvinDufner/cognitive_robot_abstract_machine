@@ -696,6 +696,17 @@ class ForceTorqueSensor(Sensor, ABC):
         return self.wrench_data.data[:3]
 
     @classproperty
+    def median_readings(cls) -> int:
+        """
+        How many of the most recent readings the live wrench is the median of.
+
+        One writes every reading through. More drops the isolated spikes a sensor's data
+        path can produce, at the cost of half the window in delay, and needs a window
+        wider than the longest run of spikes it has to survive.
+        """
+        return 1
+
+    @classproperty
     def raw_wrench_topic(cls) -> Optional[str]:
         """
         The topic this kind of sensor's driver publishes, still carrying the load.

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, Generic, List, Tuple, Type, Union
+from typing import Deque, Dict, Generic, List, Tuple, Type, Union
 
 import numpy as np
 from geometry_msgs.msg import WrenchStamped
@@ -293,12 +294,44 @@ class WrenchSynchronizer(TopicInputSynchronizer[WrenchStamped]):
     The sensor whose live reading follows the topic.
     """
 
-    def apply_message(self, message: WrenchStamped) -> None:
+    _recent_readings: Deque[np.ndarray] = field(init=False, repr=False)
+    """
+    The readings the written wrench is the median of, force then torque, newest last.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._recent_readings = deque(maxlen=max(1, self.sensor.median_readings))
+
+    @staticmethod
+    def reading_of(message: WrenchStamped) -> np.ndarray:
+        """
+        :param message: The reading as it arrived.
+        :return: Its force and torque, in that order.
+        """
         force, torque = message.wrench.force, message.wrench.torque
-        self.sensor.write_wrench(
-            np.array([force.x, force.y, force.z]),
-            np.array([torque.x, torque.y, torque.z]),
-        )
+        return np.array([force.x, force.y, force.z, torque.x, torque.y, torque.z])
+
+    def buffer_message(self, message: WrenchStamped) -> None:
+        """
+        Collect every reading, not only the one a control cycle happens to take: a spike
+        the cycle skipped over would otherwise still be the reading it writes.
+        """
+        super().buffer_message(message)
+        self._recent_readings.append(self.reading_of(message))
+
+    def apply_message(self, message: WrenchStamped) -> None:
+        """
+        Write the median of the collected readings, so an isolated spike never becomes a
+        contact; a real change in force arrives within half the window.
+
+        A message handed over without having been collected, as a caller driving the
+        synchronizer itself does, is a reading like any other.
+        """
+        if not self._recent_readings:
+            self._recent_readings.append(self.reading_of(message))
+        reading = np.median(np.array(self._recent_readings), axis=0)
+        self.sensor.write_wrench(reading[:3], reading[3:])
 
     def apply(self) -> bool:
         """

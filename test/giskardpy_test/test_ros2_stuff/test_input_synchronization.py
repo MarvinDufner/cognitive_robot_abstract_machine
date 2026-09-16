@@ -26,6 +26,7 @@ from giskardpy.middleware.ros2.input_synchronization import (
     TfFrameSynchronizer,
     TopicInputSynchronizer,
 )
+from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
@@ -371,3 +372,94 @@ def test_a_sensor_without_a_reading_is_left_idle(init_rospy, hsr_world_copy: Wor
 
     assert synchronizer.apply() is False
     assert not sensor.has_received_wrench
+
+
+# %% rejecting spikes in a wrench
+
+
+@dataclass(eq=False)
+class SensorWithoutHardware(ForceTorqueSensor):
+    """
+    Minimal concrete force/torque sensor, to write readings into without a robot.
+    """
+
+    def setup_hardware_interfaces(self):
+        pass
+
+    def setup_joint_states(self) -> List[JointState]:
+        return []
+
+    @classmethod
+    def setup_default_configuration_in_world_below_robot_root(cls, robot_root):
+        raise NotImplementedError
+
+
+@dataclass(eq=False)
+class SensorMedianingFiveReadings(SensorWithoutHardware):
+    """
+    A sensor whose data path spikes, so its readings are taken as a median.
+    """
+
+    @classproperty
+    def median_readings(cls) -> int:
+        return 5
+
+
+def wrench_along_z(force_z: float) -> WrenchStamped:
+    """
+    :param force_z: The force along z the reading carries.
+    """
+    message = WrenchStamped()
+    message.wrench.force.z = force_z
+    return message
+
+
+def feed(synchronizer: WrenchSynchronizer, *forces: float) -> None:
+    """
+    Deliver readings the way the subscription does, applying each one.
+    """
+    for force in forces:
+        synchronizer.buffer_message(wrench_along_z(force))
+        synchronizer.apply()
+
+
+def test_an_isolated_spike_never_becomes_a_contact(init_rospy):
+    """
+    The sensor's data path produces spikes many times the force a press holds, and a
+    single one reaching the annotation would read as contact.
+    """
+    sensor = SensorMedianingFiveReadings(
+        name=PrefixedName("spiky", prefix="test"), root=None
+    )
+    synchronizer = WrenchSynchronizer(world=World(), topic_name="wrench", sensor=sensor)
+
+    feed(synchronizer, 1.0, 0.9, 1.1, 0.9, 12.0)
+
+    assert_allclose(sensor.measured_force, [0.0, 0.0, 1.0])
+
+
+def test_a_force_that_stays_is_written(init_rospy):
+    """
+    Half a window of real contact is enough; the median is not a low pass that would
+    drag a press towards the free-space reading it followed.
+    """
+    sensor = SensorMedianingFiveReadings(
+        name=PrefixedName("spiky", prefix="test"), root=None
+    )
+    synchronizer = WrenchSynchronizer(world=World(), topic_name="wrench", sensor=sensor)
+
+    feed(synchronizer, 1.0, 1.0, 8.0, 8.0, 8.0)
+
+    assert_allclose(sensor.measured_force, [0.0, 0.0, 8.0])
+
+
+def test_a_sensor_that_asks_for_one_reading_gets_every_reading(init_rospy):
+    """
+    The default keeps a clean sensor's readings untouched and undelayed.
+    """
+    sensor = SensorWithoutHardware(name=PrefixedName("clean", prefix="test"), root=None)
+    synchronizer = WrenchSynchronizer(world=World(), topic_name="wrench", sensor=sensor)
+
+    feed(synchronizer, 1.0, 12.0)
+
+    assert_allclose(sensor.measured_force, [0.0, 0.0, 12.0])

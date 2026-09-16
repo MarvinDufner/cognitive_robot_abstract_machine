@@ -143,9 +143,12 @@ class BiasEstimator:
     How many samples a re-tare window holds.
     """
 
-    stationary_force_standard_deviation: float = 0.5
+    stationary_force_spread: float = 0.5
     """
-    Force spread above which the window is taken to have moved, in N.
+    Largest per-axis force spread a still window may show, in N.
+
+    Above the sensor's own noise, so a window it sat quietly through is accepted, and
+    below the movement or contact it has to reject.
     """
 
     _forces: List[np.ndarray] = field(default_factory=list, init=False)
@@ -184,6 +187,36 @@ class BiasEstimator:
         self._torques.append(torque)
         return len(self._forces) >= self.required_samples
 
+    @property
+    def force_spread(self) -> float:
+        """
+        The largest per-axis spread of the collected forces, in N.
+
+        What tells a window the sensor sat still through from one it was moved or
+        touched during. ``nan`` while nothing has been collected.
+        """
+        if not self._forces:
+            return float("nan")
+        return float(np.array(self._forces).std(axis=0).max())
+
+    @property
+    def force_shift(self) -> float:
+        """
+        How far the largest axis moved from the first half of the window to the second,
+        in N.
+
+        Separates a reading that is drifting from one that is merely noisy: noise averages
+        out between the halves, a drift does not. ``nan`` while the window is too short to
+        halve.
+        """
+        if len(self._forces) < 2:
+            return float("nan")
+        forces = np.array(self._forces)
+        half = len(forces) // 2
+        return float(
+            np.abs(forces[half:].mean(axis=0) - forces[:half].mean(axis=0)).max()
+        )
+
     def result(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """
         :return: The mean bias, or None while the window is short or if the sensor moved
@@ -191,9 +224,9 @@ class BiasEstimator:
         """
         if len(self._forces) < self.required_samples:
             return None
-        forces = np.array(self._forces)
-        if forces.std(axis=0).max() > self.stationary_force_standard_deviation:
+        if self.force_spread > self.stationary_force_spread:
             return None
+        forces = np.array(self._forces)
         return forces.mean(axis=0), np.array(self._torques).mean(axis=0)
 
 
@@ -253,6 +286,14 @@ class WrenchCompensationNode(Node):
     How many samples a re-tare averages.
     """
 
+    stationary_force_spread: float = 0.5
+    """
+    Largest per-axis force spread a re-tare window may show, in N.
+
+    A sensor noisier than this can never be zeroed, so it belongs above whatever the
+    sensor reads while it sits still.
+    """
+
     retare_timeout: float = 5.0
     """
     How long a re-tare waits for its window to fill, in seconds.
@@ -261,7 +302,10 @@ class WrenchCompensationNode(Node):
     def __post_init__(self) -> None:
         super().__init__("wrench_compensation")
         self.compensator = WrenchGravityCompensator(load=self.load)
-        self.estimator = BiasEstimator(required_samples=self.retare_samples)
+        self.estimator = BiasEstimator(
+            required_samples=self.retare_samples,
+            stationary_force_spread=self.stationary_force_spread,
+        )
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
@@ -399,6 +443,15 @@ class WrenchCompensationNode(Node):
         result = self.estimator.result()
         if result is None:
             self._retare_outcome = RetareOutcome.MOVED
+            self.get_logger().warn(
+                f"the forces spread by {self.estimator.force_spread:.2f} N over the "
+                f"window, more than the {self.stationary_force_spread:.2f} N a sensor at "
+                f"rest may, and moved {self.estimator.force_shift:.2f} N from its first "
+                f"half to its second. A shift near the spread means the reading is "
+                f"drifting rather than noisy, and no bias taken now stays valid; a shift "
+                f"near zero means the spread is this sensor's own noise, and the allowed "
+                f"spread belongs above it."
+            )
         else:
             self.compensator.bias_force, self.compensator.bias_torque = result
             self._retare_outcome = RetareOutcome.APPLIED

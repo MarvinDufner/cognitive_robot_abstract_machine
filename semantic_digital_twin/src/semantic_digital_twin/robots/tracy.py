@@ -331,6 +331,16 @@ class TracyLeftForceTorqueSensor(ForceTorqueSensor):
         return TracyWrenchTopic.LEFT_RAW
 
     @classproperty
+    def median_readings(cls) -> int:
+        """
+        Wide enough for the spikes this sensor's data path produces: measured at up to
+        12 N against a 0.9 N reading, isolated, and never less than three readings apart
+        at the 100 Hz the driver publishes, so a window of five always holds a majority of
+        good readings.
+        """
+        return 5
+
+    @classproperty
     def gravity_frame(cls) -> str:
         return TracyFrame.LEVEL
 
@@ -370,6 +380,16 @@ class TracyRightForceTorqueSensor(ForceTorqueSensor):
     @classproperty
     def raw_wrench_topic(cls) -> str:
         return TracyWrenchTopic.RIGHT_RAW
+
+    @classproperty
+    def median_readings(cls) -> int:
+        """
+        Wide enough for the spikes this sensor's data path produces: measured at up to
+        12 N against a 0.9 N reading, isolated, and never less than three readings apart
+        at the 100 Hz the driver publishes, so a window of five always holds a majority of
+        good readings.
+        """
+        return 5
 
     @classproperty
     def gravity_frame(cls) -> str:
