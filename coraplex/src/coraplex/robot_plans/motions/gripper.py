@@ -22,7 +22,6 @@ from giskardpy.motion_statechart.tasks.joint_tasks import (
 )
 from giskardpy.motion_statechart.monitors.force_monitors import ContactForceReached
 from giskardpy.motion_statechart.monitors.monitors import LocalMinimumReached
-from giskardpy.motion_statechart.monitors.progress_monitors import ProgressStalled
 from semantic_digital_twin.datastructures.alignment import AlignmentPair
 from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.robots.justin import Justin
@@ -547,14 +546,17 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         )
         tracking = Parallel(tasks)
         if self.desired_force is not None:
-            # Pressing ends when the trajectory is covered or when the tool stops
-            # getting any closer to it, whichever comes first. Stalling is measured over
-            # seconds rather than from one cycle's velocities, which a press that
-            # oscillates against a stiff surface passes through at every reversal.
-            tracking = Parallel(
-                [tracking, ProgressStalled(monitored_node=tracking)],
-                minimum_success=1,
-            )
+            # Pressing ends when the trajectory is covered or when the arm can get no
+            # further, whichever comes first; the wrench source only produces and never
+            # reports success, so it cannot end the motion by itself.
+            #
+            # .. todo:: This ends the press on a single cycle of near-zero velocity, which
+            #     a press oscillating against a stiff surface passes through at every
+            #     reversal, so it reports success the first time the tool bounces.
+            #     :class:`~giskardpy.motion_statechart.monitors.progress_monitors.ProgressStalled`
+            #     measures the same thing over seconds, but it has to be a sibling of the
+            #     node it watches in the same chart rather than share a Parallel with it.
+            tracking = Parallel([tracking, LocalMinimumReached()], minimum_success=1)
         motion_statechart_nodes.append(tracking)
         return Parallel(motion_statechart_nodes)
 

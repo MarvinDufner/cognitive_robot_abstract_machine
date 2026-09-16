@@ -5,7 +5,11 @@ from coraplex.datastructures.enums import ExecutionType
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
 from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
+from coraplex.plans.plan_node import MotionNode
 from coraplex.view_manager import ViewManager
+from giskardpy.executor import Executor
+from giskardpy.motion_statechart.context import MotionStatechartContext
+from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from experiments.tracy_wipe_table_demo.demo import (
     APPROACH_HEIGHT,
     BENCH_NAME,
@@ -278,3 +282,42 @@ def test_the_approach_waits_above_the_bench_rather_than_in_it():
         2, 3
     ] - demonstration.bench_height(world)
     assert height_above_the_bench == pytest.approx(APPROACH_HEIGHT)
+
+
+# %% the charts the controller compiles
+
+
+def motions_of(plan_step) -> list:
+    """
+    :param plan_step: An action or a motion of the plan.
+    :return: The motions it expands into, which are what carry a chart.
+    """
+    if hasattr(plan_step, "_motion_chart"):
+        return [plan_step]
+    plan_step.expand()
+    return [
+        node.designator
+        for node in plan_step.plan.all_nodes
+        if isinstance(node, MotionNode) and hasattr(node.designator, "_motion_chart")
+    ]
+
+
+def test_every_motion_of_the_plan_compiles():
+    """
+    Building a chart is not enough: the controller compiles it before running it, and
+    wiring a node to one it does not share a chart with is only rejected there.
+    """
+    demonstration, world = populated_demonstration()
+
+    compiled = []
+    for step in plan_steps(demonstration, world):
+        for motion in motions_of(step):
+            chart = MotionStatechart()
+            chart.add_node(motion.motion_chart)
+            Executor(MotionStatechartContext(world=world)).compile(
+                motion_statechart=chart
+            )
+            compiled.append(type(motion).__name__)
+
+    assert "MoveTCPWaypointsAlignedMotion" in compiled
+    assert "LowerUntilContactMotion" in compiled
