@@ -165,6 +165,13 @@ class BiasEstimator:
         self._forces.clear()
         self._torques.clear()
 
+    @property
+    def collected(self) -> int:
+        """
+        How many residuals the window holds so far.
+        """
+        return len(self._forces)
+
     def add(self, force: np.ndarray, torque: np.ndarray) -> bool:
         """
         Add one residual.
@@ -365,7 +372,16 @@ class WrenchCompensationNode(Node):
             self._collecting = True
         if not self._retare_done.wait(self.retare_timeout):
             with self._lock:
+                collected = self.estimator.collected
                 self._collecting = False
+            # The answer stays exactly the outcome, which the caller parses; how short the
+            # window fell only a reader of the log can act on.
+            self.get_logger().warn(
+                f"re-tare collected {collected} of {self.retare_samples} readings in "
+                f"{self.retare_timeout} s: {self.topic_in} has to arrive at "
+                f"{self.retare_samples / self.retare_timeout:.0f} Hz or faster, and only "
+                f"readings whose sensor frame tf can place are counted."
+            )
             response.success = False
             response.message = RetareOutcome.TIMED_OUT
             return response

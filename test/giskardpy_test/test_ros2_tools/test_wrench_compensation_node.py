@@ -135,6 +135,24 @@ def test_a_moving_sensor_is_refused():
     assert estimator.result() is None
 
 
+def test_a_window_counts_what_it_collected():
+    """
+    A re-tare that ran out of time reports how far it got, which is what tells a reader
+    the readings are arriving too slowly.
+    """
+    estimator = BiasEstimator(required_samples=4)
+
+    assert estimator.collected == 0
+    estimator.add(np.zeros(3), np.zeros(3))
+    estimator.add(np.zeros(3), np.zeros(3))
+
+    assert estimator.collected == 2
+
+    estimator.reset()
+
+    assert estimator.collected == 0
+
+
 def test_a_short_window_is_not_a_result():
     estimator = BiasEstimator(required_samples=10)
 
