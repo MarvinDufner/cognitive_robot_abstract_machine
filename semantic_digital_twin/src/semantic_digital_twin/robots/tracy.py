@@ -286,6 +286,16 @@ class TracyWrenchTopic(StrEnum):
     """
 
 
+class TracyFrame(StrEnum):
+    """
+    Frames of Tracy that something outside the kinematic chain has to name.
+    """
+
+    LEVEL = "table"
+    """The bench the arms are bolted to, and the root of Tracy's own tree: level, so its
+    z axis points up."""
+
+
 class TracyWrenchService(StrEnum):
     """
     The services that zero each arm's wrench compensation.
@@ -315,6 +325,14 @@ class TracyLeftForceTorqueSensor(ForceTorqueSensor):
     @classproperty
     def wrench_topic(cls) -> str:
         return TracyWrenchTopic.LEFT_COMPENSATED
+
+    @classproperty
+    def raw_wrench_topic(cls) -> str:
+        return TracyWrenchTopic.LEFT_RAW
+
+    @classproperty
+    def gravity_frame(cls) -> str:
+        return TracyFrame.LEVEL
 
     @classproperty
     def retare_service(cls) -> str:
@@ -348,6 +366,14 @@ class TracyRightForceTorqueSensor(ForceTorqueSensor):
     @classproperty
     def wrench_topic(cls) -> str:
         return TracyWrenchTopic.RIGHT_COMPENSATED
+
+    @classproperty
+    def raw_wrench_topic(cls) -> str:
+        return TracyWrenchTopic.RIGHT_RAW
+
+    @classproperty
+    def gravity_frame(cls) -> str:
+        return TracyFrame.LEVEL
 
     @classproperty
     def retare_service(cls) -> str:

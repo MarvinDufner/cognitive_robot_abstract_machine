@@ -233,6 +233,14 @@ class WrenchCompensationNode(Node):
     Shallow, so a stalled consumer cannot build up latency.
     """
 
+    retare_service_name: str = "~/retare"
+    """
+    Service that re-tares this sensor, as its robot annotation declares it.
+
+    Both this node and whatever asks for a re-tare read the name from there, so a robot
+    with a node per arm cannot end up zeroing the wrong one.
+    """
+
     retare_samples: int = 100
     """
     How many samples a re-tare averages.
@@ -281,7 +289,7 @@ class WrenchCompensationNode(Node):
             WrenchStamped, self.topic_out, publisher_qos
         )
         self.retare_service = self.create_service(
-            Trigger, "~/retare", self._on_retare, callback_group=group
+            Trigger, self.retare_service_name, self._on_retare, callback_group=group
         )
 
     def _base_R_sensor(self, sensor_frame: str) -> Optional[np.ndarray]:

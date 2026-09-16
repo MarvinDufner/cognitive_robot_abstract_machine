@@ -696,6 +696,25 @@ class ForceTorqueSensor(Sensor, ABC):
         return self.wrench_data.data[:3]
 
     @classproperty
+    def raw_wrench_topic(cls) -> Optional[str]:
+        """
+        The topic this kind of sensor's driver publishes, still carrying the load.
+
+        What a compensation node reads; ``None`` for a sensor nothing compensates.
+        """
+        return None
+
+    @classproperty
+    def gravity_frame(cls) -> Optional[str]:
+        """
+        A frame of this robot whose z axis points up.
+
+        Removing the load's weight needs the sensor's orientation against gravity, and
+        only the robot knows which of its frames is level.
+        """
+        return None
+
+    @classproperty
     def retare_service(cls) -> Optional[str]:
         """
         The service that zeroes this kind of sensor's compensation.

@@ -227,6 +227,14 @@ class HSRBWristForceTorqueSensor(ForceTorqueSensor):
         return WrenchTopic.COMPENSATED
 
     @classproperty
+    def raw_wrench_topic(cls) -> str:
+        return WrenchTopic.RAW
+
+    @classproperty
+    def gravity_frame(cls) -> str:
+        return "base_footprint"
+
+    @classproperty
     def load(cls) -> ForceTorqueSensorLoad:
         """
         The gripper hanging past the sensor, identified from a full-orientation sweep.

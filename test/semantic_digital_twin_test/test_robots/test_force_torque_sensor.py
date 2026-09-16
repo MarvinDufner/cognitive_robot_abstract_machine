@@ -13,6 +13,7 @@ from semantic_digital_twin.exceptions import (
 from semantic_digital_twin.robots.hsrb import HSRBWristForceTorqueSensor
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import (
+    TracyFrame,
     TracyLeftForceTorqueSensor,
     TracyRightForceTorqueSensor,
     TracyWrenchService,
@@ -188,6 +189,45 @@ def test_the_two_arms_of_a_two_armed_robot_read_their_own_topic():
     assert (
         TracyRightForceTorqueSensor.wrench_topic is TracyWrenchTopic.RIGHT_COMPENSATED
     )
+
+
+def test_each_arm_declares_everything_its_compensation_needs(tracy_world):
+    """
+    A node is started per arm from these alone, so a name left pointing at the other arm
+    would compensate one sensor against the other's readings.
+    """
+    for sensor, raw, compensated, service in (
+        (
+            TracyLeftForceTorqueSensor,
+            TracyWrenchTopic.LEFT_RAW,
+            TracyWrenchTopic.LEFT_COMPENSATED,
+            TracyWrenchService.LEFT,
+        ),
+        (
+            TracyRightForceTorqueSensor,
+            TracyWrenchTopic.RIGHT_RAW,
+            TracyWrenchTopic.RIGHT_COMPENSATED,
+            TracyWrenchService.RIGHT,
+        ),
+    ):
+        assert sensor.raw_wrench_topic is raw
+        assert sensor.wrench_topic is compensated
+        assert sensor.retare_service is service
+        assert sensor.gravity_frame is TracyFrame.LEVEL
+
+
+def test_the_frame_gravity_is_measured_against_is_level(tracy_world):
+    """
+    The load's weight is removed using the sensor's orientation against this frame, so a
+    frame that is itself tilted would leave part of the weight in the reading.
+    """
+    level = tracy_world.get_body_by_name(TracyFrame.LEVEL)
+
+    world_R_level = tracy_world.compute_forward_kinematics_np(tracy_world.root, level)[
+        :3, :3
+    ]
+
+    np.testing.assert_allclose(world_R_level[2], [0.0, 0.0, 1.0], atol=1e-9)
 
 
 def test_each_arm_is_zeroed_through_its_own_compensation(tracy_world):
