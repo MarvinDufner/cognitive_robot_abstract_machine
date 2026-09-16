@@ -47,16 +47,17 @@ from semantic_digital_twin.world import World
 BENCH_NAME = "table"
 """The bench Tracy is mounted on, which is also the surface it wipes."""
 
-WIPED_PATCH_CENTRE = (0.69, -0.10)
+WIPED_PATCH_CENTRE = (0.72, -0.10)
 """Centre of the wiped patch, in the bench frame."""
 
-WIPED_PATCH_LENGTH = 0.40
+WIPED_PATCH_LENGTH = 0.34
 """Length of the wiped patch along the bench's long axis, in m.
 
-Starts past the brace the camera pole stands on, which lies flat on the bench top and
-reaches out to x = 0.35, keeping :data:`OBSTACLE_CLEARANCE` from it, and stops short of
-the far arm. Both ends are measured from the bodies themselves, so widening the patch
-means checking them again.
+Sits in the middle of the bench: it starts well past the brace the camera pole stands on,
+which lies flat on the bench top and reaches out to x = 0.35, and stops short of the far
+arm. The raster begins at the end nearest the pole, so that end carries the clearance that
+matters. Both ends are measured from the bodies themselves, so widening the patch means
+checking them again.
 """
 
 WIPED_PATCH_WIDTH = 0.44
@@ -89,6 +90,16 @@ OBSTACLE_CLEARANCE = 0.05
 The hand reaches almost twice as far sideways as the sponge it holds, it is free to spin
 about the surface normal while it wipes, and it is driven along the patch rather than
 tracked onto it exactly, so a patch the sponge alone clears is not enough.
+"""
+
+PRESS_DAMPING = Vector3(x=600.0, y=600.0, z=600.0)
+"""Virtual damping the press yields with, per axis, in N s/m.
+
+Six times the default the task carries, which was chosen against a simulated surface two
+orders of magnitude softer than this bench. Measured on the bench, the default pressed in
+a limit cycle at 12.5 Hz, peaking at 160 N against the 8 N asked for: the control loop runs
+at 80 Hz, so a period of six cycles means the offset was moving about as fast as the arm
+could follow it. Damping it this much moves the press well inside that.
 """
 
 DESCENT_OVERSHOOT = 0.02
@@ -157,6 +168,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 length=WIPED_PATCH_LENGTH,
                 width=WIPED_PATCH_WIDTH,
                 desired_force=Vector3(z=PRESS_FORCE),
+                admittance_damping=PRESS_DAMPING,
             )
         )
         return sequential(steps, context=context)

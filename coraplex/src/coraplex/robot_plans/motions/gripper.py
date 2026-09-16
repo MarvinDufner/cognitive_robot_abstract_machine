@@ -466,6 +466,14 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
     Defaults to the arm's tool frame.
     """
 
+    admittance_damping: Optional[Vector3] = None
+    """
+    Virtual damping the press yields with, per axis, in N s/m.
+
+    ``None`` leaves the default the task was written with. A stiffer surface needs more:
+    the press oscillates once the offset moves faster than the arm can follow it.
+    """
+
     desired_force: Optional[Vector3] = None
     """
     Contact force to hold against the surface while following the waypoints, in the
@@ -517,6 +525,8 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         if self.desired_force is None:
             tasks = [CartesianPositionTrajectory(**trajectory_kwargs)]
         else:
+            if self.admittance_damping is not None:
+                trajectory_kwargs["damping"] = self.admittance_damping
             tasks = [
                 AdmittanceCartesianTrajectory(
                     desired_force=self.desired_force, **trajectory_kwargs
