@@ -5,6 +5,7 @@ from coraplex.datastructures.enums import ExecutionType
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
 from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
+from coraplex.view_manager import ViewManager
 from experiments.tracy_wipe_table_demo.demo import (
     APPROACH_HEIGHT,
     BENCH_NAME,
@@ -121,17 +122,30 @@ def test_the_wiped_patch_lies_on_the_bench_top():
 def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
     """
     The bench carries a camera pole whose lower brace lies flat on the top, and that pole
-    is a body of its own: reading the bench's own shapes alone misses it.
+    is a body of its own: reading the bench's own shapes alone misses it. What sweeps the
+    patch is the whole hand, which reaches almost twice as far sideways as the sponge and
+    is free to spin about the surface normal, so the sponge alone clearing it is not
+    enough either.
     """
     demonstration, world = populated_demonstration()
     top = demonstration.bench_height(world)
-    sponge = world.get_body_by_name(SPONGE_NAME)
-    swept = sponge.collision.as_bounding_box_collection_in_frame(sponge).bounding_box()
+    robot = world.get_semantic_annotations_by_type(Tracy)[0]
+    end_effector = ViewManager.get_end_effector_view(demonstration.arm, robot)
+    hand = [
+        box
+        for body in end_effector.bodies_with_collision
+        for box in body.collision.as_bounding_box_collection_in_frame(
+            end_effector.tool_frame
+        )
+    ]
+    reach = max(
+        max(abs(corner) for corner in (box.min_x, box.max_x, box.min_y, box.max_y))
+        for box in hand
+    )
+    swept_height = max(box.max_z - box.min_z for box in hand)
     centre = demonstration.wiped_pose(world).to_np()[:3, 3]
-    # What the sponge sweeps: the patch, widened by the sponge it is wiped with and by
-    # the gap the patch is meant to keep.
-    reach_x = (WIPED_PATCH_LENGTH + swept.max_x - swept.min_x) / 2 + OBSTACLE_CLEARANCE
-    reach_y = (WIPED_PATCH_WIDTH + swept.max_y - swept.min_y) / 2 + OBSTACLE_CLEARANCE
+    reach_x = WIPED_PATCH_LENGTH / 2 + reach + OBSTACLE_CLEARANCE
+    reach_y = WIPED_PATCH_WIDTH / 2 + reach + OBSTACLE_CLEARANCE
     patch_min_x, patch_max_x = centre[0] - reach_x, centre[0] + reach_x
     patch_min_y, patch_max_y = centre[1] - reach_y, centre[1] + reach_y
 
@@ -139,7 +153,7 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
         box
         for body in world.bodies_with_collision
         for box in body.collision.as_bounding_box_collection_in_frame(world.root)
-        if top < box.max_z and box.min_z < top + (swept.max_z - swept.min_z)
+        if top < box.max_z and box.min_z < top + swept_height
     ]
 
     assert standing_on_the_bench
@@ -149,7 +163,7 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
             or patch_max_x <= box.min_x
             or box.max_y <= patch_min_y
             or patch_max_y <= box.min_y
-        ), f"the sponge would come within {OBSTACLE_CLEARANCE} m of {box}"
+        ), f"the hand would come within {OBSTACLE_CLEARANCE} m of {box}"
 
 
 # %% force control

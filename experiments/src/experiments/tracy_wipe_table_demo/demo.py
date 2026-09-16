@@ -47,10 +47,10 @@ from semantic_digital_twin.world import World
 BENCH_NAME = "table"
 """The bench Tracy is mounted on, which is also the surface it wipes."""
 
-WIPED_PATCH_CENTRE = (0.66, -0.10)
+WIPED_PATCH_CENTRE = (0.69, -0.10)
 """Centre of the wiped patch, in the bench frame."""
 
-WIPED_PATCH_LENGTH = 0.46
+WIPED_PATCH_LENGTH = 0.40
 """Length of the wiped patch along the bench's long axis, in m.
 
 Starts past the brace the camera pole stands on, which lies flat on the bench top and
@@ -83,11 +83,12 @@ UNMODELLED_ADAPTER_LENGTH = 0.06
     guessing low presses the tool through it by the difference.
 """
 
-OBSTACLE_CLEARANCE = 0.03
-"""Gap kept between the wiped patch and anything standing on the bench, in m.
+OBSTACLE_CLEARANCE = 0.05
+"""Gap kept between the hand and anything standing on the bench, in m.
 
-The sponge is driven along the patch rather than tracked onto it exactly, so the patch
-alone touching nothing is not enough.
+The hand reaches almost twice as far sideways as the sponge it holds, it is free to spin
+about the surface normal while it wipes, and it is driven along the patch rather than
+tracked onto it exactly, so a patch the sponge alone clears is not enough.
 """
 
 DESCENT_OVERSHOOT = 0.02
