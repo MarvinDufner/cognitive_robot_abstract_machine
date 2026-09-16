@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ from coraplex.robot_plans.motions.gripper import (
     MoveTCPWaypointsAlignedMotion,
     MoveToolCenterPointMotion,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
@@ -461,6 +464,10 @@ class WipingAction(ToolMotionAction):
         """
         Perform the wiping plan, accepting an unfinished motion if the tool still
         reached the final waypoint.
+
+        A wipe can also end early by succeeding: a press that stops getting anywhere ends
+        the motion rather than running to the timeout. Reporting how far the tool got
+        keeps that from looking like a wipe of the whole surface.
         """
         subplan = self.add_subplan(self.action_plan)
         try:
@@ -468,11 +475,34 @@ class WipingAction(ToolMotionAction):
         except MotionDidNotFinish:
             if not self._tool_reached_final_waypoint():
                 raise
+        self._report_how_far_the_tool_got()
+
+    def _report_how_far_the_tool_got(self) -> None:
+        """
+        Log where the tool ended up relative to the path it was given.
+        """
+        remaining = self._distance_to_final_waypoint()
+        if remaining <= float(self.final_waypoint_success_tolerance):
+            logger.info(f"wiped to the end of the path, {remaining:.3f} m from it")
+            return
+        logger.warning(
+            f"the wipe stopped {remaining:.3f} m short of the end of its path, which is "
+            f"further than the {self.final_waypoint_success_tolerance:.3f} m that counts "
+            f"as reaching it"
+        )
 
     def _tool_reached_final_waypoint(self) -> bool:
         """
         :return: True if the tool's root ended up within the success tolerance of the
             final waypoint.
+        """
+        return self._distance_to_final_waypoint() <= float(
+            self.final_waypoint_success_tolerance
+        )
+
+    def _distance_to_final_waypoint(self) -> float:
+        """
+        :return: How far the tool's root ended up from the last waypoint of its path.
         """
         tool_point = self.world.transform(
             self.tool.root.global_pose.to_position(), self.world.root
@@ -480,8 +510,7 @@ class WipingAction(ToolMotionAction):
         tool_xyz = np.asarray(tool_point.to_np(), dtype=float).reshape(-1)[:3]
         goal_point = self.world.transform(self._waypoints[-1], self.world.root)
         goal_xyz = np.asarray(goal_point.to_np(), dtype=float).reshape(-1)[:3]
-        distance = float(np.linalg.norm(tool_xyz - goal_xyz))
-        return distance <= float(self.final_waypoint_success_tolerance)
+        return float(np.linalg.norm(tool_xyz - goal_xyz))
 
 
 @dataclass(kw_only=True)
