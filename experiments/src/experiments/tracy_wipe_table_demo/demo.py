@@ -226,4 +226,4 @@ def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
 
 
 if __name__ == "__main__":
-    main(execution_type=ExecutionType.SIMULATED)
+    main(execution_type=ExecutionType.REAL)

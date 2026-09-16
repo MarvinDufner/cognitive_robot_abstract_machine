@@ -70,7 +70,7 @@ APPROACH_POSE = HomogeneousTransformationMatrix.from_xyz_rpy(x=2.0, y=5.705, z=0
 Where the robot is put down in the kitchen, in front of the dining table.
 """
 
-PRESS_FORCE = 8.0
+PRESS_FORCE = 15.0
 """
 Contact force the admittance holds against the table, in N.
 """

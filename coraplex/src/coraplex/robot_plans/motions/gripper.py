@@ -214,7 +214,7 @@ class LowerUntilContactMotion(BaseMotion):
     lowered onto.
     """
 
-    contact_force: float = 2.0
+    contact_force: float = 15.0
     """
     Force magnitude that counts as contact, in N.
     """
