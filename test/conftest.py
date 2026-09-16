@@ -516,7 +516,6 @@ def _hsr_world_setup():
 @pytest.fixture(scope="function")
 def hsr_world_copy(_hsr_world_setup):
     result = deepcopy(_hsr_world_setup)
-    HSRB.from_world(result)
     return result
 
 

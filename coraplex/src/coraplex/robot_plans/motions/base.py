@@ -11,12 +11,14 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
 )
 from giskardpy.motion_statechart.graph_node import Task, MotionStatechartNode
 from coraplex.datastructures.enums import Arms
+from coraplex.exceptions import MissingToolFrame
 from coraplex.plans.designator import Designator
 from coraplex.view_manager import ViewManager
 from semantic_digital_twin.collision_checking.collision_rules import (
     AllowCollisionBetweenGroups,
 )
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
+from semantic_digital_twin.world_description.world_entity import Body
 from coraplex.alternative_motion_mapping import AlternativeMotion
 
 logger = logging.getLogger(__name__)
@@ -71,17 +73,33 @@ class BaseMotion(Designator):
             self.context.alternative_motion_mappings, self.robot, self.__class__
         )
 
+    def _resolve_tip(self, arm: Arms, tip: Optional[Body]) -> Body:
+        """
+        :param arm: Arm whose tool frame is used when no tip is given.
+        :param tip: The body that should follow the goal, if the motion names one.
+        :return: The body that follows the goal.
+        :raises MissingToolFrame: If no tip is given and the arm has no tool frame.
+        """
+        if tip is not None:
+            return tip
+        tool_frame = ViewManager().get_end_effector_view(arm, self.robot).tool_frame
+        if tool_frame is None:
+            raise MissingToolFrame(arm, self.robot)
+        return tool_frame
+
     def _only_allow_gripper_collision_rules(
-        self, arm: Arms
+        self, arm: Arms, also_touching: list[Body] = None
     ) -> list[MotionStatechartNode]:
         """
         :param arm: The arm whose manipulator may collide with the environment.
+        :param also_touching: Further bodies allowed to touch the environment, such as a
+            tool the motion presses against a surface.
         :return: Collision rules that only allow collisions between the manipulator of
             the given arm and the environment.
         """
-        manipulator_bodies = (
+        manipulator_bodies = list(
             ViewManager().get_end_effector_view(arm, self.robot).bodies_with_collision
-        )
+        ) + list(also_touching or [])
         return [
             UpdateTemporaryCollisionRules(
                 temporary_rules=[

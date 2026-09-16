@@ -191,6 +191,16 @@ class _ExternalCollisionAvoidanceTask(_ExternalCollisionAvoidanceNode):
     The maximum velocity for the collision avoidance task.
     """
 
+    weight: float = field(
+        default=DefaultWeights.WEIGHT_COLLISION_AVOIDANCE, kw_only=True
+    )
+    """
+    Quadratic weight of the avoidance slack.
+
+    Raise it above the weights of the motion's own goals to make avoidance win the QP
+    instead of being pushed through.
+    """
+
     @property
     def tip(self) -> KinematicStructureEntity:
         return self.collision_group.root
@@ -246,7 +256,7 @@ class _ExternalCollisionAvoidanceTask(_ExternalCollisionAvoidanceNode):
             reference_velocity=self.max_velocity,
             lower_error=lower_limit,
             upper_error=float("inf"),
-            quadratic_weight=DefaultWeights.WEIGHT_COLLISION_AVOIDANCE,
+            quadratic_weight=self.weight,
             task_expression=a_projected_on_normal,
         )
 
@@ -266,6 +276,7 @@ class _CancelBecauseExternalCollisionViolated(_CancelBecauseCollisionViolated):
     """
     The list of external collision avoidance tasks to check for collisions.
     """
+
     exception: Exception = field(init=False, default=Exception)
     """
     Set to init=False, because this class creates its own exception.
@@ -386,7 +397,9 @@ class ExternalCollisionAvoidance(Goal):
         left out of drawings. Set `plot_specs.collapse_children` to False to draw them.
     """
 
-    plot_specifications: NodePlotSpec = plot_specification_field(NodePlotSpec.create_collapsed_goal_style)
+    plot_specifications: NodePlotSpec = plot_specification_field(
+        NodePlotSpec.create_collapsed_goal_style
+    )
 
     robot: AbstractRobot = field(kw_only=True, default=None)
     """
@@ -396,6 +409,13 @@ class ExternalCollisionAvoidance(Goal):
     max_velocity: float = field(default=0.2, kw_only=True)
     """
     The maximum velocity for the collision avoidance task.
+    """
+
+    weight: float = field(
+        default=DefaultWeights.WEIGHT_COLLISION_AVOIDANCE, kw_only=True
+    )
+    """
+    Quadratic weight forwarded to every avoidance task.
     """
 
     external_collision_manager: ExternalCollisionVariableManager = field(init=False)
@@ -447,6 +467,7 @@ class ExternalCollisionAvoidance(Goal):
                     name=f"{self.name}/task({group.root.name.name, index})",
                     collision_group=group,
                     max_velocity=self.max_velocity,
+                    weight=self.weight,
                     collision_index=index,
                     external_collision_manager=self.external_collision_manager,
                 )
@@ -653,6 +674,7 @@ class _CancelBecauseSelfCollisionViolated(_CancelBecauseCollisionViolated):
     """
     The list of self collision avoidance tasks to check for collisions.
     """
+
     exception: Exception = field(init=False, default=Exception)
     """
     Set to init=False, because this class creates its own exception.
@@ -703,7 +725,9 @@ class SelfCollisionAvoidance(Goal):
         draw them.
     """
 
-    plot_specs: NodePlotSpec = plot_specification_field(NodePlotSpec.create_collapsed_goal_style)
+    plot_specs: NodePlotSpec = plot_specification_field(
+        NodePlotSpec.create_collapsed_goal_style
+    )
 
     robot: AbstractRobot = field(kw_only=True, default=None)
     """

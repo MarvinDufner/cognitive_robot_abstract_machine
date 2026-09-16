@@ -27,6 +27,10 @@ from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 from typing_extensions import List, Optional, Tuple
 
+from giskardpy.middleware.ros2.exceptions import (
+    ForceTorqueSensorNotTared,
+    WrenchCompensationUnavailable,
+)
 from semantic_digital_twin.robots.robot_parts import (
     ForceTorqueSensorLoad,
     WrenchTopic,
@@ -392,3 +396,47 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# %% asking for a re-tare
+
+
+@dataclass
+class WrenchCompensationClient:
+    """
+    Asks the node that compensates a sensor to re-tare it.
+    """
+
+    node: Node
+    """
+    ROS node the request is made from.
+    """
+
+    service: str
+    """
+    Re-tare service of the node that compensates the sensor.
+    """
+
+    service_timeout: float = 5.0
+    """
+    How long to wait for the service to appear, in s.
+    """
+
+    def retare(self) -> None:
+        """
+        Zero the sensor, so that what it reads afterwards is contact alone.
+
+        The sensor has to hang free and be held still while this runs: the node refuses a
+        window it saw move.
+
+        :raises WrenchCompensationUnavailable: If nothing offers the service.
+        :raises ForceTorqueSensorNotTared: If the node refuses the window.
+        """
+        client = self.node.create_client(Trigger, self.service)
+        if not client.wait_for_service(timeout_sec=self.service_timeout):
+            raise WrenchCompensationUnavailable(service=self.service)
+        response = client.call(Trigger.Request())
+        if not response.success:
+            raise ForceTorqueSensorNotTared(
+                service=self.service, outcome=RetareOutcome(response.message)
+            )

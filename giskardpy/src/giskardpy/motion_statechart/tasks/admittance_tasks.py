@@ -16,6 +16,7 @@ from krrood.symbolic_math.symbolic_math import (
     CompiledFunction,
     FloatVariable,
     VariableParameters,
+    limit,
     vstack,
 )
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
@@ -37,8 +38,9 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     at every waypoint would step the goal by however much compliance had accumulated.
 
     With no stiffness the offset also seeks contact on its own: away from the surface the
-    force error is the full desired force, so the tool drifts towards it until it touches
-    and the forces balance. The commanded surface height therefore need not be exact.
+    force error is the full desired force, so the tool drifts towards it, up to
+    :attr:`maximum_offset`, until it touches and the forces balance. The commanded surface
+    height therefore need not be exact.
 
     .. todo:: Two refinements are unimplemented: post-sensor inertia compensation, which
         renders ``mass - inertia_compensation`` and belongs on the force/torque sensor
@@ -65,6 +67,14 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     stiffness: Vector3 = field(default_factory=Vector3, kw_only=True)
     """Virtual stiffness per axis, in N/m. Zero lets the offset persist once the force is
     balanced, instead of being pulled back to the nominal trajectory."""
+
+    maximum_offset: Vector3 = field(
+        default_factory=lambda: Vector3(x=0.02, y=0.02, z=0.02), kw_only=True
+    )
+    """How far the offset may take the tool from the trajectory, per axis, in m. It
+    absorbs how far the surface really is from where the trajectory says it is, which is
+    a matter of centimetres; without a bound the offset integrates the unbalanced desired
+    force for as long as the arm takes to catch up, and arrives metres away."""
 
     _admittance_position: Optional[Vector3] = field(init=False, default=None)
     """Symbolic offset added to the tracked point, registered as a float variable so the
@@ -174,7 +184,13 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
             next_velocity = (
                 mass * velocity + (force_error - stiffness * position) * control_dt
             ) / (mass + damping * control_dt + stiffness * control_dt**2)
-            next_positions.append(position + next_velocity * control_dt)
+            next_positions.append(
+                limit(
+                    position + next_velocity * control_dt,
+                    -self.maximum_offset[axis],
+                    self.maximum_offset[axis],
+                )
+            )
             next_velocities.append(next_velocity)
 
         self._compiled_step = vstack(next_positions + next_velocities).compile(

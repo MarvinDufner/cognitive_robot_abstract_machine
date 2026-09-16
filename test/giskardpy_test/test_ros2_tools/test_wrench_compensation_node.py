@@ -1,9 +1,19 @@
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
+from std_srvs.srv import Trigger
+from typing_extensions import Any, Type
 
+from giskardpy.middleware.ros2.exceptions import (
+    ForceTorqueSensorNotTared,
+    WrenchCompensationUnavailable,
+)
 from giskardpy.ros2_tools.wrench_compensation_node import (
     GRAVITY,
     BiasEstimator,
+    RetareOutcome,
+    WrenchCompensationClient,
     WrenchGravityCompensator,
 )
 from semantic_digital_twin.robots.robot_parts import (
@@ -162,3 +172,92 @@ def test_the_wrist_load_is_read_from_the_robot(hsr_world_copy):
 
     assert sensor.load.mass > 0.0
     assert sensor.load.first_moment.shape == (3,)
+
+
+# %% asking for a re-tare
+
+RETARE_SERVICE = "/left_arm/wrench_compensation/retare"
+
+
+@dataclass
+class ServiceAnsweringOneOutcome:
+    """
+    Stands in for a service client, answering every request the same way.
+    """
+
+    outcome: RetareOutcome
+    """
+    What the answer reports.
+    """
+
+    offered: bool = True
+    """
+    Whether anything offers the service at all.
+    """
+
+    calls: int = 0
+    """
+    How many requests were answered.
+    """
+
+    def wait_for_service(self, timeout_sec: float) -> bool:
+        return self.offered
+
+    def call(self, request: Trigger.Request) -> Trigger.Response:
+        self.calls += 1
+        response = Trigger.Response()
+        response.success = self.outcome is RetareOutcome.APPLIED
+        response.message = self.outcome
+        return response
+
+
+@dataclass
+class NodeOfferingOneService:
+    """
+    Stands in for a ROS node, handing out one prepared service client.
+    """
+
+    client: ServiceAnsweringOneOutcome
+    """
+    The client every request is made through.
+    """
+
+    def create_client(self, service_type: Type[Any], service_name: str):
+        return self.client
+
+
+def test_a_sensor_that_was_tared_needs_nothing_further():
+    client = ServiceAnsweringOneOutcome(outcome=RetareOutcome.APPLIED)
+
+    WrenchCompensationClient(
+        node=NodeOfferingOneService(client=client), service=RETARE_SERVICE
+    ).retare()
+
+    assert client.calls == 1
+
+
+@pytest.mark.parametrize("outcome", [RetareOutcome.MOVED, RetareOutcome.TIMED_OUT])
+def test_a_refused_window_stops_the_plan_instead_of_pressing_on(outcome):
+    """
+    Pressing with an untared sensor drives the tool by the weight of the gripper.
+    """
+    client = ServiceAnsweringOneOutcome(outcome=outcome)
+
+    with pytest.raises(ForceTorqueSensorNotTared) as raised:
+        WrenchCompensationClient(
+            node=NodeOfferingOneService(client=client), service=RETARE_SERVICE
+        ).retare()
+
+    assert raised.value.outcome is outcome
+    assert raised.value.service == RETARE_SERVICE
+
+
+def test_a_compensation_node_that_is_not_running_is_reported():
+    client = ServiceAnsweringOneOutcome(outcome=RetareOutcome.APPLIED, offered=False)
+
+    with pytest.raises(WrenchCompensationUnavailable):
+        WrenchCompensationClient(
+            node=NodeOfferingOneService(client=client), service=RETARE_SERVICE
+        ).retare()
+
+    assert client.calls == 0

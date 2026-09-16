@@ -1,6 +1,9 @@
 """
-Tracy wipes the half of its own bench that its left arm faces with the sponge in that
+Tracy wipes the part of its own bench that its left arm reaches, with the sponge in that
 hand, regulating how hard it presses with the left wrist's force/torque sensor.
+
+The tool is brought over the patch, lowered until the sensor feels the bench, and only
+then wiped, so where the surface really is is measured rather than assumed.
 
 .. todo:: Nothing publishes Tracy's wrench topics yet, so a real run needs a wrench
     compensation node per arm before the press is meaningful. See
@@ -9,50 +12,82 @@ hand, regulating how hard it presses with the left wrist's force/torque sensor.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 from typing_extensions import ClassVar, List
 
 from coraplex.datastructures.dataclasses import Context
-from coraplex.datastructures.enums import ExecutionType
+from coraplex.datastructures.enums import ExecutionType, WipingTechnique, Arms
+from coraplex.language import CodeNode
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
-from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
+from coraplex.robot_plans.actions.core.robot_body import (
+    MoveManipulatorAction,
+    ParkArmsAction,
+)
+from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
 from coraplex.view_manager import ViewManager
 from experiments.wipe_table_demo.demo import (
     PRESS_FORCE,
     SPONGE_NAME,
     SimulatedContactWrench,
-    WAYPOINT_STRIDE,
     WipingDemonstration,
 )
 from giskardpy.middleware.ros2.input_synchronization import InputSynchronizer
+from giskardpy.ros2_tools.wrench_compensation_node import WrenchCompensationClient
 from semantic_digital_twin.api import RobotSpecification, WorldSpecification
+from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge
-from semantic_digital_twin.spatial_types import Vector3
+from semantic_digital_twin.spatial_types import Point3, Vector3
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 
 BENCH_NAME = "table"
 """The bench Tracy is mounted on, which is also the surface it wipes."""
 
-WIPED_SPOTS = ((0.28, 0.0), (0.52, 0.0))
-"""Centres of the patches the left hand wipes, in the bench frame.
+WIPED_PATCH_CENTRE = (0.66, -0.10)
+"""Centre of the wiped patch, in the bench frame."""
 
-The left arm is mounted off the low end of the bench's long axis, so these lie in the
-half it faces, clear of the fixture standing on it. One wipe covers a patch of a fixed
-size, so they are laid end to end; they follow that axis rather than spreading sideways
-because that is where the arm can hold the tool flat on the bench.
+WIPED_PATCH_LENGTH = 0.46
+"""Length of the wiped patch along the bench's long axis, in m.
+
+Starts past the brace the camera pole stands on, which lies flat on the bench top and
+reaches out to x = 0.35, keeping :data:`OBSTACLE_CLEARANCE` from it, and stops short of
+the far arm. Both ends are measured from the bodies themselves, so widening the patch
+means checking them again.
 """
 
-APPROACH_HEIGHT = 0.15
-"""How far above the bench the hand is brought before the wipe starts, in m.
+WIPED_PATCH_WIDTH = 0.44
+"""Width of the wiped patch across the bench, in m.
 
-The arm parks well away from the spot, and one motion only gets so many control cycles,
-so the reaching is done first and the wipe starts where it presses.
+The bench is 1.6 m wide, but the arm can only hold the tool flat on it from roughly
+0.35 m on its own side of the bench to 0.15 m across, so this covers what the arm
+reaches rather than what the bench offers.
+"""
+
+APPROACH_HEIGHT = 0.08
+"""How far above the bench the tool is brought before it is lowered onto it, in m.
+
+Far enough to be clear of the surface wherever it really is, close enough that the slow
+descent that follows does not take long.
+"""
+
+OBSTACLE_CLEARANCE = 0.03
+"""Gap kept between the wiped patch and anything standing on the bench, in m.
+
+The sponge is driven along the patch rather than tracked onto it exactly, so the patch
+alone touching nothing is not enough.
+"""
+
+DESCENT_OVERSHOOT = 0.02
+"""How far below the bench the descent aims, in m.
+
+Contact is what ends the descent, so the goal has to lie past the surface; keeping it
+close bounds how far the tool would travel if nothing were ever felt.
 """
 
 SIMULATED_CONTROL_PERIOD = 1 / 50
@@ -81,47 +116,81 @@ class TracyWipeTableDemonstration(WipingDemonstration):
 
     def build_plan(self, context: Context) -> PlanNode:
         """
-        Wipe the bench patch by patch.
-
-        .. todo:: Each patch is wiped around a pose, because a wipe of a *chosen part* of
-            a surface has nowhere to say which part: ``WipingAction`` either takes a whole
-            body or a pose, and the patch size is fixed inside ``build_surface_path``.
-            Covering a named region in one wipe needs that region on the action.
+        Reach over the patch, feel for the bench, then wipe the patch.
         """
-        plan = []
-        for spot in self.wiped_poses(context.world):
-            plan.extend(self.build_patch_plan(context, spot))
-        return sequential(plan, context=context)
-
-    def build_patch_plan(self, context: Context, spot: Pose) -> List[PlanNode]:
-        """
-        :param context: Plan context holding the world and the robot.
-        :param spot: Centre of the patch, in the world frame.
-        :return: Bringing the hand over the patch, then wiping it. The hand is brought
-            there first because the wipe follows its waypoints in order and would
-            otherwise spend its cycles travelling to the first one.
-        """
-        end_effector = ViewManager.get_end_effector_view(self.arm, context.robot)
-        above = Pose.from_xyz_rpy(
-            x=spot.to_np()[0, 3],
-            y=spot.to_np()[1, 3],
-            z=spot.to_np()[2, 3] + APPROACH_HEIGHT,
-            reference_frame=context.world.root,
-        )
-        return [
-            MoveManipulatorAction(
-                target_pose=above,
-                end_effector=end_effector,
+        world = context.world
+        sponge = world.get_semantic_annotations_by_type(Sponge)[0]
+        patch = self.wiped_pose(world)
+        steps = [ParkArmsAction(arm=Arms.BOTH), self.build_approach(context, patch)]
+        steps.extend(self.build_retare_plan(context))
+        steps.append(
+            LowerUntilContactMotion(
+                goal_point=Point3(
+                    x=patch.to_np()[0, 3],
+                    y=patch.to_np()[1, 3],
+                    z=patch.to_np()[2, 3] - DESCENT_OVERSHOOT,
+                    reference_frame=world.root,
+                ),
+                arm=self.arm,
+                tip=sponge.get_tool_frame(),
+                alignment_pairs=sponge.tool_alignment(patch),
                 allow_gripper_collision=True,
-            ),
+            )
+        )
+        steps.append(
             WipingAction(
                 arm=self.arm,
-                tool=context.world.get_semantic_annotations_by_type(Sponge)[0],
-                target_pose=spot,
-                pointer_stride=WAYPOINT_STRIDE,
+                tool=sponge,
+                target_pose=patch,
+                technique=WipingTechnique.SPREAD,
+                length=WIPED_PATCH_LENGTH,
+                width=WIPED_PATCH_WIDTH,
                 desired_force=Vector3(z=PRESS_FORCE),
+            )
+        )
+        return sequential(steps, context=context)
+
+    def build_approach(self, context: Context, patch: Pose) -> PlanNode:
+        """
+        :param context: Plan context holding the robot.
+        :param patch: Centre of the patch, in the world frame.
+        :return: Bringing the tool over the patch, pointing at it. The tool goes there
+            first because the descent and the wipe both start where they press, and
+            because the wipe aligns the sponge's own axis with the surface: starting from
+            the opposite orientation would ask the arm to flip through the one pose where
+            that alignment cannot tell which way to turn.
+        """
+        return MoveManipulatorAction(
+            target_pose=Pose.from_xyz_rpy(
+                x=patch.to_np()[0, 3],
+                y=patch.to_np()[1, 3],
+                z=patch.to_np()[2, 3] + APPROACH_HEIGHT,
+                roll=math.pi,
+                reference_frame=context.world.root,
             ),
-        ]
+            end_effector=ViewManager.get_end_effector_view(self.arm, context.robot),
+            allow_gripper_collision=True,
+        )
+
+    def build_retare_plan(self, context: Context) -> List[PlanNode]:
+        """
+        :param context: Plan context holding the world.
+        :return: Zeroing the sensor of the wiping hand, or nothing in simulation, where
+            the contact model writes the wrench directly.
+
+        Zeroing happens where the tool waits above the bench: the hand hangs free there,
+        in the orientation it presses in, which is what makes one constant subtraction
+        valid for the whole wipe.
+        """
+        if self.execution_type is not ExecutionType.REAL:
+            return []
+        sensor = ForceTorqueSensor.for_tip(
+            context.world, context.world.get_body_by_name(SPONGE_NAME)
+        )
+        client = WrenchCompensationClient(
+            node=self.ros_node, service=sensor.retare_service
+        )
+        return [CodeNode(code=client.retare)]
 
     def world_inputs(self, world: World) -> List[InputSynchronizer]:
         """
@@ -153,27 +222,23 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         top = max(boxes, key=lambda box: box.max_x - box.min_x)
         return float(top.max_z)
 
-    def wiped_poses(self, world: World) -> List[Pose]:
+    def wiped_pose(self, world: World) -> Pose:
         """
         :param world: World holding the bench.
-        :return: The centre of every patch that is wiped, in the world frame.
+        :return: The centre of the wiped patch, on the bench top, in the world frame.
         """
         world_T_bench = world.compute_forward_kinematics_np(
             world.root, world.get_body_by_name(BENCH_NAME)
         )
-        height = self.bench_height(world)
-        poses = []
-        for spot in WIPED_SPOTS:
-            world_P_spot = world_T_bench @ np.array([spot[0], spot[1], 0.0, 1.0])
-            poses.append(
-                Pose.from_xyz_rpy(
-                    x=world_P_spot[0],
-                    y=world_P_spot[1],
-                    z=height,
-                    reference_frame=world.root,
-                )
-            )
-        return poses
+        world_P_centre = world_T_bench @ np.array(
+            [WIPED_PATCH_CENTRE[0], WIPED_PATCH_CENTRE[1], 0.0, 1.0]
+        )
+        return Pose.from_xyz_rpy(
+            x=world_P_centre[0],
+            y=world_P_centre[1],
+            z=self.bench_height(world),
+            reference_frame=world.root,
+        )
 
 
 def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
@@ -184,4 +249,4 @@ def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
 
 
 if __name__ == "__main__":
-    main(execution_type=ExecutionType.REAL)
+    main(execution_type=ExecutionType.SIMULATED)

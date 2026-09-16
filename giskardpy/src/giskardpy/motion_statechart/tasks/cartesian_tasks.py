@@ -275,10 +275,7 @@ class CartesianPositionTrajectory(CartesianTask):
         )
         self._init_remaining_distance(context.float_variable_data)
 
-        root_P_goal = (
-            self.root_T_goal_reference_frame
-            @ self.goal_reference_frame_P_current_target_point
-        )
+        root_P_goal = self.root_T_goal_reference_frame @ self.tracked_point
 
         # Get current tip position in root frame
         root_P_current = context.world.compose_forward_kinematics_expression(
@@ -300,6 +297,15 @@ class CartesianPositionTrajectory(CartesianTask):
         self.compile_current_point_on_tick(context)
         artifacts.error = SampledErrorSignal(self.remaining_distance)
         return artifacts
+
+    @property
+    def tracked_point(self) -> Point3:
+        """
+        The point the tip is pulled towards, in the goal reference frame.
+
+        Subclasses may offset it, for instance to yield to a measured contact force.
+        """
+        return self.goal_reference_frame_P_current_target_point
 
     def _init_remaining_distance(self, float_variable_data: FloatVariableData) -> None:
         """
@@ -356,12 +362,6 @@ class CartesianPositionTrajectory(CartesianTask):
                 context.float_variable_data.variables,
             ),
             sparse=False,
-        )
-        self._compiled_goal_reference_frame_P_tip.bind_args_to_memory_view(
-            0, context.world.state.positions
-        )
-        self._compiled_goal_reference_frame_P_tip.bind_args_to_memory_view(
-            1, context.float_variable_data.data
         )
 
     def _update_trajectory_index(self, goal_reference_frame_P_tip_np: np.ndarray):
@@ -425,8 +425,11 @@ class CartesianPositionTrajectory(CartesianTask):
 
         The observation follows from that distance, so it is one control cycle behind.
         """
-        goal_reference_frame_P_tip_np = (
-            self._compiled_goal_reference_frame_P_tip.evaluate()
+        # Handed the arrays rather than bound to them: registering a float variable
+        # replaces the array that holds them, so anything built after this task would
+        # otherwise leave it reading a stale copy.
+        goal_reference_frame_P_tip_np = self._compiled_goal_reference_frame_P_tip(
+            context.world.state.positions, context.float_variable_data.data
         )
         self._update_trajectory_index(goal_reference_frame_P_tip_np)
         target_point = self._compute_target_point(goal_reference_frame_P_tip_np)

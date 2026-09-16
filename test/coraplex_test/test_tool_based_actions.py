@@ -5,7 +5,7 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
 )
 from scipy.spatial.transform import Rotation
 
-from coraplex.datastructures.enums import Arms, CuttingTechnique
+from coraplex.datastructures.enums import Arms, CuttingTechnique, WipingTechnique
 from coraplex.exceptions import WipingTargetMissing
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import MotionNode
@@ -270,3 +270,94 @@ def test_mixing_action_orm_roundtrip(tool_action_world, coraplex_testing_session
     coraplex_testing_session.commit()
 
     assert dao.database_id is not None
+
+
+# %% covering a patch rather than a lane
+
+
+def test_a_patch_with_no_width_is_wiped_in_a_single_lane(tool_action_world):
+    """
+    The default keeps the earlier behaviour: back and forth over one line.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+
+    action = WipingAction(
+        arm=Arms.RIGHT,
+        tool=sponge,
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        technique=WipingTechnique.SPREAD,
+        length=0.3,
+    )
+    motions = _expanded_aligned_motions(action, context)
+    waypoints = np.array(
+        [point.to_np()[:3].flatten() for point in motions[0].waypoints]
+    )
+
+    assert np.ptp(waypoints[:, 0]) == pytest.approx(0.3, abs=0.01)
+    assert np.ptp(waypoints[:, 1]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_a_patch_with_a_width_is_wiped_in_lanes_across_it(tool_action_world):
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    length, width = 0.3, 0.2
+
+    action = WipingAction(
+        arm=Arms.RIGHT,
+        tool=sponge,
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        technique=WipingTechnique.SPREAD,
+        length=length,
+        width=width,
+    )
+    motions = _expanded_aligned_motions(action, context)
+    waypoints = np.array(
+        [point.to_np()[:3].flatten() for point in motions[0].waypoints]
+    )
+
+    assert np.ptp(waypoints[:, 0]) == pytest.approx(length, abs=0.01)
+    assert np.ptp(waypoints[:, 1]) == pytest.approx(width, abs=0.01)
+
+
+def test_the_lanes_are_closer_together_than_the_tool_is_wide(tool_action_world):
+    """
+    Lanes a tool width apart or more would leave unwiped strips between them.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    width = 0.2
+    action = WipingAction(
+        arm=Arms.RIGHT,
+        tool=sponge,
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        technique=WipingTechnique.SPREAD,
+        length=0.3,
+        width=width,
+    )
+    tool_width = (
+        tool_body.collision.as_bounding_box_collection_in_frame(tool_body)
+        .bounding_box()
+        .width
+    )
+
+    assert width / (action._lanes() - 1) <= tool_width
+
+
+def test_a_patch_narrower_than_the_tool_still_has_two_lanes(tool_action_world):
+    """
+    A raster needs a lane to start and a lane to end on.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+
+    action = WipingAction(
+        arm=Arms.RIGHT,
+        tool=sponge,
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        technique=WipingTechnique.SPREAD,
+        length=0.3,
+        width=0.001,
+    )
+
+    assert action._lanes() == 2

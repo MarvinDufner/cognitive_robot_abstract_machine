@@ -9,6 +9,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Self, List
 
+from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.collision_checking.collision_rules import (
     AvoidExternalCollisions,
     AvoidSelfCollisions,
@@ -29,6 +30,7 @@ from semantic_digital_twin.robots.robot_part_mixins import (
     HasSensors,
 )
 from semantic_digital_twin.robots.robot_parts import (
+    ForceTorqueSensor,
     AbstractRobot,
     Arm,
     Camera,
@@ -258,8 +260,116 @@ class TracyRightGripper(
         )
 
 
+class TracyWrenchTopic(StrEnum):
+    """
+    The topics each arm's force/torque reading travels on between the sensor and its
+    consumers.
+    """
+
+    LEFT_RAW = "/left_arm/force_torque_sensor_broadcaster/wrench"
+    """What the left arm's driver publishes, still carrying the weight of the gripper."""
+
+    LEFT_COMPENSATED = "/left_arm/wrench/compensated"
+    """The left arm's contact wrench, once the load and the bias have been removed.
+
+    .. todo:: Nothing publishes this yet. A wrench compensation node has to run for the
+        left arm, reading :attr:`LEFT_RAW`; until it does, the sensor stays idle.
+    """
+
+    RIGHT_RAW = "/right_arm/force_torque_sensor_broadcaster/wrench"
+    """What the right arm's driver publishes, still carrying the weight of the gripper."""
+
+    RIGHT_COMPENSATED = "/right_arm/wrench/compensated"
+    """The right arm's contact wrench, once the load and the bias have been removed.
+
+    .. todo:: Nothing publishes this yet, as for :attr:`LEFT_COMPENSATED`.
+    """
+
+
+class TracyWrenchService(StrEnum):
+    """
+    The services that zero each arm's wrench compensation.
+
+    Each arm needs its own compensation node, so each has its own service, named after
+    the node running in that arm's namespace.
+    """
+
+    LEFT = "/left_arm/wrench_compensation/retare"
+    RIGHT = "/right_arm/wrench_compensation/retare"
+
+
 @dataclass(eq=False)
-class TracyLeftArm(Arm[TracyLeftGripper]):
+class TracyLeftForceTorqueSensor(ForceTorqueSensor):
+    """
+    The force/torque sensor in the left wrist.
+
+    Rooted at the flange rather than at the wrist's own ``ft_frame``, because that is the
+    frame the driver stamps its readings with; the two are rotated half a turn apart, so
+    reading one as the other flips the sign of two axes.
+
+    .. todo:: Identify :attr:`load` for whatever the left gripper carries; it defaults to
+        nothing mounted, so the whole reading is taken as contact force, and the gripper
+        alone weighs several newtons.
+    """
+
+    @classproperty
+    def wrench_topic(cls) -> str:
+        return TracyWrenchTopic.LEFT_COMPENSATED
+
+    @classproperty
+    def retare_service(cls) -> str:
+        return TracyWrenchService.LEFT
+
+    def setup_hardware_interfaces(self):
+        pass
+
+    def setup_joint_states(self) -> List[JointState]:
+        return []
+
+    @classmethod
+    def setup_default_configuration_in_world_below_robot_root(
+        cls, robot_root: KinematicStructureEntity
+    ) -> Self:
+        return cls(
+            root=robot_root._world.get_body_in_branch_by_name(robot_root, "left_tool0")
+        )
+
+
+@dataclass(eq=False)
+class TracyRightForceTorqueSensor(ForceTorqueSensor):
+    """
+    The force/torque sensor in the right wrist.
+
+    Rooted at the flange, as for :class:`TracyLeftForceTorqueSensor`.
+
+    .. todo:: Identify :attr:`load` for whatever the right gripper carries.
+    """
+
+    @classproperty
+    def wrench_topic(cls) -> str:
+        return TracyWrenchTopic.RIGHT_COMPENSATED
+
+    @classproperty
+    def retare_service(cls) -> str:
+        return TracyWrenchService.RIGHT
+
+    def setup_hardware_interfaces(self):
+        pass
+
+    def setup_joint_states(self) -> List[JointState]:
+        return []
+
+    @classmethod
+    def setup_default_configuration_in_world_below_robot_root(
+        cls, robot_root: KinematicStructureEntity
+    ) -> Self:
+        return cls(
+            root=robot_root._world.get_body_in_branch_by_name(robot_root, "right_tool0")
+        )
+
+
+@dataclass(eq=False)
+class TracyLeftArm(Arm[TracyLeftGripper], HasSensors[TracyLeftForceTorqueSensor]):
 
     def setup_hardware_interfaces(self):
         self._setup_hardware_interfaces_for_active_connections()
@@ -286,7 +396,7 @@ class TracyLeftArm(Arm[TracyLeftGripper]):
 
 
 @dataclass(eq=False)
-class TracyRightArm(Arm[TracyRightGripper]):
+class TracyRightArm(Arm[TracyRightGripper], HasSensors[TracyRightForceTorqueSensor]):
 
     def setup_hardware_interfaces(self):
         self._setup_hardware_interfaces_for_active_connections()

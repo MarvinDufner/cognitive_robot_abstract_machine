@@ -36,6 +36,8 @@ jobs:
           - script: coraplex/demos/coraplex_bullet_world_demo/test_demo.py
           - script: coraplex/demos/coraplex_real_tracy/test_demo.py
           - script: experiments/src/experiments/real_stretch_apartment_demo/test_demo.py
+          - script: experiments/src/experiments/wipe_table_demo/test_demo.py
+          - script: experiments/src/experiments/tracy_wipe_table_demo/test_demo.py
     uses: ./.github/workflows/example_demo_reusable.yml
     with:
       script: ${{ matrix.script }}

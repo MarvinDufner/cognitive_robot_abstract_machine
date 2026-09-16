@@ -7,12 +7,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Type
 
+from typing_extensions import TYPE_CHECKING
+
 from giskardpy.data_types.exceptions import (
     DontPrintStackTrace,
     GiskardException,
     SetupException,
 )
 from semantic_digital_twin.world_description.world_entity import Connection
+
+if TYPE_CHECKING:
+    from giskardpy.ros2_tools.wrench_compensation_node import RetareOutcome
 
 
 @dataclass
@@ -377,3 +382,50 @@ class ConnectionCannotBeTrackedByTfFrameError(SetupException):
 
     def suggest_correction(self) -> str:
         return ""
+
+
+@dataclass
+class WrenchCompensationUnavailable(SetupException):
+    """
+    Raised when nothing offers the service that re-tares a force/torque sensor.
+    """
+
+    service: str
+    """
+    The service that went unanswered.
+    """
+
+    def error_message(self) -> str:
+        return f'No wrench compensation node offers "{self.service}".'
+
+    def suggest_correction(self) -> str:
+        return (
+            "Start a wrench compensation node for this sensor, reading the topic its "
+            "driver publishes."
+        )
+
+
+@dataclass
+class ForceTorqueSensorNotTared(ExecutionException):
+    """
+    Raised when a force/torque sensor could not be zeroed before it is used.
+
+    Pressing with an untared sensor drives the tool by whatever the reading holds
+    besides contact, which is mostly the weight of what hangs past the sensor.
+    """
+
+    service: str
+    """
+    The re-tare service that was asked.
+    """
+
+    outcome: RetareOutcome
+    """
+    What the compensation node settled on instead.
+    """
+
+    def error_message(self) -> str:
+        return f'Re-taring through "{self.service}" failed: {self.outcome}'
+
+    def suggest_correction(self) -> str:
+        return "Hold the sensor still and out of contact, then ask again."

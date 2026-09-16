@@ -648,14 +648,32 @@ class ForceTorqueSensor(Sensor, ABC):
         """
         chain = world.compute_chain_of_kinematic_structure_entities(world.root, tip)
         depth_by_entity = {entity: depth for depth, entity in enumerate(chain)}
-        sensors_on_chain = [
-            sensor
+
+        def depth_on_chain(sensor: ForceTorqueSensor) -> Optional[int]:
+            """
+            How far along the chain the sensor sits, following the bodies it is bolted
+            to. A sensor frame is often a leaf beside the chain rather than a link of it.
+            """
+            entity = sensor.root
+            while entity is not None:
+                if entity in depth_by_entity:
+                    return depth_by_entity[entity]
+                connection = entity.parent_connection
+                if not isinstance(connection, FixedConnection):
+                    return None
+                entity = connection.parent
+            return None
+
+        depths = {
+            sensor: depth_on_chain(sensor)
             for sensor in world.get_semantic_annotations_by_type(cls)
-            if sensor.root in depth_by_entity
-        ]
-        if not sensors_on_chain:
+        }
+        on_chain = {
+            sensor: depth for sensor, depth in depths.items() if depth is not None
+        }
+        if not on_chain:
             raise NoForceTorqueSensorForTipError(tip=tip)
-        return max(sensors_on_chain, key=lambda sensor: depth_by_entity[sensor.root])
+        return max(on_chain, key=on_chain.get)
 
     @classproperty
     def wrench_topic(cls) -> Optional[str]:
@@ -664,6 +682,26 @@ class ForceTorqueSensor(Sensor, ABC):
 
         ``None`` for a sensor that is not fed from ROS, which is every sensor written
         directly by a simulation or a test.
+        """
+        return None
+
+    @property
+    def measured_force(self) -> np.ndarray:
+        """
+        The force of the last reading, in the sensor frame, in N.
+
+        Reads the values behind :attr:`force`, which is registered first, rather than
+        evaluating the expression, which a control cycle cannot afford.
+        """
+        return self.wrench_data.data[:3]
+
+    @classproperty
+    def retare_service(cls) -> Optional[str]:
+        """
+        The service that zeroes this kind of sensor's compensation.
+
+        ``None`` for a sensor whose readings need no zeroing, or that nothing
+        compensates.
         """
         return None
 

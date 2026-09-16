@@ -106,12 +106,14 @@ def test_the_compiled_step_matches_the_dynamics_it_stands_for(hsr_world_copy):
     damping = Vector3(x=20.0, y=35.0, z=100.0)
     stiffness = Vector3(x=0.0, y=5.0, z=2000.0)
     desired_force = Vector3(x=0.0, y=1.0, z=8.0)
+    maximum_offset = Vector3(x=0.03, y=0.05, z=0.01)
     task, context, _ = build_admittance(
         hsr_world_copy,
         mass=mass,
         damping=damping,
         stiffness=stiffness,
         desired_force=desired_force,
+        maximum_offset=maximum_offset,
     )
     sensor = sensor_of(hsr_world_copy)
     control_dt = context.qp_controller_config.control_dt
@@ -119,6 +121,7 @@ def test_the_compiled_step_matches_the_dynamics_it_stands_for(hsr_world_copy):
     d = damping.to_np()[:3].flatten()
     k = stiffness.to_np()[:3].flatten()
     f_desired = desired_force.to_np()[:3].flatten()
+    travel = maximum_offset.to_np()[:3].flatten()
     generator = np.random.default_rng(0)
 
     for _ in range(50):
@@ -141,7 +144,12 @@ def test_the_compiled_step_matches_the_dynamics_it_stands_for(hsr_world_copy):
         )
         np.testing.assert_allclose(
             stepped,
-            np.concatenate([state[:3] + velocity * control_dt, velocity]),
+            np.concatenate(
+                [
+                    np.clip(state[:3] + velocity * control_dt, -travel, travel),
+                    velocity,
+                ]
+            ),
             atol=1e-12,
         )
 
@@ -238,3 +246,54 @@ def test_an_unread_sensor_leaves_the_offset_alone(hsr_world_copy):
     task.on_tick(context)
 
     np.testing.assert_array_equal(task._state, np.zeros(6))
+
+
+# %% bounded compliance travel
+
+
+def test_the_offset_stops_at_its_allowed_travel(hsr_world_copy):
+    """
+    Out of contact nothing balances the desired force, so an unbounded offset walks the
+    goal metres away from the trajectory while the arm is still catching up with it.
+    """
+    travel = 0.02
+    task, context, _ = build_admittance(
+        hsr_world_copy,
+        desired_force=Vector3(z=8.0),
+        maximum_offset=Vector3(x=travel, y=travel, z=travel),
+    )
+    sensor = sensor_of(hsr_world_copy)
+
+    offsets = press(task, context, sensor, np.zeros(3))
+
+    assert np.all(np.abs(offsets) <= travel + 1e-9)
+    np.testing.assert_allclose(offsets[-1][2], -travel, atol=1e-9)
+
+
+def test_an_offset_at_its_allowed_travel_yields_again_on_contact(hsr_world_copy):
+    """
+    The bound must not trap the offset: the tool has to be able to give way as soon as
+    the surface pushes harder than asked for.
+    """
+    travel = 0.02
+    desired_force = 8.0
+    task, context, _ = build_admittance(
+        hsr_world_copy,
+        desired_force=Vector3(z=desired_force),
+        maximum_offset=Vector3(x=travel, y=travel, z=travel),
+    )
+    sensor = sensor_of(hsr_world_copy)
+    press(task, context, sensor, np.zeros(3))
+    goal_R_sensor = hsr_world_copy.compute_forward_kinematics_np(
+        hsr_world_copy.root, sensor.root
+    )[:3, :3]
+
+    offsets = press(
+        task,
+        context,
+        sensor,
+        goal_R_sensor.T @ np.array([0.0, 0.0, 2.0 * desired_force]),
+        ticks=5,
+    )
+
+    assert np.all(np.diff(offsets[:, 2]) > 0.0)

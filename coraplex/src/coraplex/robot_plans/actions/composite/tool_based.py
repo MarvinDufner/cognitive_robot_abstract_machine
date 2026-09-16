@@ -46,6 +46,7 @@ from coraplex.robot_plans.actions.composite.tool_paths import (
     build_container_path,
     build_cutting_path,
     build_surface_path,
+    planar_raster_xy,
     planar_spiral_xy,
     planar_sweep_x,
 )
@@ -122,6 +123,27 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
     Keep every Nth sampled waypoint for execution.
     """
 
+    standing_pose: Optional[Pose] = None
+    """
+    Where the robot will stand while this motion runs.
+
+    The waypoints are worked out when the plan is built, so a plan that navigates first
+    would otherwise measure reach from wherever the robot happened to start. Only used
+    with :attr:`skip_unreachable`.
+    """
+
+    skip_unreachable: bool = False
+    """
+    Drop the waypoints the arm cannot reach from where the robot stands.
+
+    The tool follows the waypoints in order and cannot skip ahead, so a path that starts
+    out of reach never starts at all. Dropping those waypoints covers what this placement
+    can cover and leaves the rest to the next one.
+
+    .. note:: The bound is purely kinematic, so a kept waypoint is reachable at best; it
+        may still be blocked or need a posture the arm cannot hold.
+    """
+
     @abstractmethod
     def _build_tool_path(self) -> ToolPath:
         """
@@ -148,6 +170,8 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
         """
         _, points, _ = self._build_tool_path().sample(frame=self._path_frame())
         stride = max(1, int(self.pointer_stride))
+        if self.skip_unreachable:
+            points = points[self._within_reach(points)]
         waypoints = [
             Point3(x=point[0], y=point[1], z=point[2], reference_frame=self.world.root)
             for point in points
@@ -155,6 +179,22 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
         if not waypoints:
             raise MissingWaypoints(self)
         return waypoints
+
+    def _within_reach(self, points: np.ndarray) -> np.ndarray:
+        """
+        :param points: Sampled path points in the world frame.
+        :return: Which of them the arm can reach from where the robot stands, measured
+            horizontally, as the arm's own reach is.
+        """
+        arm = ViewManager.get_arm_view(self.arm, self.robot)
+        if self.standing_pose is None:
+            standing = self.world.compute_forward_kinematics_np(
+                self.world.root, self.robot.root
+            )[:2, 3]
+        else:
+            standing = self.standing_pose.to_np()[:2, 3]
+        distances = np.linalg.norm(points[:, :2] - standing, axis=1)
+        return distances <= arm.maximum_reach()
 
     @property
     def _alignment_pairs(self) -> List[AlignmentPair]:
@@ -313,12 +353,20 @@ class WipingAction(ToolMotionAction):
 
     length: float = 0.20
     """
-    Sweep length in meters for the spreading motion.
+    Length of the wiped patch along the sweep, in meters.
+    """
+
+    width: float = 0.0
+    """
+    Width of the wiped patch across the sweep, in meters.
+
+    Zero wipes a single lane back and forth. A positive width lays parallel lanes side
+    by side, a tool width apart, so a rectangle is covered rather than a line.
     """
 
     cycles: float = 1.0
     """
-    Number of sweep cycles for the spreading motion.
+    Number of sweep cycles, for a patch of no width.
     """
 
     final_waypoint_success_tolerance: float = 0.08
@@ -344,14 +392,31 @@ class WipingAction(ToolMotionAction):
                 self.surface, technique=self.technique, approach_clearance=0.0
             )
         if self.technique is WipingTechnique.SPREAD:
+            if self.width > 0.0:
+                return ToolPath(
+                    [
+                        ToolPathSegment(
+                            kind=ToolPathSegmentKind.SWEEP,
+                            duration=2.0,
+                            local_curve=lambda tau: planar_raster_xy(
+                                tau,
+                                width=float(self.length),
+                                height=float(self.width),
+                                lanes=self._lanes(),
+                            ),
+                        )
+                    ]
+                )
             return ToolPath(
                 [
                     ToolPathSegment(
                         kind=ToolPathSegmentKind.SWEEP,
                         duration=2.0,
                         local_curve=lambda tau: planar_sweep_x(
+                            # Half, because a sweep is given its amplitude while
+                            # :attr:`length` is the patch it has to cover.
                             tau,
-                            length=float(self.length),
+                            length=0.5 * float(self.length),
                             cycles=max(1.0, float(self.cycles)),
                         ),
                     )
@@ -368,6 +433,16 @@ class WipingAction(ToolMotionAction):
                 )
             ]
         )
+
+    def _lanes(self) -> int:
+        """
+        :return: How many lanes cover :attr:`width`, spaced so that the tool overlaps
+            between them and leaves no strip untouched.
+        """
+        footprint = self.tool.root.collision.as_bounding_box_collection_in_frame(
+            self.tool.root
+        ).bounding_box()
+        return max(2, math.ceil(self.width / footprint.width) + 1)
 
     def _path_frame(self) -> HomogeneousTransformationMatrix:
         if self.surface is not None:

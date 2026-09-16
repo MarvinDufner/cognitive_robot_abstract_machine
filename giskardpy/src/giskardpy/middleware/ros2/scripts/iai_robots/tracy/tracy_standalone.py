@@ -5,6 +5,7 @@ from giskardpy.middleware.ros2.scripts.iai_robots.tracy.configs import (
 )
 from rclpy import Parameter
 
+from giskardpy.middleware.ros2.utils.utils import load_xacro
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from giskardpy.middleware.ros2.server_config import ExecutionMode, GiskardServerConfig
 from giskardpy.middleware.ros2.giskard import Giskard
@@ -16,7 +17,10 @@ def main():
         namespace="", parameters=[("robot_description", Parameter.Type.STRING)]
     )
     robot_description = rospy.node.get_parameter_or("robot_description").value
-    # robot_description = load_xacro("package://iai_tracy_description/urdf/tracy.urdf.xacro")
+    if robot_description is None:
+        robot_description = load_xacro(
+            "package://iai_tracy_description/urdf/tracy.urdf.xacro"
+        )
 
     giskard = Giskard(
         world_config=WorldWithTracyConfig(urdf=robot_description),

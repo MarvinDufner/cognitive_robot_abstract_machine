@@ -20,6 +20,7 @@ from giskardpy.motion_statechart.tasks.joint_tasks import (
     JointPositionList,
     JointVelocityLimit,
 )
+from giskardpy.motion_statechart.monitors.force_monitors import ContactForceReached
 from giskardpy.motion_statechart.monitors.monitors import LocalMinimumReached
 from semantic_digital_twin.datastructures.alignment import AlignmentPair
 from semantic_digital_twin.datastructures.definitions import GripperState
@@ -29,7 +30,7 @@ from semantic_digital_twin.robots.robot_parts import EndEffector
 from semantic_digital_twin.spatial_types import Point3, Vector3
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.world_entity import Body
-from coraplex.exceptions import MissingToolFrame, MissingWaypoints
+from coraplex.exceptions import MissingWaypoints
 from coraplex.robot_plans.mixins import (
     CartesianVelocityLimitParameters,
     GripperStallToleranceParameters,
@@ -179,6 +180,108 @@ class MoveGripperMotion(BaseMotion, GripperStallToleranceParameters):
             max_velocity=self.finger_velocity,
         )
         return Parallel([done_node, velocity_limit], name=name)
+
+
+@dataclass
+class LowerUntilContactMotion(BaseMotion):
+    """
+    Lower a tool until its force/torque sensor feels the surface.
+
+    The goal sits below the surface, so the descent is ended by contact rather than by
+    arriving: where the surface really is need not be known, only roughly where it is not.
+    """
+
+    goal_point: Point3
+    """
+    Point below the surface the tool is driven towards.
+    """
+
+    arm: Arms
+    """
+    Arm holding the tool.
+    """
+
+    tip: Optional[Body] = None
+    """
+    Body that is lowered.
+
+    Defaults to the arm's tool frame.
+    """
+
+    alignment_pairs: List[AlignmentPair] = field(default_factory=list)
+    """
+    Normal pairs kept aligned while lowering, so the tool keeps facing the surface it is
+    lowered onto.
+    """
+
+    contact_force: float = 2.0
+    """
+    Force magnitude that counts as contact, in N.
+    """
+
+    descent_velocity: float = 0.02
+    """
+    How fast the tool is lowered, in m/s.
+
+    Slow, because the tool travels on between the reading that first shows contact and
+    the cycle that acts on it, and a surface is far stiffer than the tool can yield.
+    """
+
+    allow_gripper_collision: Optional[bool] = None
+    """
+    If the gripper can collide with something.
+    """
+
+    def perform(self):
+        return
+
+    @property
+    def _motion_chart(self):
+        tip_link = self._resolve_tip(self.arm, self.tip)
+        root_link = (
+            self.world.root
+            if isinstance(self.robot, HasMobileBase)
+            and self.robot.mobile_base.full_body_controlled
+            else self.robot.root
+        )
+        tasks = [
+            CartesianPosition(
+                root_link=root_link,
+                tip_link=tip_link,
+                goal_point=self.goal_point,
+                reference_velocity=self.descent_velocity,
+                weight=float(DefaultWeights.WEIGHT_BELOW_COLLISION_AVOIDANCE),
+                name="LowerUntilContact",
+            )
+        ]
+        tasks.extend(
+            AlignPlanes(
+                tip_link=tip_link,
+                root_link=root_link,
+                tip_normal=pair.tip_normal,
+                goal_normal=pair.goal_normal,
+                weight=DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE.value,
+            )
+            for pair in self.alignment_pairs
+        )
+        motion_statechart_nodes = (
+            # Touching is the point, so the tool is allowed onto what it is lowered onto.
+            self._only_allow_gripper_collision_rules(self.arm, also_touching=[tip_link])
+            if self.allow_gripper_collision
+            else []
+        )
+        motion_statechart_nodes.append(
+            Parallel(
+                [
+                    Parallel(tasks),
+                    ContactForceReached(
+                        tip_link=tip_link, threshold=self.contact_force
+                    ),
+                ],
+                minimum_success=1,
+            )
+        )
+        return Parallel(motion_statechart_nodes)
 
 
 @dataclass
@@ -376,21 +479,6 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
     def perform(self):
         return
 
-    def _resolve_tip(self) -> Body:
-        """
-        :return: The body that follows the waypoints: the explicit tip if given,
-            otherwise the arm's tool frame.
-        :raises MissingToolFrame: If no tip is given and the arm has no tool frame.
-        """
-        if self.tip is not None:
-            return self.tip
-        tool_frame = (
-            ViewManager().get_end_effector_view(self.arm, self.robot).tool_frame
-        )
-        if tool_frame is None:
-            raise MissingToolFrame(self.arm, self.robot)
-        return tool_frame
-
     def _upright_torso_task(self, tip_link: Body, root_link: Body) -> AlignPlanes:
         """
         :return: A task that keeps Justin's torso upright during the motion.
@@ -409,7 +497,7 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         if not self.waypoints:
             raise MissingWaypoints(self)
 
-        tip_link = self._resolve_tip()
+        tip_link = self._resolve_tip(self.arm, self.tip)
         root_link = (
             self.world.root
             if isinstance(self.robot, HasMobileBase)

@@ -41,6 +41,7 @@ from giskardpy.motion_statechart.tasks.cartesian_tasks import (
 )
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList, JointState
 from krrood.symbolic_math.symbolic_math import (
+    FloatVariable,
     trinary_logic_and,
     trinary_logic_not,
 )
@@ -1634,3 +1635,39 @@ class TestDebugExpressions:
             "pose/orientation/goal",
             "pose/orientation/current",
         }
+
+
+# %% tracking survives later float variables
+
+
+def test_the_trajectory_still_tracks_when_a_later_node_registers_a_variable(
+    cylinder_bot_world: World,
+):
+    """Registering a float variable replaces the array that holds them. A task that had
+    bound itself to the old array would keep reading it, and its tracking would freeze
+    where it stood."""
+    tip = cylinder_bot_world.get_kinematic_structure_entity_by_name("bot")
+    motion_statechart = MotionStatechart()
+    motion_statechart.add_node(
+        trajectory := CartesianPositionTrajectory(
+            root_link=cylinder_bot_world.root,
+            tip_link=tip,
+            goal_points=[
+                Point3(x=0.1 * step, reference_frame=cylinder_bot_world.root)
+                for step in range(10)
+            ],
+            maximum_skip_ahead=2,
+        )
+    )
+    motion_statechart.add_node(EndMotion.when_true(trajectory))
+    executor = Executor(MotionStatechartContext(world=cylinder_bot_world))
+    executor.compile(motion_statechart=motion_statechart)
+
+    # a node built after this one would do exactly this
+    executor.context.float_variable_data.register_expression(
+        FloatVariable("registered_after_the_trajectory")
+    )
+    for _ in range(200):
+        executor.tick()
+
+    assert trajectory.current_index > 0
