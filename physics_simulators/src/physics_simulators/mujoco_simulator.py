@@ -394,6 +394,63 @@ class MujocoSimulator(BaseSimulator):
         )
 
     @BaseSimulator.simulator_callback
+    def get_contact_wrench(
+        self, body_names: List[str], about_position: numpy.ndarray
+    ) -> SimulatorCallbackResult:
+        """
+        Get the wrench the rest of the scene presses onto a group of bodies with.
+
+        Contacts within the group cancel each other out and are left out, so the result
+        is what a sensor carrying the group would measure, bar the group's own weight and
+        inertia.
+
+        :param body_names: The names of the bodies that are touched.
+        :param about_position: The point the torque is taken about, in the world frame.
+        :return: A SimulatorCallbackResult with a numpy array of shape (6,): the force
+            and then the torque, both in the world frame.
+        """
+        body_ids = set()
+        for body_name in body_names:
+            get_body = self.get_body(body_name)
+            if (
+                get_body.type
+                != SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION
+            ):
+                return get_body
+            body_ids.add(get_body.result.id)
+        force = numpy.zeros(3)
+        torque = numpy.zeros(3)
+        with self._model_lock:
+            for index in range(self._mj_data.ncon):
+                contact = self._mj_data.contact[index]
+                group_holds_second = (
+                    self._mj_model.geom_bodyid[contact.geom2] in body_ids
+                )
+                group_holds_first = (
+                    self._mj_model.geom_bodyid[contact.geom1] in body_ids
+                )
+                if group_holds_second == group_holds_first:
+                    continue
+                contact_wrench = numpy.zeros(6)
+                mujoco.mj_contactForce(
+                    self._mj_model, self._mj_data, index, contact_wrench
+                )
+                # MuJoCo reports the wrench in the contact's own frame, acting on the
+                # body of the second geom.
+                contact_R_world = contact.frame.reshape(3, 3)
+                sign = 1.0 if group_holds_second else -1.0
+                contact_force = sign * (contact_R_world.T @ contact_wrench[:3])
+                force += contact_force
+                torque += sign * (contact_R_world.T @ contact_wrench[3:]) + numpy.cross(
+                    contact.pos - about_position, contact_force
+                )
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION,
+            info=f"Getting the contact wrench on {body_names}",
+            result=numpy.concatenate([force, torque]),
+        )
+
+    @BaseSimulator.simulator_callback
     def get_geom_friction(self, geom_name: str) -> SimulatorCallbackResult:
         """
         Get a geom's contact friction (sliding, torsional, rolling) by its name.

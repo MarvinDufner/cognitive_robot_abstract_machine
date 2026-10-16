@@ -22,9 +22,13 @@ from typing_extensions import List, Type
 from coraplex.alternative_motion_mapping import AlternativeMotion
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import ExecutionType, VisualizationBackend
-from coraplex.execution_environment import ExecutionEnvironment
+from coraplex.execution_environment import (
+    ExecutionEnvironment,
+    PhysicallySimulatedRobot,
+)
 from coraplex.visualization import VisualizationSession, WorldVisualization
 from coraplex.plans.plan_node import PlanNode
+from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.adapters.ros.world_fetcher import fetch_world_from_service
 from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchronizer
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
@@ -192,6 +196,11 @@ class RobotDemonstration(ABC):
     Session held for the duration of a real run, and ``None`` in simulation.
     """
 
+    simulation: MujocoSim | None = field(init=False, default=None)
+    """
+    The physics the plan is performed in, and ``None`` for a run that needs none.
+    """
+
     @abstractmethod
     def build_simulated_world(self) -> World:
         """
@@ -276,6 +285,38 @@ class RobotDemonstration(ABC):
         WorldSynchronizer(_world=world, node=self.ros_session.node)
         return world
 
+    def start_physics(self, world: World) -> MujocoSim | None:
+        """
+        Start the physics a physically simulated run is performed in, stepped by the
+        control loop rather than by a thread of its own.
+
+        :param world: The populated world to simulate, which the simulation is built
+            from and therefore has to be complete.
+        :return: The running simulation, or ``None`` for a run that is not physically
+            simulated.
+        """
+        if self.execution_type is not ExecutionType.PHYSICALLY_SIMULATED:
+            return None
+        simulation = MujocoSim(world=world, headless=True)
+        simulation.start_stepped_simulation()
+        return simulation
+
+    def execution_environment(self) -> ExecutionEnvironment:
+        """
+        :return: The environment the plan is performed in: one that hands the plan the
+            physics when there is any, and one that only names the execution type
+            otherwise.
+        """
+        if self.simulation is None:
+            return ExecutionEnvironment(
+                execution_type=self.execution_type,
+                collision_avoidance=self.collision_avoidance,
+            )
+        return PhysicallySimulatedRobot(
+            simulation=self.simulation,
+            collision_avoidance=self.collision_avoidance,
+        )
+
     def run(self) -> World:
         """
         Acquire a world, populate it if needed, and perform the plan against it.
@@ -286,6 +327,7 @@ class RobotDemonstration(ABC):
             world = self.acquire_world()
             if not self.is_scene_populated(world):
                 self.populate_scene(world)
+            self.simulation = self.start_physics(world)
             for _ in range(self.repetitions):
                 context = self.build_context(world)
                 plan = self.build_plan(context)
@@ -296,10 +338,7 @@ class RobotDemonstration(ABC):
                     if self.event_segmentation
                     else nullcontext()
                 )
-                with ExecutionEnvironment(
-                    execution_type=self.execution_type,
-                    collision_avoidance=self.collision_avoidance,
-                ), event_segmentation:
+                with self.execution_environment(), event_segmentation:
                     plan.perform()
         finally:
             self.tear_down()
@@ -312,6 +351,9 @@ class RobotDemonstration(ABC):
         An explicitly selected browser viewer remains available for inspection until
         :meth:`stop_visualization`. A borrowed ROS session is left to its owner.
         """
+        if self.simulation is not None:
+            self.simulation.stop_simulation()
+            self.simulation = None
         if self.visualization is not None:
             self.visualization.finish_execution()
             if not self.visualization.is_rendering:

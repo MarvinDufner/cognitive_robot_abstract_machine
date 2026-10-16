@@ -1055,7 +1055,7 @@ class Arm(KinematicChain, HasEndEffector[TGenericEndEffector], ABC):
         ]
         root_P_tool = self._world.compose_forward_kinematics_expression(
             self._robot.root, self.end_effector.tool_frame
-        ).to_position()
+        ).position
         horizontal_distance = (
             Vector3(x=root_P_tool.x, y=root_P_tool.y)
             .norm()

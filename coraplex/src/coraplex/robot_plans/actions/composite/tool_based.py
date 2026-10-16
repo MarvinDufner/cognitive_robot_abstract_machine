@@ -171,7 +171,12 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
         """
         :return: The sampled waypoints of the tool path in the world frame.
         """
-        _, points, _ = self._build_tool_path().sample(frame=self._path_frame())
+        path_frame = self._path_frame()
+        _, points, _ = self._build_tool_path().sample(frame=path_frame)
+        if self.desired_force is not None:
+            points = (
+                points + path_frame.to_np()[:3, 2] * self.tool.contact_face_distance
+            )
         stride = max(1, int(self.pointer_stride))
         if self.skip_unreachable:
             points = points[self._within_reach(points)]
@@ -229,6 +234,12 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
     surface. Only wiping presses; the other tool motions cut, mix and pour in free
     space.
     """
+    admittance_travel: Optional[Vector3] = None
+    """
+    How far the press may yield from the path, per axis, in m.
+
+    ``None`` leaves the default. Only meaningful together with :attr:`desired_force`.
+    """
 
     @property
     def _action_plan(self) -> PlanNode:
@@ -249,6 +260,7 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
                     desired_force=self.desired_force,
                     admittance_mass=self.admittance_mass,
                     admittance_damping=self.admittance_damping,
+                    admittance_travel=self.admittance_travel,
                 )
             ]
         )

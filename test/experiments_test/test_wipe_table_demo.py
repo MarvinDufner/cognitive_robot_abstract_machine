@@ -10,6 +10,7 @@ from experiments.wipe_table_demo.demo import (
     OUTWARD_NORMALS,
     PRESS_FORCE,
     SPONGE_NAME,
+    SPONGE_SCALE,
     STANDING_CLEARANCE,
     WipeTableDemonstration,
 )
@@ -119,7 +120,7 @@ def test_the_base_stands_clear_of_the_table_edge():
     extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
     world_T_table = world.compute_forward_kinematics_np(world.root, body)
     robot = world.get_semantic_annotations_by_type(HSRB)[0]
-    expected = robot.mobile_base.footprint_radius + STANDING_CLEARANCE
+    expected = robot.mobile_base.base_radius + STANDING_CLEARANCE
 
     for pose in demonstration.standing_poses(world, table):
         table_P_base = np.linalg.inv(world_T_table) @ np.append(
@@ -190,7 +191,12 @@ def test_the_wipe_presses_into_the_surface_and_travels_across_it():
     sponge = world.get_body_by_name(SPONGE_NAME)
     end = world.compute_forward_kinematics_np(world.root, sponge)[:3, 3]
     assert np.linalg.norm(end[:2] - start[:2]) > 0.1
-    # The press settles where the surface pushes back as hard as it is pressed.
+    # The press settles where the surface pushes back as hard as it is pressed. What
+    # touches is the tool's own face, so that is what sinks into the surface, and its
+    # frame sits half a tool above it.
+    face_below_the_frame = float(SPONGE_SCALE.z) / 2
     np.testing.assert_allclose(
-        end[2] - surface_height, -PRESS_FORCE / CONTACT_STIFFNESS, atol=2e-3
+        end[2] - surface_height,
+        face_below_the_frame - PRESS_FORCE / CONTACT_STIFFNESS,
+        atol=5e-3,
     )

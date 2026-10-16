@@ -497,6 +497,15 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
     force/torque sensor on the chain to the tip.
     """
 
+    admittance_travel: Optional[Vector3] = None
+    """
+    How far the press may yield from the waypoints, per axis, in m.
+
+    ``None`` leaves the default the task was written with. Zero on an axis keeps the tip
+    rigid along it, which is what an axis that only ever feels friction needs: yielding
+    to friction drifts the tip against its own direction of travel until it stalls.
+    """
+
     def perform(self):
         return
 
@@ -542,6 +551,8 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
                 trajectory_kwargs["mass"] = self.admittance_mass
             if self.admittance_damping is not None:
                 trajectory_kwargs["damping"] = self.admittance_damping
+            if self.admittance_travel is not None:
+                trajectory_kwargs["maximum_offset"] = self.admittance_travel
             tasks = [
                 AdmittanceCartesianTrajectory(
                     desired_force=self.desired_force, **trajectory_kwargs
@@ -565,20 +576,11 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
             else []
         )
         motion_statechart_nodes.extend(self.keep_base_still())
-        tracking = Parallel(tasks)
-        if self.desired_force is not None:
-            # Pressing ends when the trajectory is covered or when the arm can get no
-            # further, whichever comes first; the wrench source only produces and never
-            # reports success, so it cannot end the motion by itself.
-            #
-            # .. todo:: This ends the press on a single cycle of near-zero velocity, which
-            #     a press oscillating against a stiff surface passes through at every
-            #     reversal, so it reports success the first time the tool bounces.
-            #     :class:`~giskardpy.motion_statechart.monitors.progress_monitors.ProgressStalled`
-            #     measures the same thing over seconds, but it has to be a sibling of the
-            #     node it watches in the same chart rather than share a Parallel with it.
-            tracking = Parallel([tracking, LocalMinimumReached()], minimum_success=1)
-        motion_statechart_nodes.append(tracking)
+        # A press that can get no further is ended by the no-progress monitor the
+        # executable adds around every motion, which measures standing still over
+        # seconds; ending it here on a single cycle of near-zero velocity would report
+        # success at the first bounce off a stiff surface instead.
+        motion_statechart_nodes.append(Parallel(tasks))
         return Parallel(motion_statechart_nodes)
 
 

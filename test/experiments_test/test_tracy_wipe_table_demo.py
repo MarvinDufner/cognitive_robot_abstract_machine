@@ -1,12 +1,13 @@
 import numpy as np
 import pytest
 
+from ..pytest_environment import runs_in_continuous_integration
+
 from coraplex.datastructures.enums import ExecutionType
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
 from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
 from coraplex.plans.plan_node import MotionNode
-from coraplex.view_manager import ViewManager
 from giskardpy.executor import Executor
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
@@ -25,6 +26,9 @@ from experiments.wipe_table_demo.demo import (
     SPONGE_NAME,
     SPONGE_SCALE,
     SimulatedContactWrench,
+)
+from semantic_digital_twin.adapters.sensors.force_torque import (
+    PhysicallySimulatedContactWrench,
 )
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import Tracy, TracyLeftForceTorqueSensor
@@ -133,8 +137,7 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
     """
     demonstration, world = populated_demonstration()
     top = demonstration.bench_height(world)
-    robot = world.get_semantic_annotations_by_type(Tracy)[0]
-    end_effector = ViewManager.get_end_effector_view(demonstration.arm, robot)
+    end_effector = demonstration.wiping_arm(world).end_effector
     hand = [
         box
         for body in end_effector.bodies_with_collision
@@ -205,9 +208,14 @@ def test_the_wipe_presses_into_the_bench_and_travels_across_it():
         world.root, world.get_body_by_name(SPONGE_NAME)
     )[:3, 3]
     assert np.linalg.norm(end[:2] - start[:2]) > 0.1
-    # The press settles where the surface pushes back as hard as it is pressed.
+    # The press settles where the surface pushes back as hard as it is pressed. What
+    # touches is the tool's own face, so that is what sinks into the surface, and its
+    # frame sits half a tool above it.
+    face_below_the_frame = float(SPONGE_SCALE.z) / 2
     np.testing.assert_allclose(
-        end[2] - bench_height, -PRESS_FORCE / CONTACT_STIFFNESS, atol=2e-3
+        end[2] - bench_height,
+        face_below_the_frame - PRESS_FORCE / CONTACT_STIFFNESS,
+        atol=5e-3,
     )
 
 
@@ -321,3 +329,42 @@ def test_every_motion_of_the_plan_compiles():
 
     assert "MoveTCPWaypointsAlignedMotion" in compiled
     assert "LowerUntilContactMotion" in compiled
+
+
+# %% the physics a run is performed in
+
+
+def test_a_kinematically_simulated_run_needs_no_physics():
+    """
+    Nothing resolves contacts in a kinematic run, so its press is modelled instead.
+    """
+    demonstration, world = populated_demonstration()
+
+    assert demonstration.start_physics(world) is None
+    assert [type(reading) for reading in demonstration.world_inputs(world)] == [
+        SimulatedContactWrench
+    ]
+
+
+@pytest.mark.skipif(
+    not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
+)
+def test_a_physically_simulated_run_feels_what_the_physics_resolves():
+    """
+    The press is only as good as the contact it is measured against, so a run that
+    simulates the physics reads its wrench from there rather than from a model of the
+    bench.
+    """
+    demonstration, world = populated_demonstration(
+        execution_type=ExecutionType.PHYSICALLY_SIMULATED
+    )
+
+    demonstration.simulation = demonstration.start_physics(world)
+    try:
+        inputs = demonstration.world_inputs(world)
+        assert [type(reading) for reading in inputs] == [
+            PhysicallySimulatedContactWrench
+        ]
+        assert inputs[0].simulation is demonstration.simulation
+    finally:
+        demonstration.tear_down()

@@ -1673,6 +1673,20 @@ class Tool(HasGraspCandidates, ABC):
             return self.root
         return end_effector
 
+    @property
+    def contact_face_distance(self) -> float:
+        """
+        How far the face that meets the surface sits from the frame that follows a tool
+        path, in m, along the tool's own z axis, which is the axis pointing away from
+        the gripper.
+        """
+        tool_frame = self.get_tool_frame()
+        return float(
+            self.root.collision.as_bounding_box_collection_in_frame(tool_frame)
+            .bounding_box()
+            .max_z
+        )
+
     @abstractmethod
     def tool_alignment(self, target: Union[Body, Pose]) -> List[AlignmentPair]:
         """

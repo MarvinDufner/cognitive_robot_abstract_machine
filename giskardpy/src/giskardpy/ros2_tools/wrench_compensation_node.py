@@ -361,11 +361,9 @@ class WrenchCompensationNode(Node):
             self.gravity_frame, sensor_frame, Time()
         )
         rotation = transform.transform.rotation
-        return (
-            Quaternion(x=rotation.x, y=rotation.y, z=rotation.z, w=rotation.w)
-            .to_rotation_matrix()
-            .to_np()[:3, :3]
-        )
+        return Quaternion(
+            x=rotation.x, y=rotation.y, z=rotation.z, w=rotation.w
+        ).rotation_matrix.to_np()[:3, :3]
 
     def _on_message(self, message: WrenchStamped) -> None:
         base_R_sensor = self._base_R_sensor(

@@ -5,6 +5,13 @@ hand, regulating how hard it presses with the left wrist's force/torque sensor.
 The tool is brought over the patch, lowered until the sensor feels the bench, and only
 then wiped, so where the surface really is is measured rather than assumed.
 
+The execution type is the first command line argument, defaulting to ``REAL``::
+
+    python3 demo.py PHYSICALLY_SIMULATED
+
+``PHYSICALLY_SIMULATED`` performs the wipe against MuJoCo, which resolves the contact
+itself, so how hard and how steadily the press holds can be measured without the robot.
+
 .. todo:: The sensor is taken as the control program leaves it, zeroed at start. Once
     the tool has to change orientation under force, the load has to be removed properly:
     run a wrench compensation node per arm and read its topic instead. See
@@ -14,13 +21,14 @@ then wiped, so where the surface really is is measured rather than assumed.
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 
 import numpy as np
-from typing_extensions import ClassVar, List
+from typing_extensions import ClassVar
 
 from coraplex.datastructures.dataclasses import Context
-from coraplex.datastructures.enums import ExecutionType, WipingTechnique, Arms
+from coraplex.datastructures.enums import ExecutionType, WipingTechnique
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
@@ -29,15 +37,14 @@ from coraplex.robot_plans.actions.core.robot_body import (
     ParkArmsAction,
 )
 from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
-from coraplex.view_manager import ViewManager
 from experiments.wipe_table_demo.demo import (
     PRESS_FORCE,
+    PRESS_TRAVEL,
     SPONGE_NAME,
     SimulatedContactWrench,
     WipingDemonstration,
 )
-from semantic_digital_twin.input_synchronization import InputSynchronizer
-from semantic_digital_twin.api import RobotSpecification, WorldSpecification
+from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge
 from semantic_digital_twin.spatial_types import Point3, Vector3
@@ -46,6 +53,9 @@ from semantic_digital_twin.world import World
 
 BENCH_NAME = "table"
 """The bench Tracy is mounted on, which is also the surface it wipes."""
+
+TRACY_FLOOR_NAME = "floor"
+"""Name of the body Tracy is bolted to in a simulated run."""
 
 WIPED_PATCH_CENTRE = (0.72, -0.10)
 """Centre of the wiped patch, in the bench frame."""
@@ -95,7 +105,7 @@ tracked onto it exactly, so a patch the sponge alone clears is not enough.
 PRESS_DAMPING = Vector3(x=300.0, y=300.0, z=300.0)
 """Virtual damping the press yields with, per axis, in N s/m.
 
-Sets how fast the press chases the surface: the force asked for divided by this, so 2.7
+Sets how fast the press chases the surface: the force asked for divided by this, so 5
 cm/s here. Faster loses the surface on the way past a dip in it, slower cannot keep up
 with one.
 """
@@ -106,6 +116,15 @@ PRESS_MASS = Vector3(x=10.0, y=10.0, z=10.0)
 With :data:`PRESS_DAMPING` this gives the press a time constant of 33 ms, about three
 control cycles, so it follows the average of a contact that makes and breaks rather than
 each impact in it.
+"""
+
+TOUCHDOWN_FORCE = 5.0
+"""
+Force magnitude that ends the descent onto the bench, in N.
+
+Well above what the sensor reports out of contact and far below what the arm can press
+with: the descent keeps closing until it is felt, and whatever it travels between the
+reading that shows contact and the cycle that acts on it is pressed into the bench.
 """
 
 DESCENT_OVERSHOOT = 0.02
@@ -132,10 +151,16 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         return UNMODELLED_ADAPTER_LENGTH
 
     def build_simulated_world(self) -> World:
-        return WorldSpecification(
-            world_parser=None,
-            robots=[RobotSpecification(semantic_annotation_type=self.used_robot)],
-        ).to_domain_object()
+        """
+        Put Tracy on a floor it is bolted to; it brings its own bench.
+
+        .. note:: The floor is not called ``map``, as a world root is by default, because
+            Tracy's description has a link of that name and MuJoCo tells its bodies apart
+            by name alone.
+        """
+        world = World.create_with_root_body(root_body_name=TRACY_FLOOR_NAME)
+        RobotSpecification(semantic_annotation_type=self.used_robot).spawn(world)
+        return world
 
     def populate_scene(self, world: World) -> None:
         """
@@ -150,7 +175,10 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         world = context.world
         sponge = world.get_semantic_annotations_by_type(Sponge)[0]
         patch = self.wiped_pose(world)
-        steps = [ParkArmsAction(arm=Arms.BOTH), self.build_approach(context, patch)]
+        steps = [
+            ParkArmsAction(arms=context.robot.all_arms),
+            self.build_approach(context, patch),
+        ]
         steps.append(
             LowerUntilContactMotion(
                 goal_point=Point3(
@@ -159,15 +187,16 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                     z=patch.to_np()[2, 3] - DESCENT_OVERSHOOT,
                     reference_frame=world.root,
                 ),
-                arm=self.arm,
+                arm=self.wiping_arm(world),
                 tip=sponge.get_tool_frame(),
                 alignment_pairs=sponge.tool_alignment(patch),
+                contact_force=TOUCHDOWN_FORCE,
                 allow_gripper_collision=True,
             )
         )
         steps.append(
             WipingAction(
-                arm=self.arm,
+                arm=self.wiping_arm(world),
                 tool=sponge,
                 target_pose=patch,
                 technique=WipingTechnique.WIPE,
@@ -176,6 +205,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 desired_force=Vector3(z=PRESS_FORCE),
                 admittance_mass=PRESS_MASS,
                 admittance_damping=PRESS_DAMPING,
+                admittance_travel=PRESS_TRAVEL,
             )
         )
         return sequential(steps, context=context)
@@ -198,26 +228,18 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 roll=math.pi,
                 reference_frame=context.world.root,
             ),
-            end_effector=ViewManager.get_end_effector_view(self.arm, context.robot),
+            end_effector=self.wiping_arm(context.world).end_effector,
             allow_gripper_collision=True,
         )
 
-    def world_inputs(self, world: World) -> List[InputSynchronizer]:
-        """
-        :param world: World holding the bench and the sponge.
-        :return: A simulated contact model, or nothing on the real robot.
-        """
-        if self.execution_type is ExecutionType.REAL:
-            return []
-        return [
-            SimulatedContactWrench(
-                world=world,
-                tool=world.get_body_by_name(SPONGE_NAME),
-                surface=world.get_body_by_name(BENCH_NAME),
-                surface_height=self.bench_height(world),
-                control_period=SIMULATED_CONTROL_PERIOD,
-            )
-        ]
+    def contact_model(self, world: World) -> SimulatedContactWrench:
+        return SimulatedContactWrench(
+            world=world,
+            tool=world.get_body_by_name(SPONGE_NAME),
+            surface=world.get_body_by_name(BENCH_NAME),
+            surface_height=self.bench_height(world),
+            control_period=SIMULATED_CONTROL_PERIOD,
+        )
 
     @staticmethod
     def bench_height(world: World) -> float:
@@ -251,7 +273,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         )
 
 
-def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
+def main(execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED) -> None:
     """
     Run the demonstration.
     """
@@ -259,4 +281,8 @@ def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
 
 
 if __name__ == "__main__":
-    main(execution_type=ExecutionType.REAL)
+    main(
+        execution_type=(
+            ExecutionType[sys.argv[1]] if len(sys.argv) > 1 else ExecutionType.REAL
+        )
+    )

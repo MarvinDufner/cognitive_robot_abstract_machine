@@ -694,3 +694,88 @@ class TestOffscreenRenderingAvailability:
         monkeypatch.setenv(MujocoEnvironmentVariable.DISPLAY, ":1")
 
         assert MujocoSimulator.offscreen_rendering_available()
+
+
+# %% what presses on a group of bodies
+
+CUBE_ON_THE_GROUND = os.path.join(resources_path, "cube_on_the_ground.xml")
+"""
+A scene of one cube resting on the floor, so the force it is held up with is known.
+"""
+
+SETTLING_STEPS = 400
+"""
+Steps the cube needs to come to rest on the floor.
+"""
+
+
+@pytest.fixture
+def settled_cube() -> MujocoSimulator:
+    """
+    :return: A simulator whose cube has come to rest on the floor.
+    """
+    simulator = MujocoSimulator(
+        _headless=True, _step_size=1e-3, file_path=CUBE_ON_THE_GROUND
+    )
+    simulator.start(simulate_in_thread=False, render_in_thread=False)
+    for _ in range(SETTLING_STEPS):
+        simulator.step()
+    yield simulator
+    simulator.stop()
+
+
+def test_a_resting_body_is_pressed_with_its_own_weight(settled_cube):
+    """
+    The floor holds the cube up with exactly what gravity pulls it down with, and about
+    the cube's own origin the symmetric contact patch exerts no torque.
+    """
+    model = mujoco.MjModel.from_xml_path(CUBE_ON_THE_GROUND)
+    weight = float(model.body("box").mass[0]) * abs(float(model.opt.gravity[2]))
+    position = settled_cube.get_body_position(body_name="box").result
+
+    wrench = settled_cube.get_contact_wrench(
+        body_names=["box"], about_position=position
+    ).result
+
+    numpy.testing.assert_allclose(wrench[:3], [0.0, 0.0, weight], atol=1e-3)
+    numpy.testing.assert_allclose(wrench[3:], numpy.zeros(3), atol=1e-3)
+
+
+def test_a_group_holding_both_sides_of_a_contact_feels_nothing(settled_cube):
+    """
+    What a group presses on itself with is internal to it, as the cube and the floor it
+    rests on are to a group holding both, and a sensor carrying the group measures none
+    of it.
+    """
+    position = settled_cube.get_body_position(body_name="box").result
+
+    wrench = settled_cube.get_contact_wrench(
+        body_names=["box", "world"], about_position=position
+    ).result
+
+    numpy.testing.assert_allclose(wrench, numpy.zeros(6))
+
+
+def test_the_torque_follows_from_where_the_moments_are_taken(settled_cube):
+    """
+    The same contact force about a point beside the cube is a torque, which is what lets
+    a sensor beside the tool read how the tool is loaded.
+    """
+    position = settled_cube.get_body_position(body_name="box").result
+    lever = numpy.array([0.0, 0.1, 0.0])
+
+    wrench = settled_cube.get_contact_wrench(
+        body_names=["box"], about_position=position + lever
+    ).result
+
+    numpy.testing.assert_allclose(
+        wrench[3:], numpy.cross(-lever, wrench[:3]), atol=1e-6
+    )
+
+
+def test_an_unknown_body_is_reported_rather_than_ignored(settled_cube):
+    result = settled_cube.get_contact_wrench(
+        body_names=["no_such_body"], about_position=numpy.zeros(3)
+    )
+
+    assert result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION

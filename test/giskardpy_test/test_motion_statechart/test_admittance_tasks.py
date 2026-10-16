@@ -7,6 +7,7 @@ from giskardpy.motion_statechart.exceptions import NonPositiveVirtualMassError
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.motion_statechart.tasks.admittance_tasks import (
+    AdmittanceAlignPlanes,
     AdmittanceCartesianTrajectory,
 )
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
@@ -116,7 +117,7 @@ def test_the_compiled_step_matches_the_dynamics_it_stands_for(hsr_world_copy):
         maximum_offset=maximum_offset,
     )
     sensor = sensor_of(hsr_world_copy)
-    control_dt = context.qp_controller_config.control_dt
+    control_dt = context.qp_controller_config.control_time_step.total_seconds()
     m = mass.to_np()[:3].flatten()
     d = damping.to_np()[:3].flatten()
     k = stiffness.to_np()[:3].flatten()
@@ -297,3 +298,123 @@ def test_an_offset_at_its_allowed_travel_yields_again_on_contact(hsr_world_copy)
     )
 
     assert np.all(np.diff(offsets[:, 2]) > 0.0)
+
+
+# %% yielding in orientation
+
+
+def build_nulling(world, **arguments):
+    """
+    Compile a chart holding one torque-nulling alignment and return it with its context.
+    """
+    tool = world.get_body_by_name(TOOL_FRAME)
+    chart = MotionStatechart()
+    chart.add_node(
+        task := AdmittanceAlignPlanes(
+            name="nulling",
+            root_link=world.root,
+            tip_link=tool,
+            tip_normal=Vector3.Z(tool),
+            goal_normal=Vector3.Z(world.root),
+            **arguments,
+        )
+    )
+    chart.add_node(EndMotion.when_true(task))
+    context = MotionStatechartContext(world=world)
+    Executor(context).compile(motion_statechart=chart)
+    return task, context
+
+
+def turn(task, context, sensor, torque, ticks=SETTLING_TICKS):
+    """
+    Feed a constant torque through the task and return the correction history.
+    """
+    turns = []
+    for _ in range(ticks):
+        sensor.write_wrench(np.zeros(3), torque)
+        task.on_tick(context)
+        turns.append(task._state[:3].copy())
+    return np.array(turns)
+
+
+def test_a_tool_that_feels_no_torque_is_left_where_the_model_put_it(hsr_world_copy):
+    """
+    A tool lying flat feels nothing about the surface, and then the model's own normal
+    is already right.
+    """
+    task, context = build_nulling(hsr_world_copy)
+    sensor = sensor_of(hsr_world_copy)
+
+    turn(task, context, sensor, np.zeros(3), ticks=20)
+
+    np.testing.assert_array_equal(task._state[:3], np.zeros(3))
+    np.testing.assert_allclose(
+        task.tracked_normal.evaluate().flatten()[:3],
+        task.goal_normal.to_np().flatten()[:3],
+        atol=1e-12,
+    )
+
+
+def test_a_torque_turns_the_normal_off_the_axis_it_acts_about(hsr_world_copy):
+    """
+    A tool resting on an edge feels a torque about the surface, and turning the normal
+    away from that axis is what lies it flat.
+    """
+    task, context = build_nulling(hsr_world_copy)
+    sensor = sensor_of(hsr_world_copy)
+    goal_R_sensor = hsr_world_copy.compute_forward_kinematics_np(
+        hsr_world_copy.root, sensor.root
+    )[:3, :3]
+
+    turn(task, context, sensor, goal_R_sensor.T @ np.array([0.0, -0.05, 0.0]), ticks=20)
+
+    # Nothing balances the torque, so the correction follows its sign, and turning the
+    # upward normal by it moves the normal across: x by the turn about y.
+    normal = task.tracked_normal.evaluate().flatten()[:3]
+    assert task._state[1] < 0.0
+    assert normal[0] == pytest.approx(task._state[1])
+    np.testing.assert_allclose(normal[2], 1.0, atol=1e-9)
+
+
+def test_turning_about_the_normal_cannot_move_it(hsr_world_copy):
+    """
+    The one torque a flat tool can feel without being tilted is about the surface
+    normal, and it says nothing about where the surface is.
+    """
+    task, context = build_nulling(hsr_world_copy)
+    sensor = sensor_of(hsr_world_copy)
+    goal_R_sensor = hsr_world_copy.compute_forward_kinematics_np(
+        hsr_world_copy.root, sensor.root
+    )[:3, :3]
+
+    turn(task, context, sensor, goal_R_sensor.T @ np.array([0.0, 0.0, 0.05]), ticks=20)
+
+    np.testing.assert_allclose(
+        task.tracked_normal.evaluate().flatten()[:3],
+        task.goal_normal.to_np().flatten()[:3],
+        atol=1e-12,
+    )
+
+
+def test_the_correction_stops_at_its_allowed_travel(hsr_world_copy):
+    """
+    Out of balance nothing stops the turn, and a normal turned without end points the
+    tool anywhere but at the surface.
+    """
+    travel = 0.1
+    task, context = build_nulling(
+        hsr_world_copy, maximum_offset=Vector3(x=travel, y=travel, z=travel)
+    )
+    sensor = sensor_of(hsr_world_copy)
+
+    turns = turn(task, context, sensor, np.array([1.0, 1.0, 1.0]))
+
+    assert np.all(np.abs(turns) <= travel + 1e-9)
+
+
+def test_an_unread_sensor_leaves_the_normal_alone(hsr_world_copy):
+    task, context = build_nulling(hsr_world_copy)
+
+    task.on_tick(context)
+
+    np.testing.assert_array_equal(task._state, np.zeros(6))

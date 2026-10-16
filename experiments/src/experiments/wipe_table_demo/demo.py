@@ -18,28 +18,34 @@ gripper's own weight. The default builds the kitchen locally and simulates the c
 from __future__ import annotations
 
 import math
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import numpy as np
-from typing_extensions import ClassVar, List, Optional
+from typing_extensions import ClassVar, List, Optional, Tuple
 
 from coraplex.datastructures.dataclasses import Context
-from coraplex.datastructures.enums import Arms, ExecutionType, WipingTechnique
+from coraplex.datastructures.enums import ExecutionType, WipingTechnique
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
-from coraplex.view_manager import ViewManager
+from semantic_digital_twin.adapters.sensors.force_torque import (
+    PhysicallySimulatedContactWrench,
+    ToolContactWrench,
+)
 from semantic_digital_twin.input_synchronization import InputSynchronizer
-from semantic_digital_twin.api import RobotSpecification, WorldSpecification
+from semantic_digital_twin.specifications.robots import RobotSpecification
+from semantic_digital_twin.specifications.worlds import WorldSpecification
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.predetermined_maps.kitchen_environment import (
+from semantic_digital_twin.predefined_maps.kitchen_environment import (
     KitchenEnvironment,
 )
 from semantic_digital_twin.robots.hsrb import HSRB
-from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
+from semantic_digital_twin.robots.robot_parts import Arm, ForceTorqueSensor
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     DiningTable,
     Sponge,
@@ -50,6 +56,12 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     FixedConnection,
     OmniDrive,
+)
+from semantic_digital_twin.world_description.contact import (
+    ContactFriction,
+    ContactImpedance,
+    ContactParameters,
+    ContactStiffness,
 )
 from semantic_digital_twin.world_description.geometry import Box, Scale
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
@@ -65,6 +77,23 @@ SPONGE_SCALE = Scale(0.08, 0.055, 0.03)
 Size of the sponge.
 """
 
+SPONGE_CONTACT = ContactParameters(
+    friction=ContactFriction(sliding=0.4),
+    stiffness=ContactStiffness(time_constant=timedelta(milliseconds=500)),
+    impedance=ContactImpedance(minimum=0.4, maximum=0.7, width=0.01),
+)
+"""
+What the sponge's surface does when it is pressed onto something: soft over a centimetre
+of squash and only moderately grippy, as a damp sponge is, rather than the rigid high-
+friction block a box is taken for.
+
+The resolution time leaves the pad about as stiff as :data:`CONTACT_STIFFNESS`, which is
+what a damp sponge measures, so a physically simulated run and a modelled one press into
+comparably soft surfaces. A tenth of it makes the pad a rigid block, which the press can
+only chase: measured on Tracy, the same wipe then spends half its cycles out of contact
+and touches down at 132 N instead of 12 N.
+"""
+
 APPROACH_POSE = HomogeneousTransformationMatrix.from_xyz_rpy(x=2.0, y=5.705, z=0.0)
 """
 Where the robot is put down in the kitchen, in front of the dining table.
@@ -73,6 +102,14 @@ Where the robot is put down in the kitchen, in front of the dining table.
 PRESS_FORCE = 15.0
 """
 Contact force the admittance holds against the table, in N.
+"""
+
+PRESS_TRAVEL = Vector3(x=0.0, y=0.0, z=0.02)
+"""
+How far the press may yield from the path it follows, per axis, in m.
+
+Only along the surface normal: the tool feels friction while it travels, and a press
+free to yield to that drifts against its own direction of travel until it stalls.
 """
 
 STANDING_CLEARANCE = 0.05
@@ -124,19 +161,14 @@ The four sides of a table, as outward normals in its own frame.
 
 
 @dataclass
-class SimulatedContactWrench(InputSynchronizer):
+class SimulatedContactWrench(ToolContactWrench):
     """
-    Writes the wrench a table would exert on the tool into the force/torque annotation.
+    What a flat surface of known height presses the tool with, modelled rather than
+    simulated: penetration into the surface produces a force along the surface normal,
+    stiffened by how fast the tool is still descending (Hunt-Crossley).
 
-    Stands in for the sensor while no robot is attached, using a Hunt-Crossley contact
-    model: penetration into the surface produces a force along the surface normal,
-    stiffened by how fast the tool is still descending. On the robot the controller
-    follows the sensor's own topic instead, and nothing here is used.
-    """
-
-    tool: Body = field(kw_only=True)
-    """
-    Body whose penetration into the surface is measured.
+    Cheap enough to run a kinematically simulated plan against, where nothing resolves
+    contacts.
     """
 
     surface_height: float = field(kw_only=True)
@@ -169,10 +201,42 @@ class SimulatedContactWrench(InputSynchronizer):
     Largest force this surface pushes back with, in N.
     """
 
+    face_samples: int = field(default=5, kw_only=True)
+    """
+    How many points across each side of the tool's contact face the surface is sampled
+    at.
+
+    One point cannot tell a tool lying flat from one resting on an edge, and a real
+    sensor tells them apart by the torque. A grid of springs produces that torque.
+    """
+
     _penetration: float = field(init=False, default=0.0)
     """
-    Penetration measured on the previous reading, in m.
+    Mean penetration measured on the previous reading, in m.
     """
+
+    _tool_face: np.ndarray = field(init=False, repr=False)
+    """
+    The sampled points of the tool's contact face, homogeneous, in the tool's own frame.
+    """
+
+    def __post_init__(self):
+        box = self.tool.collision.as_bounding_box_collection_in_frame(
+            self.tool
+        ).bounding_box()
+        # The face that meets the surface is the one the tool's own z axis points out of,
+        # which is how a tool is held: the axis away from the hand faces what it works on.
+        across = np.linspace(box.min_x, box.max_x, self.face_samples)
+        along = np.linspace(box.min_y, box.max_y, self.face_samples)
+        grid_x, grid_y = np.meshgrid(across, along)
+        self._tool_face = np.stack(
+            [
+                grid_x.ravel(),
+                grid_y.ravel(),
+                np.full(grid_x.size, box.max_z),
+                np.ones(grid_x.size),
+            ]
+        )
 
     def is_over_the_surface(self, tool_position: np.ndarray) -> bool:
         """
@@ -188,35 +252,49 @@ class SimulatedContactWrench(InputSynchronizer):
             and box.min_y <= tool_position[1] <= box.max_y
         )
 
-    def apply(self) -> bool:
-        """
-        Write the contact wrench, and report that nothing has to be announced: a wrench
-        leaves the kinematic state untouched.
-        """
-        sensor = ForceTorqueSensor.for_tip(self.world, self.tool)
-        tool_position = self.world.compute_forward_kinematics_np(
+    def contact_wrench(
+        self, sensor: ForceTorqueSensor
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        world_T_tool = self.world.compute_forward_kinematics_np(
             self.world.root, self.tool
-        )[:3, 3]
-        penetration = self.surface_height - float(tool_position[2])
-        if not self.is_over_the_surface(tool_position):
-            penetration = 0.0
-        approach_speed = max(
-            0.0, (penetration - self._penetration) / self.control_period
         )
-        self._penetration = penetration
+        world_T_sensor = self.world.compute_forward_kinematics_np(
+            self.world.root, sensor.root
+        )
+        points = (world_T_tool @ self._tool_face)[:3]
+        penetrations = self.surface_height - points[2]
+        touching = penetrations > 0.0
+        for index in np.flatnonzero(touching):
+            if not self.is_over_the_surface(points[:, index]):
+                touching[index] = False
 
-        force = np.zeros(3)
-        if penetration > 0.0:
-            magnitude = min(
-                penetration * (self.stiffness + self.velocity_gain * approach_speed),
-                self.maximum_force,
-            )
-            world_R_sensor = self.world.compute_forward_kinematics_np(
-                self.world.root, sensor.root
-            )[:3, :3]
-            force = world_R_sensor.T @ np.array([0.0, 0.0, magnitude])
-        sensor.write_wrench(force, np.zeros(3))
-        return False
+        mean_penetration = (
+            float(penetrations[touching].sum()) / self._tool_face.shape[1]
+        )
+        approach_speed = max(
+            0.0, (mean_penetration - self._penetration) / self.control_period
+        )
+        self._penetration = mean_penetration
+        if not touching.any():
+            return np.zeros(3), np.zeros(3)
+
+        # Each sampled point is its own spring, so the springs under the low edge of a
+        # tilted tool push harder than those under the high edge, and the difference is
+        # what the sensor reads as torque.
+        per_point = (
+            self.stiffness + self.velocity_gain * approach_speed
+        ) / self._tool_face.shape[1]
+        magnitudes = np.clip(
+            penetrations * touching * per_point, 0.0, self.maximum_force
+        )
+        world_forces = np.zeros((3, len(magnitudes)))
+        world_forces[2] = magnitudes
+        levers = points - world_T_sensor[:3, 3][:, None]
+        world_force = world_forces.sum(axis=1)
+        world_torque = np.cross(levers.T, world_forces.T).sum(axis=0)
+
+        sensor_R_world = world_T_sensor[:3, :3].T
+        return sensor_R_world @ world_force, sensor_R_world @ world_torque
 
 
 # %% the demonstrations
@@ -228,10 +306,13 @@ class WipingDemonstration(RobotDemonstration, ABC):
     A demonstration that wipes a surface with a sponge held in one hand.
     """
 
-    arm: Arms = Arms.LEFT
-    """
-    Arm that holds the sponge.
-    """
+    def wiping_arm(self, world: World) -> Arm:
+        """
+        :param world: World holding the robot.
+        :return: The arm that holds the sponge, the left one where the robot has two.
+        """
+        robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
+        return robot.get_left_arm_if_specified() or robot.all_arms[0]
 
     @property
     def unmodelled_tool_length(self) -> float:
@@ -256,13 +337,13 @@ class WipingDemonstration(RobotDemonstration, ABC):
         :param world: World holding the robot.
         :return: The sponge, whose frame follows the wipe path.
         """
-        robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
-        tool_frame = ViewManager.get_end_effector_view(self.arm, robot).tool_frame
+        tool_frame = self.wiping_arm(world).end_effector.tool_frame
         sponge_body = Body(
             name=PrefixedName(SPONGE_NAME),
             collision=ShapeCollection([Box(scale=SPONGE_SCALE)]),
             visual=ShapeCollection([Box(scale=SPONGE_SCALE)]),
         )
+        SPONGE_CONTACT.apply_to([sponge_body])
         sponge = Sponge(root=sponge_body)
         with world.modify_world():
             world.add_connection(
@@ -294,11 +375,31 @@ class WipingDemonstration(RobotDemonstration, ABC):
             world_inputs=self.world_inputs(world),
         )
 
-    @abstractmethod
     def world_inputs(self, world: World) -> List[InputSynchronizer]:
         """
         :param world: World the demonstration acts on.
-        :return: Whatever feeds live readings into the world while the plan runs.
+        :return: What writes the force/torque reading into the world while the plan
+            runs: nothing on the real robot, which follows its sensor's own topic, the
+            physics wherever a plan is performed in any, and a contact model otherwise.
+        """
+        if self.execution_type is ExecutionType.REAL:
+            return []
+        if self.simulation is not None:
+            return [
+                PhysicallySimulatedContactWrench(
+                    world=world,
+                    tool=world.get_body_by_name(SPONGE_NAME),
+                    simulation=self.simulation,
+                )
+            ]
+        return [self.contact_model(world)]
+
+    @abstractmethod
+    def contact_model(self, world: World) -> SimulatedContactWrench:
+        """
+        :param world: World the demonstration acts on.
+        :return: The surface this demonstration presses on, modelled for a run that
+            resolves no contacts of its own.
         """
 
 
@@ -365,7 +466,7 @@ class WipeTableDemonstration(WipingDemonstration):
             steps.append(NavigateAction(standing_pose))
             steps.append(
                 WipingAction(
-                    arm=self.arm,
+                    arm=self.wiping_arm(world),
                     tool=sponge,
                     surface=table.root,
                     technique=self.technique,
@@ -373,30 +474,20 @@ class WipeTableDemonstration(WipingDemonstration):
                     skip_unreachable=True,
                     standing_pose=standing_pose,
                     desired_force=Vector3(z=PRESS_FORCE),
+                    admittance_travel=PRESS_TRAVEL,
                 )
             )
         return sequential(steps, context=context)
 
-    def world_inputs(self, world: World) -> List[InputSynchronizer]:
-        """
-        The readings written into the world before each simulated control cycle.
-
-        :param world: World holding the table and the sponge.
-        :return: A simulated contact model, or nothing on the real robot, where the
-            controller follows the sensor's own topic.
-        """
-        if self.execution_type is ExecutionType.REAL:
-            return []
+    def contact_model(self, world: World) -> SimulatedContactWrench:
         table = world.get_semantic_annotations_by_type(DiningTable)[0]
-        return [
-            SimulatedContactWrench(
-                world=world,
-                tool=world.get_body_by_name(SPONGE_NAME),
-                surface=table.root,
-                surface_height=self.surface_height(world, table),
-                control_period=SIMULATED_CONTROL_PERIOD,
-            )
-        ]
+        return SimulatedContactWrench(
+            world=world,
+            tool=world.get_body_by_name(SPONGE_NAME),
+            surface=table.root,
+            surface_height=self.surface_height(world, table),
+            control_period=SIMULATED_CONTROL_PERIOD,
+        )
 
     @staticmethod
     def surface_height(world: World, table: DiningTable) -> float:
@@ -428,7 +519,7 @@ class WipeTableDemonstration(WipingDemonstration):
         extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
         world_T_table = world.compute_forward_kinematics_np(world.root, body)
         robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
-        standoff = robot.mobile_base.footprint_radius + STANDING_CLEARANCE
+        standoff = robot.mobile_base.base_radius + STANDING_CLEARANCE
         half_depth = 0.5 * extent.depth
         half_width = 0.5 * extent.width
 
@@ -494,7 +585,7 @@ class WipeTableDemonstration(WipingDemonstration):
         robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
         base = robot.mobile_base
         base_box = base.bounding_box
-        clearance = base.footprint_radius + STANDING_CLEARANCE
+        clearance = base.base_radius + STANDING_CLEARANCE
         standing = pose.to_np()[:2, 3]
         ignored = set(robot.bodies_with_collision) | set(
             world.get_kinematic_structure_entities_of_branch(table.root)
@@ -516,7 +607,7 @@ class WipeTableDemonstration(WipingDemonstration):
         return True
 
 
-def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
+def main(execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED) -> None:
     """
     Run the demonstration.
 
@@ -526,4 +617,8 @@ def main(execution_type: ExecutionType = ExecutionType.SIMULATED) -> None:
 
 
 if __name__ == "__main__":
-    main(execution_type=ExecutionType.REAL)
+    main(
+        execution_type=(
+            ExecutionType[sys.argv[1]] if len(sys.argv) > 1 else ExecutionType.REAL
+        )
+    )

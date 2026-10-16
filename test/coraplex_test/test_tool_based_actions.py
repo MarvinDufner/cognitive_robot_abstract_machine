@@ -9,7 +9,6 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
 from scipy.spatial.transform import Rotation
 
 from coraplex.datastructures.enums import (
-    Arms,
     CuttingTechnique,
     PouringSide,
     WipingTechnique,
@@ -28,6 +27,10 @@ from coraplex.robot_plans.actions.composite.tool_based import (
     WipingAction,
 )
 from coraplex.robot_plans.motions.gripper import MoveTCPWaypointsAlignedMotion
+from giskardpy.motion_statechart.graph_node import Goal
+from giskardpy.motion_statechart.tasks.admittance_tasks import (
+    AdmittanceCartesianTrajectory,
+)
 from krrood.ormatic.data_access_objects.helper import to_dao
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
@@ -36,7 +39,7 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Sponge,
     Whisk,
 )
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Vector3
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.connections import FixedConnection
 from semantic_digital_twin.world_description.geometry import Box, Scale
@@ -363,7 +366,7 @@ def test_a_patch_with_no_width_is_wiped_in_a_single_lane(tool_action_world):
     sponge = Sponge(root=tool_body)
 
     action = WipingAction(
-        arm=Arms.RIGHT,
+        arm=robot.right_arm,
         tool=sponge,
         target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
         technique=WipingTechnique.SPREAD,
@@ -384,7 +387,7 @@ def test_a_patch_with_a_width_is_wiped_in_lanes_across_it(tool_action_world):
     length, width = 0.3, 0.2
 
     action = WipingAction(
-        arm=Arms.RIGHT,
+        arm=robot.right_arm,
         tool=sponge,
         target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
         technique=WipingTechnique.SPREAD,
@@ -408,7 +411,7 @@ def test_the_lanes_are_closer_together_than_the_tool_is_wide(tool_action_world):
     sponge = Sponge(root=tool_body)
     width = 0.2
     action = WipingAction(
-        arm=Arms.RIGHT,
+        arm=robot.right_arm,
         tool=sponge,
         target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
         technique=WipingTechnique.SPREAD,
@@ -432,7 +435,7 @@ def test_a_patch_narrower_than_the_tool_still_has_two_lanes(tool_action_world):
     sponge = Sponge(root=tool_body)
 
     action = WipingAction(
-        arm=Arms.RIGHT,
+        arm=robot.right_arm,
         tool=sponge,
         target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
         technique=WipingTechnique.SPREAD,
@@ -441,3 +444,61 @@ def test_a_patch_narrower_than_the_tool_still_has_two_lanes(tool_action_world):
     )
 
     assert action._lanes() == 2
+
+
+# %% pressing while wiping
+
+
+def pressing_wipe(world, robot, sponge, **arguments) -> WipingAction:
+    """
+    :return: A wipe that presses onto a patch at a known height.
+    """
+    return WipingAction(
+        arm=robot.right_arm,
+        tool=sponge,
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        technique=WipingTechnique.SPREAD,
+        length=0.3,
+        desired_force=Vector3(z=10.0),
+        **arguments,
+    )
+
+
+def test_the_pressing_path_puts_the_tools_face_on_the_surface(tool_action_world):
+    """
+    A path that puts the frame itself on the surface starts the press a tool thickness
+    inside it, which the admittance then has to climb back out of.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    surface_height = 1.0
+
+    action = pressing_wipe(world, robot, sponge)
+    motions = _expanded_aligned_motions(action, context)
+
+    heights = [point.to_np().flatten()[2] for point in motions[0].waypoints]
+    assert heights == pytest.approx(
+        [surface_height + sponge.contact_face_distance] * len(heights)
+    )
+
+
+def test_a_press_yields_only_as_far_as_it_is_allowed_to_travel(tool_action_world):
+    """
+    The tool feels friction as it travels, and a press free to yield to that drifts
+    against its own direction of travel until it stalls.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    travel = Vector3(x=0.0, y=0.0, z=0.03)
+
+    action = pressing_wipe(world, robot, sponge, admittance_travel=travel)
+    motions = _expanded_aligned_motions(action, context)
+    trajectory = next(
+        node
+        for group in motions[0].motion_chart.nodes
+        if isinstance(group, Goal)
+        for node in group.nodes
+        if isinstance(node, AdmittanceCartesianTrajectory)
+    )
+
+    assert trajectory.maximum_offset is travel
