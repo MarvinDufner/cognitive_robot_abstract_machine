@@ -41,7 +41,6 @@ dependencies = [
     "polytope",
     "semantic_digital_twin",
     "trimesh",
-    "cgal",
     "giskardpy",
     "krrood",
 ]
@@ -57,6 +56,15 @@ include = ["coraplex*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "coraplex._version.__version__"}
+
+[dependency-groups]
+workspace = [
+    "giskardpy",
+    "krrood",
+    "probabilistic_model",
+    "random_events",
+    "semantic_digital_twin",
+]
 
 [project.optional-dependencies]
 dev = [

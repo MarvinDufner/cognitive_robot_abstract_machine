@@ -32,7 +32,7 @@ from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.view_manager import ViewManager
-from giskardpy.middleware.ros2.input_synchronization import InputSynchronizer
+from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.api import RobotSpecification, WorldSpecification
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.predetermined_maps.kitchen_environment import (

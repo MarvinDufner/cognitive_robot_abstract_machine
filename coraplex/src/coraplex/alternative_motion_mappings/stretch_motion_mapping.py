@@ -26,7 +26,6 @@ from coraplex.robot_plans import (
     MoveGripperMotion,
 )
 from coraplex.robot_plans.motions.base import AlternativeMotion
-from coraplex.view_manager import ViewManager
 from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.robots.stretch import Stretch
@@ -45,17 +44,17 @@ class StretchMoveToolCenterPoint(MoveToolCenterPointMotion, AlternativeMotion[St
     full body control to move the TCP to the goal.
     """
 
-    execution_type = ExecutionType.SIMULATED, ExecutionType.REAL
+    execution_type = ExecutionType.KINEMATICALLY_SIMULATED, ExecutionType.REAL
 
     def perform(self):
         return
 
     @property
     def _motion_chart(self) -> Sequence:
-        tip = ViewManager().get_end_effector_view(self.arm, self.robot).tool_frame
+        tip = self.arm.end_effector.tool_frame
         goal_copy = deepcopy(self.target)
         goal_copy = self.world.transform(goal_copy, self.world.root)
-        goal_point = goal_copy.to_position()
+        goal_point = goal_copy.position
         goal_point.z = 0
         return Parallel(
             [
@@ -88,16 +87,14 @@ class StretchMoveSim(MoveMotion, AlternativeMotion[Stretch]):
     for a diff drive.
     """
 
-    execution_type = ExecutionType.SIMULATED
+    execution_type = ExecutionType.KINEMATICALLY_SIMULATED
 
     def perform(self):
         return
 
     @property
     def _motion_chart(self):
-        world_T_target = self.world.transform(self.target, self.world.root)
-        world_T_target.z = 0
-        return DifferentialDriveBaseGoal(goal_pose=world_T_target, threshold=0.01)
+        return DifferentialDriveBaseGoal(goal_pose=self.target, threshold=0.01)
 
 
 class StretchMoveReal(MoveMotion, AlternativeMotion[Stretch]):
@@ -113,9 +110,7 @@ class StretchMoveReal(MoveMotion, AlternativeMotion[Stretch]):
 
     @property
     def _motion_chart(self) -> DifferentialDriveBaseGoal:
-        world_T_target = self.world.transform(self.target, self.world.root)
-        world_T_target.z = 0
-        return DifferentialDriveBaseGoal(goal_pose=world_T_target, threshold=0.1)
+        return DifferentialDriveBaseGoal(goal_pose=self.target, threshold=0.1)
         # Commented out for now since we use the giskard goal which also works for smaller distances
         # return NavigateActionServerTask(
         #     target_pose=self.target,
@@ -133,14 +128,14 @@ class StretchClose(ClosingMotion, AlternativeMotion[Stretch]):
     and then pushes it arm forward to close the container.
     """
 
-    execution_type = ExecutionType.SIMULATED
+    execution_type = ExecutionType.KINEMATICALLY_SIMULATED
 
     def perform(self):
         return
 
     @property
     def _motion_chart(self):
-        tip = ViewManager().get_end_effector_view(self.arm, self.robot).tool_frame
+        tip = self.arm.end_effector.tool_frame
         cart = CartesianPose(
             name="Keep holding handle",
             root_link=self.object_part,
@@ -159,24 +154,21 @@ class StretchClose(ClosingMotion, AlternativeMotion[Stretch]):
 
 class StretchMoveGripperMotion(MoveGripperMotion, AlternativeMotion[Stretch]):
     """
-    Gripper motion tuned for Stretch: forces convergence checks to hold for at
-    least one second so the local minimum isn't reported before the gripper
-    has actually moved.
+    Gripper motion tuned for Stretch: forces convergence checks to hold for at least one
+    second so the local minimum isn't reported before the gripper has actually moved.
     """
 
-    execution_type = ExecutionType.SIMULATED, ExecutionType.REAL
+    execution_type = ExecutionType.KINEMATICALLY_SIMULATED, ExecutionType.REAL
 
     def perform(self):
         return
 
     @property
     def _motion_chart(self):
-        arm = ViewManager().get_end_effector_view(self.gripper, self.robot)
-
         return Parallel(
             [
                 JointPositionList(
-                    goal_state=arm.get_joint_state_by_type(self.motion),
+                    goal_state=self.gripper.get_joint_state_by_type(self.motion),
                     name=(
                         "OpenGripper"
                         if self.motion == GripperState.OPEN

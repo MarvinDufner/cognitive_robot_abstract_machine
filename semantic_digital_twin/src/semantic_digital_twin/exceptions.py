@@ -1,6 +1,8 @@
 from __future__ import annotations, absolute_import
 
 from dataclasses import dataclass, field, Field
+from datetime import timedelta
+from http import HTTPStatus
 from pathlib import Path
 from typing import Dict, Set
 from uuid import UUID
@@ -16,29 +18,38 @@ from typing_extensions import (
     Any,
 )
 
-from krrood.adapters.exceptions import JSONSerializationError
+from krrood.adapters.exceptions import UntrackedObjectError
 from krrood.exceptions import DataclassException
-from krrood.symbolic_math.symbolic_math import SymbolicMathType
 from semantic_digital_twin.datastructures.definitions import JointStateType
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 
 if TYPE_CHECKING:
-    from semantic_digital_twin.semantic_annotations.mixins import HasRootBody
+    from semantic_digital_twin.adapters.ros.messages import MetaData
+    from semantic_digital_twin.input_synchronization import InputSynchronizer
+    from semantic_digital_twin.semantic_annotations.mixins import (
+        HasRootBody,
+        HasSupportingSurface,
+    )
+    from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
     from semantic_digital_twin.robots.robot_parts import (
         AbstractRobot,
         AbstractRobotPart,
+        EndEffector,
     )
     from semantic_digital_twin.world import World
     from semantic_digital_twin.world_description.geometry import Scale
+    from semantic_digital_twin.datastructures.scan_pattern import ScanPattern
     from semantic_digital_twin.world_description.world_entity import (
+        Connection,
         SemanticAnnotation,
         WorldEntity,
+        WorldEntityWithID,
         KinematicStructureEntity,
     )
     from semantic_digital_twin.spatial_types.spatial_types import (
         SpatialType,
     )
-    from semantic_digital_twin.spatial_types import Vector3, Point3
+    from semantic_digital_twin.spatial_types import Vector3, Point
     from semantic_digital_twin.world_description.degree_of_freedom import (
         DegreeOfFreedomLimits,
         DegreeOfFreedom,
@@ -62,6 +73,28 @@ class NoJointStateWithType(DataclassException):
 
     def suggest_correction(self) -> str:
         return ""
+
+
+@dataclass
+class MalformedHexColor(DataclassException):
+    """
+    Raised when a string meant to name a color is not written as hex digits.
+    """
+
+    hex_color: str
+    """
+    The string that was read as a color.
+    """
+
+    def error_message(self) -> str:
+        return f"'{self.hex_color}' does not name a color."
+
+    def suggest_correction(self) -> str:
+        return (
+            "write the color as two hex digits per channel, red first, optionally "
+            "preceded by a '#' and followed by a fourth pair for the opacity, for "
+            "example '#4080C0' or '#4080C020'."
+        )
 
 
 @dataclass
@@ -248,6 +281,48 @@ class UsageError(LogicalError):
 
 
 @dataclass
+class InvalidCameraResolutionError(UsageError):
+    """
+    Raised when a camera resolution cannot describe an image.
+    """
+
+    width: int
+    """
+    The invalid image width.
+    """
+
+    height: int
+    """
+    The invalid image height.
+    """
+
+    def error_message(self) -> str:
+        return (
+            "Camera resolution width and height must be positive, "
+            f"got width={self.width} and height={self.height}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "provide positive width and height values."
+
+
+@dataclass
+class ROSNodeNotRegisteredError(UsageError, RuntimeError):
+    """
+    Raised when shared ROS node access is requested before registration.
+    """
+
+    def error_message(self) -> str:
+        return "No shared ROS node is registered in this process."
+
+    def suggest_correction(self) -> str:
+        return (
+            "register the application-owned ROS node before constructing components "
+            "that require ROS access. Please check out the ROSNodeRegistry class and its register() method."
+        )
+
+
+@dataclass
 class WorldValidationError(LogicalError):
     """
     Raised when the world fails validation, e.g., when the kinematic structure is not a
@@ -300,6 +375,59 @@ class BrokenWorldModificationHistoryError(WorldValidationError):
 
 
 @dataclass
+class InsufficientModificationHistoryError(WorldValidationError):
+    """
+    Raised when attempting to roll back more modification blocks than the world's
+    history contains.
+    """
+
+    requested_count: int
+    """
+    The number of modification blocks that were requested to be rolled back.
+    """
+
+    available_count: int
+    """
+    The number of modification blocks actually available in the world's history.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Cannot roll back {self.requested_count} modification block(s): the "
+            f"world's history only contains {self.available_count}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "reduce the requested count to at most the number of available modification blocks."
+
+
+@dataclass
+class InvalidRollbackVersionError(WorldValidationError):
+    """
+    Raised when attempting to roll back to a version the world has not (yet) reached.
+    """
+
+    target_version: int
+    """
+    The version that was requested.
+    """
+
+    current_version: int
+    """
+    The version the world is currently at.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Cannot roll back to version {self.target_version}: the world is "
+            f"currently at version {self.current_version}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "pass a version between 0 and the world's current version."
+
+
+@dataclass
 class WorldContainsOrphanedDegreeOfFreedom(WorldValidationError):
     """
     Raised when the kinematic structure of the world contains orphaned degrees of
@@ -319,6 +447,37 @@ class WorldContainsOrphanedDegreeOfFreedom(WorldValidationError):
 
     def suggest_correction(self) -> str:
         return "did you forget to call self.delete_orphaned_dofs()?"
+
+
+@dataclass
+class WorldEntityWithIDBelongsToAnotherWorld(WorldValidationError):
+    """
+    Raised when looking an id up in a world answers with an entity that reports
+    belonging to a different world.
+
+    A world's lookup tables are meant to hold only its own entities, so this means one
+    was left registered here after being added elsewhere. Only a
+    :class:`~semantic_digital_twin.world_description.world_entity.WorldEntityWithID` is
+    looked up by id, which is why an entity without one cannot reach this.
+    """
+
+    world_entity: WorldEntityWithID
+    """
+    The entity that was found under this world but reports another one.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Looking up id {self.world_entity.id} in world '{self.world.name}' returned "
+            f"'{self.world_entity.name}', which belongs to world "
+            f"'{self.world_entity._world.name if self.world_entity._world else None}'."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "The entity was left registered in this world after being added to another "
+            "one; remove it from this world before adding it elsewhere."
+        )
 
 
 @dataclass
@@ -541,6 +700,66 @@ class UnknownPartWholeRelationshipField(UsageError):
 
 
 @dataclass
+class CollisionDiffersFromVisualError(UsageError):
+    """
+    Raised when a part is split off a body whose collision shapes are not its visual
+    shapes, such as a convex decomposition, which cutting the visual shapes would throw
+    away.
+    """
+
+    body_name: PrefixedName
+    """
+    The name of the body.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The collision shapes of '{self.body_name}' differ from its visual shapes, "
+            f"so splitting a part off would replace them by pieces of the visual shapes."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "split the parts off before decomposing the collision shapes, or give the "
+            "PartSplitter a decomposer that decomposes each piece again."
+        )
+
+
+@dataclass
+class NoSinglePartWholeRelationshipField(UsageError):
+    """
+    Raised when the part-whole relationship field a part goes to is chosen by the part's
+    type alone, but not exactly one field of the annotation holds parts of that type.
+    """
+
+    annotation: Type[HasRootBody]
+    """
+    The annotation type the part is for.
+    """
+
+    part_type: Type[HasRootBody]
+    """
+    The type of the part.
+    """
+
+    matching_fields: List[str]
+    """
+    The names of the annotation's part-whole relationship fields that hold parts of that
+    type.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{self.annotation.__name__} has {len(self.matching_fields)} part-whole "
+            f"relationship fields for a {self.part_type.__name__}: "
+            f"{', '.join(self.matching_fields) or '(none)'}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "name the field the part goes to."
+
+
+@dataclass
 class PartWholeCardinalityError(UsageError):
     """
     Raised when a part specification supplies a list of parts for a singular (non-to-
@@ -600,36 +819,6 @@ class PartWholeFieldInAnnotationKwargs(UsageError):
 
 
 @dataclass
-class MechanicalJointAlreadyMounted(UsageError):
-    """
-    Raised when a mechanical joint that already connects a child is mounted onto a
-    different whole.
-
-    If you think a single Mechanical Joint should be able to have multiple children,
-    contact @LucaKro.
-    """
-
-    joint: SemanticAnnotation
-    """
-    The mechanical joint being mounted.
-    """
-
-    main_has_root_body_annotation: SemanticAnnotation
-    """
-    The annotation (the whole) the joint was being mounted onto.
-    """
-
-    def error_message(self) -> str:
-        return (
-            f"{type(self.joint).__name__} already connects a child and cannot be mounted onto "
-            f"{type(self.main_has_root_body_annotation).__name__}: a mechanical joint connects exactly one child."
-        )
-
-    def suggest_correction(self) -> str:
-        return f"if you think that you found a case where this error does not apply, please contact @LucaKro"
-
-
-@dataclass
 class SemanticAnnotationCircularDependencyError(UsageError):
     """
     Raised when a circular dependency between semantic annotations is detected.
@@ -645,6 +834,31 @@ class SemanticAnnotationCircularDependencyError(UsageError):
 
     def suggest_correction(self) -> str:
         return ""
+
+
+@dataclass
+class MissingMovableJointError(UsageError):
+    """
+    Raised when a part is to be moved, but nothing moves it: its root is fixed to its
+    parent.
+    """
+
+    semantic_annotation: SemanticAnnotation
+    """
+    The part that has no movable joint.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{type(self.semantic_annotation).__name__} {self.semantic_annotation.name} "
+            f"has no movable joint: its root is fixed to its parent."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "create it with an active parent_connection_specification, or mount it on "
+            "one with mount_on_movable_joint."
+        )
 
 
 @dataclass
@@ -730,7 +944,7 @@ class InvalidHingeActiveAxis(UsageError):
         return f"Axis {self.axis} provided when trying to calculate the hinge position is invalid."
 
     def suggest_correction(self) -> str:
-        return "if you think this is incorrect, consider extending Door.calculate_world_T_hinge_based_on_handle."
+        return "if you think this is incorrect, consider extending Door.calculate_self_T_movable_joint."
 
 
 @dataclass
@@ -856,6 +1070,76 @@ class WorldHasNoSynchronizerError(UsageError):
 
     def suggest_correction(self) -> str:
         return "Create a WorldSynchronizer for this world."
+
+
+@dataclass
+class SynchronizerNotConnectedError(UsageError):
+    """
+    Raised when a synchronizer was created but its topic never became usable, so that
+    whatever it publishes would be dropped.
+    """
+
+    topic_name: str
+    """
+    The topic the synchronizer publishes on and listens to.
+    """
+
+    timeout: timedelta
+    """
+    The time that was spent waiting for the topic.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The synchronizer of '{self.topic_name}' did not reach a single subscriber "
+            f"within {self.timeout.total_seconds()}s, not even its own."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Check that the ros node of the synchronizer is alive and its middleware is running."
+
+
+@dataclass
+class WorldUpdateReferencesUnknownEntityError(UsageError):
+    """
+    Raised when an update refers to an entity this world never received, which leaves
+    everything the missing update carried out of reach.
+    """
+
+    publisher: MetaData
+    """
+    The synchronizer whose update could not be applied.
+    """
+
+    entity_id: UUID
+    """
+    The entity the update refers to.
+
+    Only its id is known, because the update that created it never arrived.
+    """
+
+    entity_name: Optional[PrefixedName]
+    """
+    The name the update calls that entity, or ``None`` where it carries none.
+    """
+
+    def error_message(self) -> str:
+        named_entity = (
+            f"'{self.entity_name}' ({self.entity_id})"
+            if self.entity_name is not None
+            else f"'{self.entity_id}'"
+        )
+        return (
+            f"The update of '{self.publisher.node_name}' refers to the entity "
+            f"{named_entity}, which this world never received."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Create the synchronizer of a world before modifying that world: changes made "
+            "before it exists reach nobody, and every later change that builds on them "
+            "cannot be applied."
+        )
 
 
 @dataclass
@@ -1115,6 +1399,35 @@ class PathResolutionError(ParsingError):
 
 
 @dataclass
+class DatasetServerError(ParsingError):
+    """
+    Raised when a dataset server does not answer with what was asked of it.
+    """
+
+    url: str = field(kw_only=True)
+    """
+    The address that was requested.
+    """
+
+    status_code: int = field(kw_only=True)
+    """
+    The status the server answered with.
+    """
+
+    def error_message(self) -> str:
+        return f"The dataset server answered {self.status_code} for '{self.url}'."
+
+    def suggest_correction(self) -> str:
+        if self.status_code == HTTPStatus.NOT_FOUND:
+            return (
+                "check that the dataset server serves the directory this path is under."
+            )
+        return (
+            "check that the dataset server is reachable and serving the dataset root."
+        )
+
+
+@dataclass
 class WorldEntityNotFoundError(UsageError):
     name_or_hash: Union[str, PrefixedName, int]
 
@@ -1151,6 +1464,159 @@ class MissingDefaultCameraError(UsageError):
 
     def error_message(self) -> str:
         return f"Robot {self.robot.name} does not have a default camera."
+
+    def suggest_correction(self) -> str:
+        return ""
+
+
+@dataclass
+class NoLaserScanReceived(UsageError):
+    """
+    Raised when reading a lidar that has not received a scan yet.
+    """
+
+    topic_name: str
+    """
+    The topic the lidar is waiting for a scan on.
+    """
+
+    def error_message(self) -> str:
+        return f"No laser scan has been received on '{self.topic_name}' yet."
+
+    def suggest_correction(self) -> str:
+        return f"check that something publishes on '{self.topic_name}' and that the node has been spun since."
+
+
+@dataclass
+class InputAlreadyAddedError(UsageError):
+    """
+    Raised when an input is added to a loop that already applies it.
+    """
+
+    synchronizer: InputSynchronizer
+    """
+    The input that was added a second time.
+    """
+
+    def error_message(self) -> str:
+        return f"The loop already applies {self.synchronizer}."
+
+    def suggest_correction(self) -> str:
+        return "add every input only once per loop."
+
+
+@dataclass
+class AlreadyTrackedByTfFrameError(UsageError):
+    """
+    Raised when a connection is registered for tf tracking a second time.
+    """
+
+    connection_name: str
+    """
+    The name of the connection that is already tracked.
+    """
+
+    tf_parent_frame: str
+    """
+    The tf parent frame the connection is already tracked with.
+    """
+
+    tf_child_frame: str
+    """
+    The tf child frame the connection is already tracked with.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Connection '{self.connection_name}' is already tracked with a tf frame: "
+            f"'{self.tf_parent_frame}'<-'{self.tf_child_frame}'"
+        )
+
+    def suggest_correction(self) -> str:
+        return ""
+
+
+@dataclass
+class UnboundMessageTypeError(UsageError):
+    """
+    Raised when a topic subscriber does not name the type of its messages.
+    """
+
+    subscriber_type: Type
+    """
+    The subscriber whose message type is unknown.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"'{self.subscriber_type.__name__}' does not name the type of the "
+            f"messages it reads."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            f"Declare it in the bases of '{self.subscriber_type.__name__}', as in "
+            f"'LatestMessageSubscriber[Odometry]'."
+        )
+
+
+@dataclass
+class ConnectionCannotBeTrackedByTfFrameError(UsageError):
+    """
+    Raised when a connection without 6 degrees of freedom is registered for tf tracking.
+    """
+
+    connection: Connection
+    """
+    The connection that cannot be tracked.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Can only sync Connection6DoF with tf, but '{str(self.connection.name)}' is of "
+            f"type '{type(self.connection).__name__}'."
+        )
+
+    def suggest_correction(self) -> str:
+        return ""
+
+
+@dataclass
+class InvalidBeamCount(UsageError):
+    """
+    Raised when deriving a scan pattern from a beam count too small to space beams by.
+    """
+
+    beam_count: int
+    """
+    The beam count that was rejected.
+    """
+
+    def error_message(self) -> str:
+        return f"A scan pattern cannot be derived from {self.beam_count} beams."
+
+    def suggest_correction(self) -> str:
+        return "give at least two beams, or state the angle increment directly."
+
+
+@dataclass
+class InvalidScanPattern(UsageError):
+    """
+    Raised when a scan pattern describes a sweep a scanner cannot perform.
+    """
+
+    pattern: ScanPattern
+    """
+    The pattern that was rejected.
+    """
+
+    reason: str
+    """
+    What about the pattern is wrong.
+    """
+
+    def error_message(self) -> str:
+        return f"Invalid scan pattern {self.pattern}: {self.reason}."
 
     def suggest_correction(self) -> str:
         return ""
@@ -1265,32 +1731,34 @@ class DoesNotBelongToAWorldError(UsageError):
         )
 
 
-class NotJsonSerializable(JSONSerializationError): ...
-
-
 @dataclass
-class SpatialTypeNotJsonSerializable(NotJsonSerializable):
-    spatial_object: SymbolicMathType
+class WorldEntityWithIDNotInKwargs(UntrackedObjectError):
+    """
+    Raised when a JSON document refers to a world entity that was neither deserialized
+    from it nor is part of the world it is deserialized into.
+    """
+
+    key: UUID
+    """
+    The id of the world entity the document refers to.
+    """
+
+    world_entity_name: Optional[PrefixedName] = None
+    """
+    The name the reference to that entity went by when it was written.
+
+    Says which entity is meant where the id alone says nothing. ``None`` where the
+    reference carries no name, and never used to look an entity up: the id is its
+    identity.
+    """
 
     def error_message(self) -> str:
-        return (
-            f"Object of type '{self.spatial_object.__class__.__name__}' is not JSON serializable, because it has "
-            f"free variables: {self.spatial_object.free_variables()}"
+        named_entity = (
+            f"World entity '{self.world_entity_name}' ({self.key})"
+            if self.world_entity_name is not None
+            else f"World entity '{self.key}'"
         )
-
-    def suggest_correction(self) -> str:
-        return ""
-
-
-@dataclass
-class WorldEntityWithIDNotInKwargs(JSONSerializationError):
-    world_entity_id: UUID
-
-    def error_message(self) -> str:
-        return (
-            f"World entity '{self.world_entity_id}' is not in the kwargs of the "
-            f"method that created it."
-        )
+        return f"{named_entity} is not in the kwargs of the method that created it."
 
     def suggest_correction(self) -> str:
         return ""
@@ -1416,7 +1884,7 @@ class PointOccupiedError(DataclassException):
     Connectivity Graphs.
     """
 
-    point: Point3
+    point: Point
     """
     The point that is occupied.
     """
@@ -1647,3 +2115,247 @@ class ExerciseVerificationFailed(UsageError):
 
     def suggest_correction(self) -> str:
         return "revisit the task description of this exercise and adjust your solution."
+
+
+@dataclass
+class DriveVelocityLimitsOnUndrivenRobot(UsageError):
+    """
+    Raised when drive velocity limits are given for a robot that is attached to its
+    localization frame rigidly rather than by a drive.
+    """
+
+    robot_type_name: str
+    """
+    The name of the robot type the limits were given for.
+    """
+
+    connection_type_name: str
+    """
+    The name of the connection type that robot attaches to its localization frame with.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"'{self.robot_type_name}' attaches to its localization frame with a "
+            f"'{self.connection_type_name}', which carries no velocity limits."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "leave the drive velocity limits unset, or give the robot a mobile base "
+            "whose drive can carry them."
+        )
+
+
+@dataclass
+class NothingHeld(UsageError):
+    """
+    Raised when the grasp of a gripper that holds nothing is asked for.
+    """
+
+    end_effector: EndEffector
+    """
+    The end effector that holds nothing.
+    """
+
+    def error_message(self) -> str:
+        return f"The end effector '{self.end_effector.name}' holds no body."
+
+    def suggest_correction(self) -> str:
+        return (
+            "check that a body is attached below the end effector's tool frame before "
+            "reading the grasp it is held by."
+        )
+
+
+@dataclass
+class NoGraspGeometry(UsageError):
+    """
+    Raised when an object's grasps are derived from its shape, but its root body has no
+    shape to derive them from.
+    """
+
+    graspable: HasGraspCandidates
+    """
+    The annotation whose grasps were asked for.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The grasps of '{self.graspable.name}' follow its shape, but its root body "
+            f"'{self.graspable.root.name}' offers none to follow."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "give the root body collision geometry, or annotate the object with a type "
+            "whose grasps do not depend on its shape."
+        )
+
+
+@dataclass
+class GripperAxesNotPerpendicular(UsageError):
+    """
+    Raised when a gripper's closing axis is not perpendicular to its approach axis, so
+    the two cannot span a grasp frame.
+    """
+
+    end_effector: EndEffector
+    """
+    The end effector stating the axes.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The end effector '{self.end_effector.name}' has an approach axis "
+            f"{self.end_effector.approach_axis.to_np()[:3].tolist()} and a closing axis "
+            f"{self.end_effector.closing_axis.to_np()[:3].tolist()} that are not "
+            f"perpendicular."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "return a closing axis at a right angle to the approach axis, both in the "
+            "tool frame."
+        )
+
+
+@dataclass
+class MoreThanOneBodyHeld(UsageError):
+    """
+    Raised when a gripper's tool frame has more than one body attached to it.
+    """
+
+    end_effector: EndEffector
+    """
+    The end effector whose tool frame carries them.
+    """
+
+    held_bodies: List[KinematicStructureEntity]
+    """
+    The entities attached to that tool frame.
+    """
+
+    def error_message(self) -> str:
+        names = [str(body.name) for body in self.held_bodies]
+        return (
+            f"The end effector '{self.end_effector.name}' has more than one body "
+            f"attached to its tool frame: {names}."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "detach everything but the grasped body from the tool frame, so that the "
+            "body the gripper holds is unambiguous."
+        )
+
+
+@dataclass
+class NoSupportingSurfaceError(UsageError):
+    """
+    Raised when an annotation's geometry offers no surface anything could be supported
+    on.
+    """
+
+    annotation: HasSupportingSurface
+    """
+    The annotation that was asked for its supporting surface.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"'{self.annotation.root.name}' has no supporting surface and none could "
+            f"be derived from its geometry."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "attach a supporting surface region to the annotation, or give its root "
+            "body geometry with an upward facing face."
+        )
+
+
+@dataclass
+class DuplicateSimulatorPropertyError(UsageError):
+    """
+    Raised when an entity carries more than one simulator property of a type of which a
+    simulator reads exactly one.
+    """
+
+    property_type: Type
+    """
+    The type of property attached more than once.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The entity already carries a {self.property_type.__name__} simulator "
+            "property."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Modify the existing property in place instead of attaching a second one; "
+            "HasSimulatorProperties.get_simulator_property_of_type returns it."
+        )
+
+
+@dataclass
+class SimulationNotStartedError(UsageError):
+    """
+    Raised when a simulation is advanced before it was started.
+    """
+
+    world_name: str
+    """
+    Name of the root of the world whose simulation was advanced too early.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The simulation of the world rooted at {self.world_name} has to be started "
+            "before it can be advanced."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Call start() first, or drive the simulation inside a with block."
+
+
+@dataclass
+class SimulationAlreadyRunningError(UsageError):
+    """
+    Raised when a simulation is started while it is already running.
+    """
+
+    world_name: str
+    """
+    Name of the root of the world whose simulation was started twice.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The simulation of the world rooted at {self.world_name} is already "
+            "running."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Stop the simulation before starting it again."
+
+
+@dataclass
+class ObjectHasNoWidthWithoutCollision(UsageError):
+    """
+    Raised when the width of an object is asked for, while the object carries no
+    collision geometry to measure.
+    """
+
+    object_name: PrefixedName
+    """
+    Name of the body whose width was asked for.
+    """
+
+    def error_message(self) -> str:
+        return f"{self.object_name} has no collision geometry to measure a width on."
+
+    def suggest_correction(self) -> str:
+        return "Give the body collision geometry, or state the width yourself."

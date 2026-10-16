@@ -36,7 +36,7 @@ from experiments.wipe_table_demo.demo import (
     SimulatedContactWrench,
     WipingDemonstration,
 )
-from giskardpy.middleware.ros2.input_synchronization import InputSynchronizer
+from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.api import RobotSpecification, WorldSpecification
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge

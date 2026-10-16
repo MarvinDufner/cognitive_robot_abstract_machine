@@ -104,6 +104,23 @@ class InferFromDataFrameTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             infer_variables_from_dataframe(df)
 
+    def test_string_dtype_column_is_treated_as_symbolic(self):
+        """
+        Regression test: with pandas' ``future.infer_string`` option enabled (the
+        default from pandas 3.0 onward), a string column's dtype no longer equals
+        ``object``, so relying on that equality alone stops recognizing it.
+        """
+        previous_infer_string = pd.options.future.infer_string
+        pd.options.future.infer_string = True
+        try:
+            df = pd.DataFrame({"symbol": ["a", "b", "c"]})
+            (annotated_variable,) = infer_variables_from_dataframe(df)
+        finally:
+            pd.options.future.infer_string = previous_infer_string
+
+        self.assertEqual(annotated_variable.variable.name, "symbol")
+        self.assertIsInstance(annotated_variable.variable, Symbolic)
+
 
 class JPTTestCase(unittest.TestCase):
     data: pd.DataFrame
@@ -270,6 +287,51 @@ class DenseBoundaryDeterminismTestCase(unittest.TestCase):
         model.root.add_subcircuit(right_leaf, 0.0)
 
         self.assertTrue(model.probabilistic_circuit.is_deterministic())
+
+
+class ContinuousOnlyTestCase(unittest.TestCase):
+    """
+    Regression test for a tree over only continuous variables never splitting.
+    """
+
+    def test_dependent_variables_are_split_apart(self):
+        """
+        Small x always comes with large y and vice versa, so a single leaf, which
+        models x and y as independent, is not a fit of this data.
+        """
+        data = pd.DataFrame(
+            {
+                "x": np.concatenate([np.linspace(0, 1, 50), np.linspace(10, 11, 50)]),
+                "y": np.concatenate([np.linspace(5, 6, 50), np.linspace(-5, -4, 50)]),
+            }
+        )
+
+        circuit = JointProbabilityTree(min_samples_per_leaf=10).fit(data)
+
+        self.assertGreater(len(circuit.root.subcircuits), 1)
+
+
+class MaxStandardDeviationTestCase(unittest.TestCase):
+    """
+    A maximum standard deviation is a precision to reach: once every numeric target
+    in a node is at least that precise, the node is not split any further.
+    """
+
+    def test_splitting_stops_once_every_leaf_is_precise_enough(self):
+        generator = np.random.default_rng(0)
+        x = generator.uniform(0, 100, 500)
+        data = pd.DataFrame({"x": x, "y": x + generator.normal(0, 1, 500)})
+
+        variables = infer_variables_from_dataframe(data)
+        for variable in variables:
+            variable.max_standard_deviation = 5
+        tree = JointProbabilityTree(min_samples_per_leaf=20, keep_sample_indices=True)
+        circuit = tree.fit(data, variables)
+        unlimited = JointProbabilityTree(min_samples_per_leaf=20).fit(data)
+
+        for leaf_node in circuit.root.subcircuits:
+            self.assertLessEqual(data.iloc[leaf_node.sample_indices].std().max(), 5)
+        self.assertLess(len(circuit.root.subcircuits), len(unlimited.root.subcircuits))
 
 
 class BreastCancerTestCase(unittest.TestCase):

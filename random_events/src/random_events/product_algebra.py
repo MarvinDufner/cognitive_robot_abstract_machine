@@ -123,6 +123,12 @@ class SimpleEvent(AbstractSimpleSet, VariableMap):
                 return False
         return True
 
+    def is_singleton(self) -> bool:
+        """
+        :return: Whether the event assigns exactly one value to each of its variables.
+        """
+        return all(assignment.is_singleton() for assignment in self.values())
+
     @property
     def size(self) -> float:
         """
@@ -459,6 +465,24 @@ class Event(AbstractCompositeSet):
         # Resolve variable names to Python Variable objects from our cached set.
         instance._variables = SortedSet(self.get_variable(v.name) for v in variables)
         return instance
+
+    def is_box(self) -> bool:
+        """
+        :return: Whether this event is a single simple event that assigns exactly one
+            simple set to each of its variables.
+        """
+        if len(self.simple_sets) != 1:
+            return False
+        [simple_event] = self.simple_sets
+        return all(
+            len(assignment.simple_sets) == 1 for assignment in simple_event.values()
+        )
+
+    def is_singleton(self) -> bool:
+        """
+        :return: Whether the event contains exactly one point.
+        """
+        return len(self.simple_sets) == 1 and self.simple_sets[0].is_singleton()
 
     def bounding_box(self) -> SimpleEvent:
         """

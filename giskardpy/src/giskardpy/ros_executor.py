@@ -12,7 +12,7 @@ except ImportError:
 
 from giskardpy.executor import Executor
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
-from giskardpy.middleware.ros2.input_synchronization import WorldStateInputs
+from semantic_digital_twin.input_synchronization import WorldStateInputs
 from giskardpy.motion_statechart.ros_context import RosContextExtension
 
 if TYPE_CHECKING:

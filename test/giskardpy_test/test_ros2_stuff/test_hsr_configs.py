@@ -1,5 +1,5 @@
 from giskardpy.middleware.ros2.giskard import Giskard
-from giskardpy.middleware.ros2.input_synchronization import WrenchSynchronizer
+from semantic_digital_twin.adapters.ros.input_synchronization import WrenchSynchronizer
 from giskardpy.middleware.ros2.scripts.iai_robots.hsr.configs import (
     HSRVelocityInterface,
     WorldWithHSRConfig,

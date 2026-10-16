@@ -13,6 +13,7 @@ import robokudo.descriptors.camera_configs.config_semdt_raytracer
 import robokudo.io.file_reader_interface
 import robokudo.io.semdt_raytracer_camera_interface
 import robokudo.io.storage_reader_interface
+import robokudo.behaviours.clear_annotator_outputs
 import robokudo.pipeline
 import robokudo.types.annotation
 import robokudo.types.scene
@@ -69,7 +70,7 @@ class TestFullAEExecution(object):
         seq = robokudo.pipeline.Pipeline("TestPipeline")
         seq.add_children(
             [
-                robokudo.annotators.outputs.ClearAnnotatorOutputs(),
+                robokudo.behaviours.clear_annotator_outputs.ClearAnnotatorOutputs(),
                 CollectionReaderAnnotator(descriptor=cr_fr_config),
                 ImagePreprocessorAnnotator("ImagePreprocessor"),
                 PointcloudCropAnnotator(descriptor=pc_crop_config),
@@ -111,7 +112,7 @@ class TestFullAEExecution(object):
         seq = robokudo.pipeline.Pipeline("SemanticDigitalTwinFileReaderTestPipeline")
         seq.add_children(
             [
-                robokudo.annotators.outputs.ClearAnnotatorOutputs(),
+                robokudo.behaviours.clear_annotator_outputs.ClearAnnotatorOutputs(),
                 CollectionReaderAnnotator(descriptor=cr_fr_config),
                 ImagePreprocessorAnnotator("ImagePreprocessor"),
                 PointcloudCropAnnotator(descriptor=pc_crop_config),
@@ -252,6 +253,7 @@ class TestFullAEExecution(object):
 
         plane_desc = PlaneAnnotator.Descriptor()
         plane_desc.parameters.distance_threshold = 0.01
+        plane_desc.parameters.random_seed = 0
 
         cluster_desc = PointCloudClusterExtractor.Descriptor()
         cluster_desc.parameters.dbscan_min_cluster_count = 8
@@ -270,7 +272,7 @@ class TestFullAEExecution(object):
         seq = robokudo.pipeline.Pipeline("SemDTRayTracerTestPipeline")
         seq.add_children(
             [
-                robokudo.annotators.outputs.ClearAnnotatorOutputs(),
+                robokudo.behaviours.clear_annotator_outputs.ClearAnnotatorOutputs(),
                 CollectionReaderAnnotator(descriptor=raytracer_config),
                 ImagePreprocessorAnnotator("ImagePreprocessor"),
                 PointcloudCropAnnotator(),
@@ -329,6 +331,7 @@ class TestFullAEExecution(object):
 
         plane_desc = PlaneAnnotator.Descriptor()
         plane_desc.parameters.distance_threshold = 0.01
+        plane_desc.parameters.random_seed = 0
 
         cluster_desc = PointCloudClusterExtractor.Descriptor()
         cluster_desc.parameters.dbscan_min_cluster_count = 8
@@ -339,7 +342,7 @@ class TestFullAEExecution(object):
         seq = robokudo.pipeline.Pipeline("SemDTRayTracerTabletopTestPipeline")
         seq.add_children(
             [
-                robokudo.annotators.outputs.ClearAnnotatorOutputs(),
+                robokudo.behaviours.clear_annotator_outputs.ClearAnnotatorOutputs(),
                 CollectionReaderAnnotator(descriptor=raytracer_config),
                 ImagePreprocessorAnnotator("ImagePreprocessor"),
                 PointcloudCropAnnotator(),
