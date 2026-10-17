@@ -216,8 +216,8 @@ class LowerUntilContactMotion(BaseMotion):
     """
     How fast the tool is lowered, in m/s.
 
-    Slow, because the tool travels on between the reading that first shows contact and
-    the cycle that acts on it, and a surface is far stiffer than the tool can yield.
+    Slow, because the tool travels on between the reading that shows contact and the
+    cycle that acts on it.
     """
 
     allow_gripper_collision: Optional[bool] = None
@@ -474,36 +474,38 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
     """
     Virtual mass the press yields with, per axis, in kg.
 
-    ``None`` leaves the default the task was written with. Together with the damping it
-    sets how long the press takes to react, so raising it makes the press follow the
-    average of a chattering contact rather than each impact in it.
+    ``None`` keeps the task's own default.
     """
 
     admittance_damping: Optional[Vector3] = None
     """
     Virtual damping the press yields with, per axis, in N s/m.
 
-    ``None`` leaves the default the task was written with. A stiffer surface needs more:
-    the press oscillates once the offset moves faster than the arm can follow it.
+    ``None`` keeps the task's own default.
     """
 
     desired_force: Optional[Vector3] = None
     """
     Contact force to hold against the surface while following the waypoints, in the
-    waypoints' own frame.
+    waypoints' own frame. ``None`` follows them rigidly.
 
-    ``None`` follows the waypoints as given. Set it to press: the tip then yields to the
-    measured wrench instead of tracking the waypoints rigidly, which needs a
-    force/torque sensor on the chain to the tip.
+    .. note:: Pressing needs a force/torque sensor on the chain to the tip.
+    """
+
+    admittance_lead_time: float = 0.0
+    """
+    How far ahead of the press's own offset the tracked point is placed, in s, to
+    compensate the delay before the arm reaches a commanded pose.
     """
 
     admittance_travel: Optional[Vector3] = None
     """
     How far the press may yield from the waypoints, per axis, in m.
 
-    ``None`` leaves the default the task was written with. Zero on an axis keeps the tip
-    rigid along it, which is what an axis that only ever feels friction needs: yielding
-    to friction drifts the tip against its own direction of travel until it stalls.
+    ``None`` keeps the task's own default.
+
+    .. note:: Zero on an axis keeps the tip rigid along it, which an axis that only
+        feels friction needs: yielding to friction drifts the tip until it stalls.
     """
 
     def perform(self):
@@ -553,6 +555,7 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
                 trajectory_kwargs["damping"] = self.admittance_damping
             if self.admittance_travel is not None:
                 trajectory_kwargs["maximum_offset"] = self.admittance_travel
+            trajectory_kwargs["lead_time"] = self.admittance_lead_time
             tasks = [
                 AdmittanceCartesianTrajectory(
                     desired_force=self.desired_force, **trajectory_kwargs
@@ -576,10 +579,9 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
             else []
         )
         motion_statechart_nodes.extend(self.keep_base_still())
-        # A press that can get no further is ended by the no-progress monitor the
-        # executable adds around every motion, which measures standing still over
-        # seconds; ending it here on a single cycle of near-zero velocity would report
-        # success at the first bounce off a stiff surface instead.
+        # No local-minimum monitor: a single cycle of near-zero velocity is the first
+        # bounce off a stiff surface. The executable's no-progress monitor ends a press
+        # that is really stuck.
         motion_statechart_nodes.append(Parallel(tasks))
         return Parallel(motion_statechart_nodes)
 

@@ -48,7 +48,6 @@ from semantic_digital_twin.exceptions import (
     UselessConceptError,
     DuplicateRobotAssignmentsError,
     MissingDefaultCameraError,
-    NoForceTorqueSensorForFrameError,
     NoForceTorqueSensorForTipError,
 )
 from semantic_digital_twin.input_synchronization import InputSynchronizer
@@ -708,8 +707,7 @@ class ForceTorqueSensor(Sensor, ABC):
 
     def write_wrench(self, force: np.ndarray, torque: np.ndarray) -> None:
         """
-        Overwrite the live wrench. The single entry point for every producer: a
-        real-robot subscriber, a simulation, or a test.
+        Overwrite the live wrench.
 
         .. note:: Writes and returns; this never notifies the world of a state change.
 
@@ -721,33 +719,10 @@ class ForceTorqueSensor(Sensor, ABC):
         self.has_received_wrench = True
 
     @classmethod
-    def with_root(
-        cls, world: World, frame: KinematicStructureEntity
-    ) -> ForceTorqueSensor:
-        """
-        Return the sensor in ``world`` rooted at ``frame``.
-
-        Resolving by frame rather than holding the annotation keeps consumers correct
-        across the world's JSON round trip: the frame survives serialization, and the
-        live annotation is looked up from the world that is actually executed.
-
-        :param world: World holding the sensor annotation.
-        :param frame: Frame the wanted sensor is rooted at.
-        :raises NoForceTorqueSensorForFrameError: If no sensor is rooted at the frame.
-        """
-        for sensor in world.get_semantic_annotations_by_type(cls):
-            if sensor.root == frame:
-                return sensor
-        raise NoForceTorqueSensorForFrameError(frame=frame)
-
-    @classmethod
     def for_tip(cls, world: World, tip: KinematicStructureEntity) -> ForceTorqueSensor:
         """
         Return the sensor whose measurements pertain to ``tip``: the one rooted at a
         kinematic ancestor of ``tip``, closest to it when several lie on the chain.
-
-        Resolving by the controlled tip keeps a caller agnostic of the robot's wiring
-        and disambiguates multi-arm robots, where each arm's tip selects its own sensor.
 
         :param world: World holding the sensor annotation.
         :param tip: Tip whose measurements are wanted.
@@ -801,17 +776,6 @@ class ForceTorqueSensor(Sensor, ABC):
         evaluating the expression, which a control cycle cannot afford.
         """
         return self.wrench_data.data[:3]
-
-    @classproperty
-    def median_readings(cls) -> int:
-        """
-        How many of the most recent readings the live wrench is the median of.
-
-        One writes every reading through. More drops the isolated spikes a sensor's data
-        path can produce, at the cost of half the window in delay, and needs a window
-        wider than the longest run of spikes it has to survive.
-        """
-        return 1
 
     @classproperty
     def raw_wrench_topic(cls) -> Optional[str]:
@@ -1031,12 +995,8 @@ class Arm(KinematicChain, HasEndEffector[TGenericEndEffector], ABC):
         The largest horizontal distance between the robot's root and this arm's tool
         frame, in m.
 
-        A purely kinematic upper bound: no inverse kinematics and no collision checking,
-        so a caller gets an optimistic reach that geometric planning can work with.
-
-        .. note:: Unlike :meth:`KinematicChain.approximate_length`, this measures how far
-            the tool can actually be placed horizontally rather than the length of the
-            chain, so a folded or vertically stacked arm is not overestimated.
+        .. warning:: A purely kinematic upper bound: no inverse kinematics and no
+            collision checking.
 
         :param samples_per_degree_of_freedom: How many positions each degree of freedom
             is sampled at. Interior samples are required because the farthest reach sits

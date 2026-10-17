@@ -6,10 +6,7 @@ from typing_extensions import List
 
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.exceptions import (
-    NoForceTorqueSensorForFrameError,
-    NoForceTorqueSensorForTipError,
-)
+from semantic_digital_twin.exceptions import NoForceTorqueSensorForTipError
 from semantic_digital_twin.robots.hsrb import HSRBWristForceTorqueSensor
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import (
@@ -89,22 +86,9 @@ def test_a_tip_off_the_sensor_chain_has_no_sensor(hsr_world_copy):
         ForceTorqueSensor.for_tip(hsr_world_copy, off_chain)
 
 
-def test_the_sensor_is_found_from_the_frame_it_is_rooted_at(hsr_world_copy):
-    frame = hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
-
-    assert ForceTorqueSensor.with_root(hsr_world_copy, frame).root is frame
-
-
-def test_a_frame_without_a_sensor_is_reported(hsr_world_copy):
-    with pytest.raises(NoForceTorqueSensorForFrameError):
-        ForceTorqueSensor.with_root(
-            hsr_world_copy, hsr_world_copy.get_body_by_name("base_footprint")
-        )
-
-
 def test_an_idle_sensor_is_distinguishable_from_one_measuring_zero(hsr_world_copy):
-    sensor = ForceTorqueSensor.with_root(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
     assert not sensor.has_received_wrench
@@ -115,8 +99,8 @@ def test_an_idle_sensor_is_distinguishable_from_one_measuring_zero(hsr_world_cop
 
 
 def test_a_written_wrench_reaches_the_symbols(hsr_world_copy):
-    sensor = ForceTorqueSensor.with_root(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
     sensor.write_wrench(np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0, 6.0]))
@@ -126,8 +110,8 @@ def test_a_written_wrench_reaches_the_symbols(hsr_world_copy):
 
 
 def test_writing_a_wrench_overwrites_the_previous_one(hsr_world_copy):
-    sensor = ForceTorqueSensor.with_root(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
     sensor.write_wrench(np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0, 6.0]))
@@ -142,8 +126,8 @@ def test_the_wrench_holds_exactly_the_six_axes(hsr_world_copy):
     The admittance step compiles against this group, so its size must not depend on
     anything else in the world.
     """
-    sensor = ForceTorqueSensor.with_root(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
     for _ in range(3):
@@ -154,8 +138,8 @@ def test_the_wrench_holds_exactly_the_six_axes(hsr_world_copy):
 
 
 def test_the_wrench_is_expressed_in_the_sensor_frame(hsr_world_copy):
-    sensor = ForceTorqueSensor.with_root(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
     assert sensor.force.reference_frame is sensor.root
@@ -237,8 +221,8 @@ def test_a_sensor_nothing_compensates_has_nothing_to_be_zeroed_through(hsr_world
     """
     The default says so, rather than naming a service no node offers.
     """
-    sensor = ForceTorqueSensor.with_root(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(WRIST_SENSOR_FRAME)
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
     assert sensor.retare_service is None

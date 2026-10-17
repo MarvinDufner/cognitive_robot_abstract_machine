@@ -84,14 +84,11 @@ SPONGE_CONTACT = ContactParameters(
 )
 """
 What the sponge's surface does when it is pressed onto something: soft over a centimetre
-of squash and only moderately grippy, as a damp sponge is, rather than the rigid high-
-friction block a box is taken for.
+of squash and only moderately grippy, as a damp sponge is.
 
-The resolution time leaves the pad about as stiff as :data:`CONTACT_STIFFNESS`, which is
-what a damp sponge measures, so a physically simulated run and a modelled one press into
-comparably soft surfaces. A tenth of it makes the pad a rigid block, which the press can
-only chase: measured on Tracy, the same wipe then spends half its cycles out of contact
-and touches down at 132 N instead of 12 N.
+.. warning:: The resolution time leaves the pad about as stiff as
+    :data:`CONTACT_STIFFNESS`. A tenth of it makes the pad a rigid block the press can
+    only chase: half the wipe out of contact, touching down at 132 N instead of 12 N.
 """
 
 APPROACH_POSE = HomogeneousTransformationMatrix.from_xyz_rpy(x=2.0, y=5.705, z=0.0)
@@ -318,12 +315,11 @@ class WipingDemonstration(RobotDemonstration, ABC):
     def unmodelled_tool_length(self) -> float:
         """
         How much further from the hand the sponge really sits than the robot description
-        says, in m.
+        says, in m. Zero when the description is complete.
 
-        Zero when the description is complete. A positive value stands in for hardware it
-        is missing, and moves the whole motion that much further from the surface: the
-        press can only yield by :attr:`AdmittanceCartesianTrajectory.maximum_offset`, so a
-        description short by more than that drives the tool through the surface instead.
+        .. warning:: The press can only yield by
+            :attr:`AdmittanceCartesianTrajectory.maximum_offset`, so a description short
+            by more than that drives the tool through the surface.
         """
         return 0.0
 
@@ -574,8 +570,8 @@ class WipeTableDemonstration(WipingDemonstration):
         """
         Whether the base fits where a side would be wiped from.
 
-        The table itself is ignored: standing beside it is the point, and
-        :data:`STANDING_CLEARANCE` already holds the base off its edge.
+        The table itself is ignored, since :data:`STANDING_CLEARANCE` already holds the
+        base off its edge.
 
         :param world: World holding the table and whatever surrounds it.
         :param table: The table being wiped.

@@ -128,23 +128,18 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
 
     standing_pose: Optional[Pose] = None
     """
-    Where the robot will stand while this motion runs.
+    Where the robot will stand while this motion runs, for :attr:`skip_unreachable`.
 
-    The waypoints are worked out when the plan is built, so a plan that navigates first
-    would otherwise measure reach from wherever the robot happened to start. Only used
-    with :attr:`skip_unreachable`.
+    Defaults to where it stands when the plan is built.
     """
 
     skip_unreachable: bool = False
     """
-    Drop the waypoints the arm cannot reach from where the robot stands.
+    Drop the waypoints the arm cannot reach from where the robot stands, so a path that
+    starts out of reach still covers what it can.
 
-    The tool follows the waypoints in order and cannot skip ahead, so a path that starts
-    out of reach never starts at all. Dropping those waypoints covers what this placement
-    can cover and leaves the rest to the next one.
-
-    .. note:: The bound is purely kinematic, so a kept waypoint is reachable at best; it
-        may still be blocked or need a posture the arm cannot hold.
+    .. note:: The bound is purely kinematic, so a kept waypoint may still be blocked or
+        need a posture the arm cannot hold.
     """
 
     @abstractmethod
@@ -231,8 +226,13 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
     Contact force to hold against the target while the tool moves, in the world frame.
 
     ``None`` follows the tool path as generated, which keeps the tool just clear of the
-    surface. Only wiping presses; the other tool motions cut, mix and pour in free
-    space.
+    surface.
+    """
+    admittance_lead_time: float = 0.0
+    """
+    How far ahead of the press's own offset the tracked point is placed, in s.
+
+    Only meaningful together with :attr:`desired_force`.
     """
     admittance_travel: Optional[Vector3] = None
     """
@@ -261,6 +261,7 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
                     admittance_mass=self.admittance_mass,
                     admittance_damping=self.admittance_damping,
                     admittance_travel=self.admittance_travel,
+                    admittance_lead_time=self.admittance_lead_time,
                 )
             ]
         )
@@ -488,11 +489,7 @@ class WipingAction(ToolMotionAction):
     def _perform_plan(self) -> None:
         """
         Perform the wiping plan, accepting a motion that gave up if the tool still
-        reached the final waypoint.
-
-        A wipe can also end early by succeeding: a press that stops getting anywhere ends
-        the motion rather than running to the timeout. Reporting how far the tool got
-        keeps that from looking like a wipe of the whole surface.
+        reached the final waypoint, and reporting how far it got.
         """
         subplan = self.add_subplan(self.action_plan)
         try:

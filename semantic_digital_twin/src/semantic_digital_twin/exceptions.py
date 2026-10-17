@@ -1623,27 +1623,6 @@ class InvalidScanPattern(UsageError):
 
 
 @dataclass
-class NoForceTorqueSensorForFrameError(UsageError):
-    """
-    Raised when no force/torque sensor is rooted at a frame.
-    """
-
-    frame: KinematicStructureEntity
-    """
-    The frame that no force/torque sensor is rooted at.
-    """
-
-    def error_message(self) -> str:
-        return f"No ForceTorqueSensor is rooted at frame {self.frame.name}."
-
-    def suggest_correction(self) -> str:
-        return (
-            "Annotate a ForceTorqueSensor on the robot whose root is this frame, or "
-            "pass the frame the sensor is actually rooted at."
-        )
-
-
-@dataclass
 class NoForceTorqueSensorForTipError(UsageError):
     """
     Raised when no force/torque sensor lies on the kinematic chain to a tip.

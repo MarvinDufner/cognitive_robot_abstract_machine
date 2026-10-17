@@ -482,6 +482,28 @@ def test_the_pressing_path_puts_the_tools_face_on_the_surface(tool_action_world)
     )
 
 
+def test_a_press_tracks_ahead_of_its_own_offset_when_asked_to(tool_action_world):
+    """
+    The arm reaches a commanded point later than it is commanded, so a press that is
+    given the offset as it stands always acts on a pose the arm has left behind.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    lead_time = 0.04
+
+    action = pressing_wipe(world, robot, sponge, admittance_lead_time=lead_time)
+    motions = _expanded_aligned_motions(action, context)
+    trajectory = next(
+        node
+        for group in motions[0].motion_chart.nodes
+        if isinstance(group, Goal)
+        for node in group.nodes
+        if isinstance(node, AdmittanceCartesianTrajectory)
+    )
+
+    assert trajectory.lead_time == lead_time
+
+
 def test_a_press_yields_only_as_far_as_it_is_allowed_to_travel(tool_action_world):
     """
     The tool feels friction as it travels, and a press free to yield to that drifts

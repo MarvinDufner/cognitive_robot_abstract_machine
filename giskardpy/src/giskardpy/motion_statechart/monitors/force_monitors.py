@@ -34,6 +34,17 @@ class ContactForceReached(MotionStatechartNode):
     Above the noise of carrying the tool and below the force a press holds.
     """
 
+    confirming_readings: int = field(default=3, kw_only=True)
+    """
+    How many readings in a row have to be above :attr:`threshold`, so that an isolated
+    spike in the sensor's data path cannot end a descent in mid-air.
+    """
+
+    _readings_above_threshold: int = field(init=False, default=0, repr=False)
+    """
+    How many of the most recent readings in a row were above :attr:`threshold`.
+    """
+
     _sensor: Optional[ForceTorqueSensor] = field(init=False, default=None, repr=False)
     """
     Sensor resolved from :attr:`tip_link`.
@@ -43,12 +54,8 @@ class ContactForceReached(MotionStatechartNode):
         """
         Resolve the sensor.
 
-        The observation is written by :meth:`on_tick` instead of being an expression,
-        because a wrench is not a degree of freedom and its values live with the sensor
-        rather than in the controller's own data.
-
-        :param context: Provides the world model.
-        :return: The artifacts of this node.
+        The observation itself is written by :meth:`on_tick`, since the wrench lives
+        with the sensor rather than in the controller's own data.
         """
         self._sensor = ForceTorqueSensor.for_tip(context.world, self.tip_link)
         return NodeArtifacts()
@@ -62,6 +69,13 @@ class ContactForceReached(MotionStatechartNode):
         """
         if not self._sensor.has_received_wrench:
             return ObservationStateValues.UNKNOWN
-        if np.linalg.norm(self._sensor.measured_force) > self.threshold:
+        if np.linalg.norm(self._sensor.measured_force) <= self.threshold:
+            self._readings_above_threshold = 0
+            return ObservationStateValues.FALSE
+        self._readings_above_threshold += 1
+        if self._readings_above_threshold >= self.confirming_readings:
             return ObservationStateValues.TRUE
         return ObservationStateValues.FALSE
+
+    def on_reset(self, context: MotionStatechartContext) -> None:
+        self._readings_above_threshold = 0

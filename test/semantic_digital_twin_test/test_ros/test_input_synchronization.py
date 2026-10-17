@@ -24,7 +24,6 @@ from semantic_digital_twin.adapters.ros.input_synchronization import (
     TopicInputSynchronizer,
     WrenchSynchronizer,
 )
-from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.exceptions import (
     AlreadyTrackedByTfFrameError,
@@ -572,7 +571,7 @@ def test_a_sensor_without_a_reading_is_left_idle(rclpy_node, hsr_world_copy: Wor
     assert not sensor.has_received_wrench
 
 
-# %% rejecting spikes in a wrench
+# %% writing a wrench through to the sensor
 
 
 @dataclass(eq=False)
@@ -590,17 +589,6 @@ class SensorWithoutHardware(ForceTorqueSensor):
     @classmethod
     def setup_default_configuration_in_world_below_robot_root(cls, robot_root):
         raise NotImplementedError
-
-
-@dataclass(eq=False)
-class SensorMedianingFiveReadings(SensorWithoutHardware):
-    """
-    A sensor whose data path spikes, so its readings are taken as a median.
-    """
-
-    @classproperty
-    def median_readings(cls) -> int:
-        return 5
 
 
 def wrench_along_z(force_z: float) -> WrenchStamped:
@@ -621,43 +609,10 @@ def feed(synchronizer: WrenchSynchronizer, *forces: float) -> None:
         synchronizer.apply()
 
 
-def test_an_isolated_spike_never_becomes_a_contact(rclpy_node):
+def test_every_reading_is_written_through(rclpy_node):
     """
-    The sensor's data path produces spikes many times the force a press holds, and a
-    single one reaching the annotation would read as contact.
-    """
-    sensor = SensorMedianingFiveReadings(
-        name=PrefixedName("spiky", prefix="test"), root=None
-    )
-    synchronizer = WrenchSynchronizer(
-        world=World(), node=rclpy_node, topic_name="wrench", sensor=sensor
-    )
-
-    feed(synchronizer, 1.0, 0.9, 1.1, 0.9, 12.0)
-
-    assert_allclose(sensor.measured_force, [0.0, 0.0, 1.0])
-
-
-def test_a_force_that_stays_is_written(rclpy_node):
-    """
-    Half a window of real contact is enough; the median is not a low pass that would
-    drag a press towards the free-space reading it followed.
-    """
-    sensor = SensorMedianingFiveReadings(
-        name=PrefixedName("spiky", prefix="test"), root=None
-    )
-    synchronizer = WrenchSynchronizer(
-        world=World(), node=rclpy_node, topic_name="wrench", sensor=sensor
-    )
-
-    feed(synchronizer, 1.0, 1.0, 8.0, 8.0, 8.0)
-
-    assert_allclose(sensor.measured_force, [0.0, 0.0, 8.0])
-
-
-def test_a_sensor_that_asks_for_one_reading_gets_every_reading(rclpy_node):
-    """
-    The default keeps a clean sensor's readings untouched and undelayed.
+    A force loop pays more for a filter's delay than for the spikes it removes, so the
+    reading reaches the annotation as it arrived.
     """
     sensor = SensorWithoutHardware(name=PrefixedName("clean", prefix="test"), root=None)
     synchronizer = WrenchSynchronizer(

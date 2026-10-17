@@ -13,8 +13,8 @@ The execution type is the first command line argument, defaulting to ``REAL``::
 itself, so how hard and how steadily the press holds can be measured without the robot.
 
 .. todo:: The sensor is taken as the control program leaves it, zeroed at start. Once
-    the tool has to change orientation under force, the load has to be removed properly:
-    run a wrench compensation node per arm and read its topic instead. See
+    the tool changes orientation under force, run a wrench compensation node per arm and
+    read its topic instead. See
     :class:`~semantic_digital_twin.robots.tracy.TracyWrenchTopic`.
 """
 
@@ -63,75 +63,58 @@ WIPED_PATCH_CENTRE = (0.72, -0.10)
 WIPED_PATCH_LENGTH = 0.34
 """Length of the wiped patch along the bench's long axis, in m.
 
-Sits in the middle of the bench: it starts well past the brace the camera pole stands on,
-which lies flat on the bench top and reaches out to x = 0.35, and stops short of the far
-arm. The raster begins at the end nearest the pole, so that end carries the clearance that
-matters. Both ends are measured from the bodies themselves, so widening the patch means
-checking them again.
+.. warning:: Clear of the camera pole's brace (out to x = 0.35) at one end and of the
+    far arm at the other. Widening the patch means measuring both again.
 """
 
 WIPED_PATCH_WIDTH = 0.44
-"""Width of the wiped patch across the bench, in m.
-
-The bench is 1.6 m wide, but the arm can only hold the tool flat on it from roughly
-0.35 m on its own side of the bench to 0.15 m across, so this covers what the arm
-reaches rather than what the bench offers.
+"""Width of the wiped patch across the bench, in m: what the arm can hold the tool flat
+on, not what the 1.6 m wide bench offers.
 """
 
 APPROACH_HEIGHT = 0.08
-"""How far above the bench the tool is brought before it is lowered onto it, in m.
-
-Far enough to be clear of the surface wherever it really is, close enough that the slow
-descent that follows does not take long.
-"""
+"""How far above the bench the tool is brought before it is lowered onto it, in m."""
 
 UNMODELLED_ADAPTER_LENGTH = 0.06
 """Length of the adapter between the flange and the gripper, in m.
 
-.. todo:: Tracy's description is missing this piece, so every frame of the gripper sits
-    that much too close to the flange. Remove this once the description has it. Guessing
-    high is the safe direction: the descent feels for the surface either way, whereas
-    guessing low presses the tool through it by the difference.
+.. todo:: Tracy's description is missing this piece, so every gripper frame sits that
+    much too close to the flange. Remove this once the description has it.
 """
 
 OBSTACLE_CLEARANCE = 0.05
-"""Gap kept between the hand and anything standing on the bench, in m.
-
-The hand reaches almost twice as far sideways as the sponge it holds, it is free to spin
-about the surface normal while it wipes, and it is driven along the patch rather than
-tracked onto it exactly, so a patch the sponge alone clears is not enough.
+"""Gap kept between the hand and anything standing on the bench, in m: the hand reaches
+almost twice as far sideways as the sponge it holds.
 """
 
 PRESS_DAMPING = Vector3(x=300.0, y=300.0, z=300.0)
-"""Virtual damping the press yields with, per axis, in N s/m.
-
-Sets how fast the press chases the surface: the force asked for divided by this, so 5
-cm/s here. Faster loses the surface on the way past a dip in it, slower cannot keep up
-with one.
+"""Virtual damping the press yields with, per axis, in N s/m. The press chases the
+surface at the force asked for divided by this, so 5 cm/s here.
 """
 
-PRESS_MASS = Vector3(x=10.0, y=10.0, z=10.0)
-"""Virtual mass the press yields with, per axis, in kg.
+PRESS_MASS = Vector3(x=2.0, y=2.0, z=2.0)
+"""Virtual mass the press yields with, per axis, in kg. Light, because the mass over the
+damping is phase lag the loop does not need: 10 kg costs a third of the contact.
+"""
 
-With :data:`PRESS_DAMPING` this gives the press a time constant of 33 ms, about three
-control cycles, so it follows the average of a contact that makes and breaks rather than
-each impact in it.
+PRESS_LEAD_TIME = 0.03
+"""How far ahead of its own offset the press tracks, in s: about half of the 50 ms the
+arm takes to reach a commanded height.
+"""
+
+DESCENT_VELOCITY = 0.02
+"""How fast the tool is lowered onto the bench, in m/s. Peak contact force grows with
+the speed the tool arrives at.
 """
 
 TOUCHDOWN_FORCE = 5.0
-"""
-Force magnitude that ends the descent onto the bench, in N.
-
-Well above what the sensor reports out of contact and far below what the arm can press
-with: the descent keeps closing until it is felt, and whatever it travels between the
-reading that shows contact and the cycle that acts on it is pressed into the bench.
+"""Force magnitude that ends the descent onto the bench, in N: above what the sensor
+reports out of contact, far below what the arm can press with.
 """
 
 DESCENT_OVERSHOOT = 0.02
-"""How far below the bench the descent aims, in m.
-
-Contact is what ends the descent, so the goal has to lie past the surface; keeping it
-close bounds how far the tool would travel if nothing were ever felt.
+"""How far below the bench the descent aims, in m. Contact ends the descent, so the goal
+has to lie past the surface, and close enough to bound a descent that feels nothing.
 """
 
 SIMULATED_CONTROL_PERIOD = 1 / 50
@@ -191,6 +174,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 tip=sponge.get_tool_frame(),
                 alignment_pairs=sponge.tool_alignment(patch),
                 contact_force=TOUCHDOWN_FORCE,
+                descent_velocity=DESCENT_VELOCITY,
                 allow_gripper_collision=True,
             )
         )
@@ -206,6 +190,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 admittance_mass=PRESS_MASS,
                 admittance_damping=PRESS_DAMPING,
                 admittance_travel=PRESS_TRAVEL,
+                admittance_lead_time=PRESS_LEAD_TIME,
             )
         )
         return sequential(steps, context=context)
@@ -214,11 +199,11 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         """
         :param context: Plan context holding the robot.
         :param patch: Centre of the patch, in the world frame.
-        :return: Bringing the tool over the patch, pointing at it. The tool goes there
-            first because the descent and the wipe both start where they press, and
-            because the wipe aligns the sponge's own axis with the surface: starting from
-            the opposite orientation would ask the arm to flip through the one pose where
-            that alignment cannot tell which way to turn.
+        :return: Bringing the tool over the patch, already pointing at it.
+
+        .. warning:: The approach has to point the sponge down. From the opposite
+            orientation the wipe's alignment would have to flip the tool through the one
+            pose where it cannot tell which way to turn.
         """
         return MoveManipulatorAction(
             target_pose=Pose.from_xyz_rpy(
