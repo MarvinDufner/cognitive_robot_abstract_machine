@@ -243,12 +243,8 @@ class HSRBWristForceTorqueSensor(ForceTorqueSensor):
         )
 
     @classproperty
-    def wrench_topic(cls) -> str:
+    def topic_name(cls) -> str:
         return WrenchTopic.COMPENSATED
-
-    @classproperty
-    def raw_wrench_topic(cls) -> str:
-        return WrenchTopic.RAW
 
     @classproperty
     def gravity_frame(cls) -> str:

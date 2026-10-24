@@ -438,18 +438,22 @@ class WipingDemonstration(RobotDemonstration, ABC):
         :return: What writes the force/torque reading into the world while the plan
             runs: nothing on the real robot, which follows its sensor's own topic, the
             physics wherever a plan is performed in any, and a contact model otherwise.
+
+        The source is attached to the sensor it writes, so the sensor states where its
+        readings come from rather than the loop alone knowing.
         """
         if self.execution_type is ExecutionType.REAL:
             return []
-        if self.simulation is not None:
-            return [
-                PhysicallySimulatedContactWrench(
-                    world=world,
-                    tool=world.get_body_by_name(SPONGE_NAME),
-                    simulation=self.simulation,
-                )
-            ]
-        return [self.contact_model(world)]
+        tool = world.get_body_by_name(SPONGE_NAME)
+        if self.simulation is None:
+            pressed_with = self.contact_model(world)
+        else:
+            pressed_with = PhysicallySimulatedContactWrench(
+                world=world, tool=tool, simulation=self.simulation
+            )
+        sensor = ForceTorqueSensor.for_tip(world, tool)
+        sensor.use_source(pressed_with)
+        return [sensor.source]
 
     @abstractmethod
     def contact_model(self, world: World) -> SimulatedContactWrench:

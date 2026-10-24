@@ -43,7 +43,7 @@ def test_bringing_the_robot_up_follows_its_force_torque_sensor(init_rospy):
     )[0]
     followed = wrench_synchronizers(giskard.motion_server.control_loop.inputs.synchronizers)
     assert [synchronizer.topic_name for synchronizer in followed] == [
-        sensor.wrench_topic
+        sensor.topic_name
     ]
     assert followed[0].sensor is sensor
 

@@ -54,9 +54,11 @@ from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.robots.exceptions import MissingDriveConnectionError
 from semantic_digital_twin.robots.input_source import (
     BasePoseSource,
+    SimulatedWrenchSource,
     JointPositionSource,
     RobotTopic,
     SimulatedBasePoseSource,
+    WrenchSource,
     SimulatedJointPositionSource,
 )
 from semantic_digital_twin.robots.robot_part_mixins import (
@@ -659,14 +661,25 @@ class ForceTorqueSensorLoad:
 
 
 @dataclass(eq=False)
-class ForceTorqueSensor(Sensor, ABC):
+class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
     """
     A six-axis force/torque sensor, measuring the wrench acting at its root frame.
 
     The sensor owns the symbolic force and torque of its live wrench together with the
     values behind them, mirroring how a degree of freedom owns its position symbol.
-    Consumers reach the symbols through the robot annotation; producers push new
+    Consumers reach the symbols through the robot annotation; the source pushes new
     readings through :meth:`write_wrench`.
+
+    .. note:: A wrench is pushed rather than read on demand, because the controller
+        consumes it through expressions compiled against :attr:`wrench_data` and a
+        simulated contact is only valid at the instant the simulation resolved it.
+    """
+
+    source: TGenericInputSource = field(
+        default_factory=SimulatedWrenchSource, kw_only=True
+    )
+    """
+    Where the readings of this sensor come from.
     """
 
     force: Vector3 = field(init=False, default=None, compare=False, repr=False)
@@ -757,16 +770,6 @@ class ForceTorqueSensor(Sensor, ABC):
             raise NoForceTorqueSensorForTipError(tip=tip)
         return max(on_chain, key=on_chain.get)
 
-    @classproperty
-    def wrench_topic(cls) -> Optional[str]:
-        """
-        The topic this kind of sensor's readings arrive on.
-
-        ``None`` for a sensor that is not fed from ROS, which is every sensor written
-        directly by a simulation or a test.
-        """
-        return None
-
     @property
     def measured_force(self) -> np.ndarray:
         """
@@ -788,14 +791,18 @@ class ForceTorqueSensor(Sensor, ABC):
         """
         return self.wrench_data.data[3:6]
 
-    @classproperty
-    def raw_wrench_topic(cls) -> Optional[str]:
-        """
-        The topic this kind of sensor's driver publishes, still carrying the load.
+    @classmethod
+    def simulated_source(cls) -> WrenchSource:
+        return SimulatedWrenchSource()
 
-        What a compensation node reads; ``None`` for a sensor nothing compensates.
-        """
-        return None
+    def real_source(self, node: Node) -> WrenchSource:
+        from semantic_digital_twin.adapters.ros.input_synchronization import (
+            SubscribedWrenchSource,
+        )
+
+        return SubscribedWrenchSource(
+            world=self._world, node=node, topic_name=self.topic_name, sensor=self
+        )
 
     @classproperty
     def gravity_frame(cls) -> Optional[str]:

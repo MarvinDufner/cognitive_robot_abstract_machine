@@ -23,6 +23,7 @@ from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.robots.input_source import (
     BasePoseSource,
     JointPositionSource,
+    WrenchSource,
 )
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
@@ -237,6 +238,13 @@ class WrenchSynchronizer(TopicInputSynchronizer[WrenchStamped]):
         """
         super().apply()
         return False
+
+
+@dataclass
+class SubscribedWrenchSource(WrenchSynchronizer, WrenchSource):
+    """
+    The wrench a real sensor publishes on a ROS 2 topic.
+    """
 
 
 @dataclass

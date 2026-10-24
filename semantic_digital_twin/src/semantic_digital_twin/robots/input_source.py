@@ -66,3 +66,21 @@ class SimulatedBasePoseSource(BasePoseSource):
     A source that leaves the drive origin the world already holds, as the simulator
     integrates it.
     """
+
+
+# %% contact wrench
+
+
+@dataclass
+class WrenchSource(InputSource, ABC):
+    """
+    Where the reading of a force/torque sensor comes from.
+    """
+
+
+@dataclass
+class SimulatedWrenchSource(WrenchSource):
+    """
+    A source that leaves the reading to whatever acts on the world: a simulation
+    resolving the contact, a model of the surface, or a test writing it directly.
+    """

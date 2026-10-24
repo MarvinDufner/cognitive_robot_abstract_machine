@@ -7,7 +7,15 @@ from typing_extensions import List
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.exceptions import NoForceTorqueSensorForTipError
-from semantic_digital_twin.robots.hsrb import HSRBWristForceTorqueSensor
+from semantic_digital_twin.adapters.ros.input_synchronization import (
+    SubscribedWrenchSource,
+)
+from semantic_digital_twin.robots.exceptions import UnexpectedInputSourceError
+from semantic_digital_twin.robots.hsrb import HSRB, HSRBWristForceTorqueSensor
+from semantic_digital_twin.robots.input_source import (
+    SimulatedBasePoseSource,
+    SimulatedWrenchSource,
+)
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import (
     TracyFrame,
@@ -169,8 +177,8 @@ def test_the_two_arms_of_a_two_armed_robot_read_their_own_topic():
     """
     One topic for both arms would feed each admittance the other hand's contact.
     """
-    assert TracyLeftForceTorqueSensor.wrench_topic is TracyWrenchTopic.LEFT_RAW
-    assert TracyRightForceTorqueSensor.wrench_topic is TracyWrenchTopic.RIGHT_RAW
+    assert TracyLeftForceTorqueSensor.topic_name is TracyWrenchTopic.LEFT_RAW
+    assert TracyRightForceTorqueSensor.topic_name is TracyWrenchTopic.RIGHT_RAW
 
 
 def test_each_arm_declares_everything_its_compensation_needs(tracy_world):
@@ -178,19 +186,10 @@ def test_each_arm_declares_everything_its_compensation_needs(tracy_world):
     A node is started per arm from these alone, so a name left pointing at the other arm
     would compensate one sensor against the other's readings.
     """
-    for sensor, raw, service in (
-        (
-            TracyLeftForceTorqueSensor,
-            TracyWrenchTopic.LEFT_RAW,
-            TracyWrenchService.LEFT,
-        ),
-        (
-            TracyRightForceTorqueSensor,
-            TracyWrenchTopic.RIGHT_RAW,
-            TracyWrenchService.RIGHT,
-        ),
+    for sensor, service in (
+        (TracyLeftForceTorqueSensor, TracyWrenchService.LEFT),
+        (TracyRightForceTorqueSensor, TracyWrenchService.RIGHT),
     ):
-        assert sensor.raw_wrench_topic is raw
         assert sensor.retare_service is service
         assert sensor.gravity_frame is TracyFrame.LEVEL
 
@@ -246,3 +245,50 @@ def test_the_sensor_sits_in_the_frame_its_readings_are_stamped_with(tracy_world)
         np.diag([1.0, -1.0, -1.0]),
         atol=1e-9,
     )
+
+
+# %% where a sensor is read from
+
+
+def test_a_sensor_is_read_from_the_world_until_it_is_told_otherwise(hsr_world_copy):
+    """
+    A sensor nobody wired has to be readable all the same, because a simulation and a
+    test write it directly rather than publishing it.
+    """
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
+    )
+
+    assert isinstance(sensor.source, SimulatedWrenchSource)
+
+
+def test_a_sensor_refuses_a_source_meant_for_another_part(hsr_world_copy):
+    """
+    Attaching, say, a base's odometry to a sensor would leave it silently idle.
+    """
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
+    )
+
+    with pytest.raises(UnexpectedInputSourceError):
+        sensor.use_source(SimulatedBasePoseSource())
+
+
+def test_a_robot_reads_its_sensors_from_the_topics_they_declare(
+    hsr_world_copy, rclpy_node
+):
+    """
+    Telling the robot where it is read from has to reach its sensors too, or following
+    them stays a wiring step of its own.
+    """
+    robot = hsr_world_copy.get_semantic_annotations_by_type(HSRB)[0]
+    sensor = ForceTorqueSensor.for_tip(
+        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
+    )
+
+    robot.use_real_sources(rclpy_node)
+
+    assert isinstance(sensor.source, SubscribedWrenchSource)
+    assert sensor.source.topic_name == sensor.topic_name
+    assert sensor.source in robot.get_input_synchronizers()
+    sensor.use_simulated_source()

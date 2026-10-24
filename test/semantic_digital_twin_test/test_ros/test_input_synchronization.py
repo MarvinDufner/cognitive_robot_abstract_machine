@@ -527,7 +527,7 @@ def test_apply_writes_the_measured_wrench_into_the_sensor(
     synchronizer = WrenchSynchronizer(
         world=hsr_world_copy,
         node=rclpy_node,
-        topic_name=sensor.wrench_topic,
+        topic_name=sensor.topic_name,
         sensor=sensor,
     )
     synchronizer.latest_message = wrench_message([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
@@ -550,7 +550,7 @@ def test_a_wrench_leaves_the_kinematic_state_alone(rclpy_node, hsr_world_copy: W
     synchronizer = WrenchSynchronizer(
         world=hsr_world_copy,
         node=rclpy_node,
-        topic_name=sensor.wrench_topic,
+        topic_name=sensor.topic_name,
         sensor=sensor,
     )
     synchronizer.latest_message = wrench_message([0.0, 0.0, 9.0], [0.0, 0.0, 0.0])
@@ -563,7 +563,7 @@ def test_a_sensor_without_a_reading_is_left_idle(rclpy_node, hsr_world_copy: Wor
     synchronizer = WrenchSynchronizer(
         world=hsr_world_copy,
         node=rclpy_node,
-        topic_name=sensor.wrench_topic,
+        topic_name=sensor.topic_name,
         sensor=sensor,
     )
 

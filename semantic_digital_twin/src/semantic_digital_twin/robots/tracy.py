@@ -378,17 +378,13 @@ class TracyLeftForceTorqueSensor(ForceTorqueSensor):
     """
 
     @classproperty
-    def wrench_topic(cls) -> str:
+    def topic_name(cls) -> str:
         """
         The driver's own topic: the control program zeroes the sensor as it starts, so
         what it publishes is already the contact wrench. Point this at
         :attr:`TracyWrenchTopic.LEFT_COMPENSATED` once a compensation node runs, which is
         what removing the load across changing orientations needs.
         """
-        return TracyWrenchTopic.LEFT_RAW
-
-    @classproperty
-    def raw_wrench_topic(cls) -> str:
         return TracyWrenchTopic.LEFT_RAW
 
     @classproperty
@@ -425,17 +421,13 @@ class TracyRightForceTorqueSensor(ForceTorqueSensor):
     """
 
     @classproperty
-    def wrench_topic(cls) -> str:
+    def topic_name(cls) -> str:
         """
         The driver's own topic: the control program zeroes the sensor as it starts, so
         what it publishes is already the contact wrench. Point this at
         :attr:`TracyWrenchTopic.RIGHT_COMPENSATED` once a compensation node runs, which is
         what removing the load across changing orientations needs.
         """
-        return TracyWrenchTopic.RIGHT_RAW
-
-    @classproperty
-    def raw_wrench_topic(cls) -> str:
         return TracyWrenchTopic.RIGHT_RAW
 
     @classproperty

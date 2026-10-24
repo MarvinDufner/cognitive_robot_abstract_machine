@@ -12,6 +12,7 @@ from typing_extensions import Tuple
 
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.input_synchronization import InputSynchronizer
+from semantic_digital_twin.robots.input_source import SimulatedWrenchSource
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -19,7 +20,7 @@ from semantic_digital_twin.world_description.world_entity import Body
 
 
 @dataclass
-class ToolContactWrench(InputSynchronizer, ABC):
+class ToolContactWrench(SimulatedWrenchSource, InputSynchronizer, ABC):
     """
     Writes what a tool is pressed with into the force/torque sensor measuring for it, in
     place of a real sensor's topic.

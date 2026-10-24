@@ -23,6 +23,7 @@ from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import (
     TracyLeftForceTorqueSensor,
     TracyRightForceTorqueSensor,
+    TracyWrenchTopic,
 )
 
 SENSOR_OF_ARM: Dict[str, Type[ForceTorqueSensor]] = {
@@ -31,6 +32,17 @@ SENSOR_OF_ARM: Dict[str, Type[ForceTorqueSensor]] = {
 }
 """
 The sensor each arm is named by on the command line.
+"""
+
+DRIVER_TOPIC_OF_ARM: Dict[str, TracyWrenchTopic] = {
+    "left": TracyWrenchTopic.LEFT_RAW,
+    "right": TracyWrenchTopic.RIGHT_RAW,
+}
+"""
+What each arm's driver publishes, which is what this node compensates.
+
+The sensor names only the topic it is read from, so the driver's own topic is named
+here, by the one node that reads it.
 """
 
 
@@ -46,14 +58,14 @@ def main(arm: str = "left") -> None:
 
     rclpy.init()
     node = WrenchCompensationNode(
-        topic_in=sensor.raw_wrench_topic,
-        topic_out=sensor.wrench_topic,
+        topic_in=DRIVER_TOPIC_OF_ARM[arm],
+        topic_out=sensor.topic_name,
         gravity_frame=sensor.gravity_frame,
         retare_service_name=sensor.retare_service,
         load=sensor.load,
     )
     node.get_logger().info(
-        f"compensating {sensor.raw_wrench_topic} -> {sensor.wrench_topic} "
+        f"compensating {DRIVER_TOPIC_OF_ARM[arm]} -> {sensor.topic_name} "
         f"against {sensor.gravity_frame}, re-tare on {sensor.retare_service}"
     )
     executor = MultiThreadedExecutor()
