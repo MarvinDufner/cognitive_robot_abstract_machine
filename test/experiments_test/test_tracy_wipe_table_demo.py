@@ -14,8 +14,10 @@ from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from experiments.tracy_wipe_table_demo.demo import (
     APPROACH_HEIGHT,
     BENCH_NAME,
+    DESCENT_VELOCITY,
     OBSTACLE_CLEARANCE,
-    UNMODELLED_ADAPTER_LENGTH,
+    TURNING_HEIGHT,
+    WIPE_SPEED,
     WIPED_PATCH_LENGTH,
     WIPED_PATCH_WIDTH,
     TracyWipeTableDemonstration,
@@ -24,6 +26,7 @@ from experiments.wipe_table_demo.demo import (
     CONTACT_STIFFNESS,
     PRESS_FORCE,
     SPONGE_NAME,
+    SPONGE_PROTRUSION,
     SPONGE_SCALE,
     SimulatedContactWrench,
 )
@@ -64,21 +67,53 @@ def test_the_sponge_hangs_off_the_wiping_hand():
     assert sponge.parent_connection.parent.name.name == "l_gripper_tool_frame"
 
 
-def test_the_sponge_hangs_where_the_hardware_puts_it_not_where_the_description_does():
+def sponge_and_fingertips(demonstration, world):
     """
-    The description is missing an adapter, so a sponge placed by it alone would sit that
-    much too close to the hand, and every press would drive the tool that much through
-    the surface.
+    :return: What the sponge and the fingertips holding it occupy, in the tool frame.
+    """
+    tool_frame = world.get_body_by_name("l_gripper_tool_frame")
+    fingertips = demonstration.wiping_arm(world).end_effector.fingertips
+    sponge = world.get_body_by_name(SPONGE_NAME)
+    return (
+        sponge.collision.as_bounding_box_collection_in_frame(tool_frame).bounding_box(),
+        [
+            tip.collision.as_bounding_box_collection_in_frame(tool_frame).bounding_box()
+            for tip in fingertips.both
+        ],
+    )
+
+
+def test_the_sponge_sticks_out_past_the_fingers_that_hold_it():
+    """
+    A sponge the fingers reach around cannot press on anything, and one hanging past
+    them is held by nothing.
     """
     demonstration, world = populated_demonstration()
-    tool_frame = world.get_body_by_name("l_gripper_tool_frame")
-    sponge = world.get_body_by_name(SPONGE_NAME)
 
-    along_the_tool = world.compute_forward_kinematics_np(tool_frame, sponge)[2, 3]
+    sponge, tips = sponge_and_fingertips(demonstration, world)
 
-    assert along_the_tool == pytest.approx(
-        UNMODELLED_ADAPTER_LENGTH + float(SPONGE_SCALE.z) / 2
-    )
+    tips_end_at = max(tip.max_z for tip in tips)
+    assert sponge.max_z == pytest.approx(tips_end_at + SPONGE_PROTRUSION)
+    assert sponge.min_z < tips_end_at
+
+
+def test_the_fingers_close_on_the_sponges_narrow_side():
+    """
+    The long side between the fingers leaves the sponge turned across its own sweep, and
+    a gripper that cannot open that far cannot take it at all.
+    """
+    demonstration, world = populated_demonstration()
+
+    sponge, _ = sponge_and_fingertips(demonstration, world)
+
+    closing_axis = (
+        demonstration.wiping_arm(world).end_effector.fingertips.closing_axis.to_np()
+    ).flatten()
+    width = sponge.max_x - sponge.min_x
+    length = sponge.max_y - sponge.min_y
+    np.testing.assert_allclose(np.abs(closing_axis[:3]), [1.0, 0.0, 0.0], atol=1e-9)
+    assert width == pytest.approx(min(float(SPONGE_SCALE.x), float(SPONGE_SCALE.y)))
+    assert length == pytest.approx(max(float(SPONGE_SCALE.x), float(SPONGE_SCALE.y)))
 
 
 def test_the_sponge_is_measured_by_the_sensor_of_the_arm_that_holds_it():
@@ -242,6 +277,13 @@ def index_of(steps, step_type) -> int:
     return found[0]
 
 
+def approach_steps(steps):
+    """
+    :return: The steps that bring the tool over the patch, in the order they run.
+    """
+    return [step for step in steps if isinstance(step, MoveManipulatorAction)]
+
+
 def test_the_tool_is_lowered_onto_the_bench_before_it_is_wiped():
     """
     Where the surface really is is measured, not assumed: the wipe starts from contact.
@@ -250,7 +292,7 @@ def test_the_tool_is_lowered_onto_the_bench_before_it_is_wiped():
 
     steps = plan_steps(demonstration, world)
 
-    assert index_of(steps, MoveManipulatorAction) < index_of(
+    assert steps.index(approach_steps(steps)[-1]) < index_of(
         steps, LowerUntilContactMotion
     )
     assert index_of(steps, LowerUntilContactMotion) < index_of(steps, WipingAction)
@@ -266,6 +308,35 @@ def test_the_descent_aims_past_the_bench_so_only_contact_ends_it():
     assert goal_height < demonstration.bench_height(world)
 
 
+def test_the_descent_is_capped_to_the_speed_it_is_asked_to_lower_at():
+    """
+    A descent's own ``descent_velocity`` is a reference velocity, which normalises the
+    goal's error and does not limit anything, so without a cap the tool arrives at
+    whatever speed the arm can manage and the pad meets the bench at ten times the
+    force.
+    """
+    demonstration, world = populated_demonstration()
+
+    steps = plan_steps(demonstration, world)
+    descent = steps[index_of(steps, LowerUntilContactMotion)]
+
+    assert descent.max_linear_velocity == DESCENT_VELOCITY
+    assert descent.descent_velocity == DESCENT_VELOCITY
+
+
+def test_the_wipe_is_capped_to_a_travel_speed():
+    """
+    Capping the speed is what lets the tracked point run far enough ahead to pull the
+    tool along, instead of the pull being weakened to slow the tool down.
+    """
+    demonstration, world = populated_demonstration()
+
+    steps = plan_steps(demonstration, world)
+    wipe = steps[index_of(steps, WipingAction)]
+
+    assert wipe.max_linear_velocity == WIPE_SPEED
+
+
 def test_the_tool_points_at_the_bench_while_it_is_lowered():
     """
     Pointing away would put the hand under the tool and drive it into the bench, and the
@@ -274,22 +345,26 @@ def test_the_tool_points_at_the_bench_while_it_is_lowered():
     demonstration, world = populated_demonstration()
 
     steps = plan_steps(demonstration, world)
-    approach = steps[index_of(steps, MoveManipulatorAction)]
 
-    tool_z_in_world = approach.target_pose.to_np()[:3, 2]
-    np.testing.assert_allclose(tool_z_in_world, [0.0, 0.0, -1.0], atol=1e-9)
+    for approach in approach_steps(steps):
+        tool_z_in_world = approach.target_pose.to_np()[:3, 2]
+        np.testing.assert_allclose(tool_z_in_world, [0.0, 0.0, -1.0], atol=1e-9)
 
 
-def test_the_approach_waits_above_the_bench_rather_than_in_it():
+def test_the_tool_turns_onto_the_bench_well_above_it_and_only_then_comes_down():
+    """
+    A tool still turning on its way down meets the bench edge with the hand rather than
+    with the sponge.
+    """
     demonstration, world = populated_demonstration()
 
     steps = plan_steps(demonstration, world)
-    approach = steps[index_of(steps, MoveManipulatorAction)]
 
-    height_above_the_bench = approach.target_pose.to_np()[
-        2, 3
-    ] - demonstration.bench_height(world)
-    assert height_above_the_bench == pytest.approx(APPROACH_HEIGHT)
+    heights = [
+        approach.target_pose.to_np()[2, 3] - demonstration.bench_height(world)
+        for approach in approach_steps(steps)
+    ]
+    assert heights == pytest.approx([TURNING_HEIGHT, APPROACH_HEIGHT])
 
 
 # %% the charts the controller compiles

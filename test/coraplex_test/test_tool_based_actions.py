@@ -31,6 +31,9 @@ from giskardpy.motion_statechart.graph_node import Goal
 from giskardpy.motion_statechart.tasks.admittance_tasks import (
     AdmittanceCartesianTrajectory,
 )
+from giskardpy.motion_statechart.tasks.cartesian_tasks import (
+    CartesianPositionVelocityLimit,
+)
 from krrood.ormatic.data_access_objects.helper import to_dao
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
@@ -358,26 +361,40 @@ def test_mixing_action_orm_roundtrip(tool_action_world, coraplex_testing_session
 # %% covering a patch rather than a lane
 
 
+def _tool_span(tool_body):
+    """
+    :return: The strip the tool covers whichever way it is turned, which is the only
+        width that can be relied on while its heading along the path is left free.
+    """
+    footprint = tool_body.collision.as_bounding_box_collection_in_frame(
+        tool_body
+    ).bounding_box()
+    return min(footprint.depth, footprint.width)
+
+
 def test_a_patch_with_no_width_is_wiped_in_a_single_lane(tool_action_world):
     """
     The default keeps the earlier behaviour: back and forth over one line.
     """
     world, robot, context, container, tool_body = tool_action_world
     sponge = Sponge(root=tool_body)
+    length = 0.3
 
     action = WipingAction(
         arm=robot.right_arm,
         tool=sponge,
         target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
         technique=WipingTechnique.SPREAD,
-        length=0.3,
+        length=length,
     )
     motions = _expanded_aligned_motions(action, context)
     waypoints = np.array(
         [point.to_np()[:3].flatten() for point in motions[0].waypoints]
     )
 
-    assert np.ptp(waypoints[:, 0]) == pytest.approx(0.3, abs=0.01)
+    assert np.ptp(waypoints[:, 0]) + _tool_span(tool_body) == pytest.approx(
+        length, abs=0.01
+    )
     assert np.ptp(waypoints[:, 1]) == pytest.approx(0.0, abs=1e-6)
 
 
@@ -399,8 +416,42 @@ def test_a_patch_with_a_width_is_wiped_in_lanes_across_it(tool_action_world):
         [point.to_np()[:3].flatten() for point in motions[0].waypoints]
     )
 
-    assert np.ptp(waypoints[:, 0]) == pytest.approx(length, abs=0.01)
-    assert np.ptp(waypoints[:, 1]) == pytest.approx(width, abs=0.01)
+    tool_span = _tool_span(tool_body)
+    # Measured on a lane: the turns between lanes reach past the patch, the lanes do
+    # not, and it is the lanes that have to cover it.
+    on_the_first_lane = waypoints[
+        np.abs(waypoints[:, 1] - waypoints[:, 1].min()) < 1e-9
+    ]
+    assert np.ptp(on_the_first_lane[:, 0]) + tool_span == pytest.approx(
+        length, abs=0.01
+    )
+    assert np.ptp(waypoints[:, 1]) + tool_span == pytest.approx(width, abs=0.01)
+
+
+def _patch_wipe(world, robot, sponge, technique, length=0.3, width=0.2, **arguments):
+    """
+    :return: A wipe of a patch around a known pose with the given technique.
+    """
+    return WipingAction(
+        arm=robot.right_arm,
+        tool=sponge,
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        technique=technique,
+        length=length,
+        width=width,
+        **arguments,
+    )
+
+
+def _waypoints_around_the_patch(action, context) -> np.ndarray:
+    """
+    :return: The action's waypoints relative to the centre of its patch.
+    """
+    motions = _expanded_aligned_motions(action, context)
+    waypoints = np.array(
+        [point.to_np()[:3].flatten() for point in motions[0].waypoints]
+    )
+    return waypoints[:, :2] - action.target_pose.to_np()[:2, 3]
 
 
 def test_the_lanes_are_closer_together_than_the_tool_is_wide(tool_action_world):
@@ -409,41 +460,88 @@ def test_the_lanes_are_closer_together_than_the_tool_is_wide(tool_action_world):
     """
     world, robot, context, container, tool_body = tool_action_world
     sponge = Sponge(root=tool_body)
-    width = 0.2
-    action = WipingAction(
-        arm=robot.right_arm,
-        tool=sponge,
-        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
-        technique=WipingTechnique.SPREAD,
-        length=0.3,
-        width=width,
+    action = _patch_wipe(
+        world, robot, sponge, WipingTechnique.SPREAD, length=0.3, width=0.2
     )
-    tool_width = (
-        tool_body.collision.as_bounding_box_collection_in_frame(tool_body)
-        .bounding_box()
-        .width
-    )
+    tool_span = _tool_span(tool_body)
 
-    assert width / (action._lanes() - 1) <= tool_width
+    across_the_patch = _waypoints_around_the_patch(action, context)[:, 1]
+
+    # Every line across the patch has to pass within half a tool of some waypoint, or
+    # the strip there is never touched.
+    for line in np.linspace(across_the_patch.min(), across_the_patch.max(), 200):
+        assert np.min(np.abs(across_the_patch - line)) <= 0.5 * tool_span
 
 
-def test_a_patch_narrower_than_the_tool_still_has_two_lanes(tool_action_world):
+def test_a_spiral_wipe_is_fitted_to_the_patch_it_was_given(tool_action_world):
     """
-    A raster needs a lane to start and a lane to end on.
+    A spiral of a fixed size covers whatever fraction of the patch that size happens to
+    be, which for the bench demo's patch was 41 % of it.
     """
     world, robot, context, container, tool_body = tool_action_world
     sponge = Sponge(root=tool_body)
-
-    action = WipingAction(
-        arm=robot.right_arm,
-        tool=sponge,
-        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
-        technique=WipingTechnique.SPREAD,
-        length=0.3,
-        width=0.001,
+    length, width = 0.3, 0.2
+    action = _patch_wipe(
+        world, robot, sponge, WipingTechnique.WIPE, length=length, width=width
     )
 
-    assert action._lanes() == 2
+    radii = np.linalg.norm(_waypoints_around_the_patch(action, context), axis=1)
+
+    # The largest disc the patch inscribes, less what the tool covers beyond the path.
+    assert radii.max() == pytest.approx(
+        0.5 * min(length, width) - 0.5 * _tool_span(tool_body), abs=0.005
+    )
+
+
+def test_a_spiral_wipe_turns_often_enough_to_leave_no_gaps(tool_action_world):
+    """
+    A spiral whose radius grows by more than a tool width per turn leaves unwiped rings
+    between its turns.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    action = _patch_wipe(world, robot, sponge, WipingTechnique.WIPE)
+
+    around_the_patch = _waypoints_around_the_patch(action, context)
+    radii = np.linalg.norm(around_the_patch, axis=1)
+    angles = np.unwrap(np.arctan2(around_the_patch[:, 1], around_the_patch[:, 0]))
+    turns = abs(angles[-1] - angles[0]) / (2.0 * np.pi)
+
+    assert np.ptp(radii) / turns <= _tool_span(tool_body)
+
+
+def test_a_sheared_wipe_oscillates_instead_of_spiralling_outwards(tool_action_world):
+    """
+    The patch had no shearing path at all, so asking for one silently gave the spiral.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    action = _patch_wipe(world, robot, sponge, WipingTechnique.SHEAR)
+
+    radii = np.linalg.norm(_waypoints_around_the_patch(action, context), axis=1)
+
+    assert np.ptp(radii) == pytest.approx(0.0, abs=0.005)
+    assert radii.mean() > 0.05
+
+
+def test_a_patch_narrower_than_the_tool_is_wiped_along_one_line(tool_action_world):
+    """
+    One pass of the tool already covers such a patch across, so laying lanes apart would
+    only take the tool off it.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    action = _patch_wipe(
+        world, robot, sponge, WipingTechnique.SPREAD, length=0.3, width=0.001
+    )
+
+    around_the_patch = _waypoints_around_the_patch(action, context)
+
+    assert np.ptp(around_the_patch[:, 1]) == pytest.approx(0.0, abs=1e-9)
+    # Out along that line and back, so the lanes have collapsed onto it rather than
+    # vanished.
+    assert around_the_patch[-1, 0] == pytest.approx(around_the_patch[0, 0], abs=0.01)
+    assert np.ptp(around_the_patch[:, 0]) > 0.1
 
 
 # %% pressing while wiping
@@ -502,6 +600,55 @@ def test_a_press_tracks_ahead_of_its_own_offset_when_asked_to(tool_action_world)
     )
 
     assert trajectory.lead_time == lead_time
+
+
+def test_a_wipe_travels_as_fast_as_its_tracked_point_runs_ahead(tool_action_world):
+    """
+    The tool follows a point placed ahead of it along the path, so how far ahead that
+    point sits is how fast the tool travels.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    look_ahead_distance = 0.0025
+
+    action = pressing_wipe(
+        world, robot, sponge, look_ahead_distance=look_ahead_distance
+    )
+    motions = _expanded_aligned_motions(action, context)
+    trajectory = next(
+        node
+        for group in motions[0].motion_chart.nodes
+        if isinstance(group, Goal)
+        for node in group.nodes
+        if isinstance(node, AdmittanceCartesianTrajectory)
+    )
+
+    assert trajectory.look_ahead_distance == look_ahead_distance
+
+
+def test_a_wipe_can_be_capped_to_a_travel_speed(tool_action_world):
+    """
+    How far the tracked point runs ahead sets both how hard the tool is pulled along the
+    path and how fast it travels, so without a cap the only way to travel slowly is to
+    pull weakly.
+    """
+    world, robot, context, container, tool_body = tool_action_world
+    sponge = Sponge(root=tool_body)
+    max_linear_velocity = 0.045
+
+    action = pressing_wipe(
+        world, robot, sponge, max_linear_velocity=max_linear_velocity
+    )
+    motions = _expanded_aligned_motions(action, context)
+    limit = next(
+        node
+        for group in motions[0].motion_chart.nodes
+        if isinstance(group, Goal)
+        for node in group.nodes
+        if isinstance(node, CartesianPositionVelocityLimit)
+    )
+
+    assert limit.max_linear_velocity == max_linear_velocity
 
 
 def test_a_press_yields_only_as_far_as_it_is_allowed_to_travel(tool_action_world):

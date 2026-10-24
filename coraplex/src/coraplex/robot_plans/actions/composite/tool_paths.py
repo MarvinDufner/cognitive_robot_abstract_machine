@@ -183,24 +183,45 @@ def planar_raster_xy(tau: float, width: float, height: float, lanes: int) -> np.
     :param width: Width of the covered rectangle along X in meters.
     :param height: Height of the covered rectangle along Y in meters.
     :param lanes: Number of parallel lanes of the raster scan.
-    :return: A point on a raster scan covering a rectangle in XY.
+    :return: A point on a raster scan covering a rectangle in XY, parametrized by the
+        distance travelled along it.
+
+    The lanes span the rectangle; the lane changes are half turns of half the lane
+    spacing, so the tool turns onto the next lane instead of reversing on the spot, and
+    they reach that far beyond the rectangle's ends.
     """
-    rectangle_width = float(width)
-    rectangle_height = float(height)
+    lane_length = float(width)
     number_of_lanes = max(2, int(lanes))
-    lane_progress = float(np.clip(tau, 0.0, 1.0)) * number_of_lanes
-    lane = min(int(np.floor(lane_progress)), number_of_lanes - 1)
-    local_t = lane_progress - lane
+    lane_spacing = float(height) / (number_of_lanes - 1)
+    turn_radius = 0.5 * lane_spacing
+    turn_length = float(np.pi) * turn_radius
+    travelled = float(np.clip(tau, 0.0, 1.0)) * (
+        number_of_lanes * lane_length + (number_of_lanes - 1) * turn_length
+    )
 
-    x_start = -0.5 * rectangle_width
-    x_end = 0.5 * rectangle_width
-    if lane % 2 == 0:
-        x = x_start + (x_end - x_start) * local_t
-    else:
-        x = x_end - (x_end - x_start) * local_t
-
-    y = -0.5 * rectangle_height + (rectangle_height * lane / float(number_of_lanes - 1))
-    return np.array([x, y, 0.0], dtype=float)
+    lane_y = -0.5 * float(height)
+    direction = 1.0
+    for lane in range(number_of_lanes):
+        if travelled <= lane_length or lane == number_of_lanes - 1:
+            along_the_lane = min(travelled, lane_length)
+            return np.array(
+                [direction * (along_the_lane - 0.5 * lane_length), lane_y, 0.0],
+                dtype=float,
+            )
+        travelled -= lane_length
+        if turn_radius > 0.0 and travelled <= turn_length:
+            angle = float(np.pi) * travelled / turn_length
+            return np.array(
+                [
+                    direction * (0.5 * lane_length + turn_radius * np.sin(angle)),
+                    lane_y + turn_radius * (1.0 - np.cos(angle)),
+                    0.0,
+                ],
+                dtype=float,
+            )
+        travelled -= turn_length
+        lane_y += lane_spacing
+        direction = -direction
 
 
 @dataclass(frozen=True)
@@ -605,10 +626,12 @@ def build_surface_path(
     )
     spiral_r1 = 0.9 * radius_xy
     shear_amplitude = 0.35 * radius_xy
-    raster_width = 0.9 * size_x
     raster_height = 0.9 * size_y
     lane_spacing = max(0.02, 0.25 * float(reference_size))
     raster_lanes = max(4, int(np.ceil(raster_height / max(lane_spacing, 1e-6))))
+    # Short by what the lane changes reach beyond the lanes, so the path stays on the
+    # surface rather than turning off its edge.
+    raster_width = 0.9 * size_x - raster_height / (raster_lanes - 1)
 
     hull_xy = _top_surface_hull_xy(surface_body)
 

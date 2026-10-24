@@ -178,25 +178,27 @@ class GeometricConstraintBuilder:
         """
         Adds constraints to limit the translational velocity of frame_P_current.
 
+        One constraint per axis, so every direction of travel is bounded. The speed
+        itself is a norm, which a linear program cannot bound, so what is enforced is
+        the box around the sphere of that radius: each axis stays within
+        ``max_velocity`` and the speed within ``sqrt(3)`` times it.
+
         Be aware that the velocity is relative to frame.
         :param frame_P_current: a vector describing a 3D point. It should depend on
             active dofs.
         :param max_violation: m/s
         """
-        translation_error = frame_P_current.norm()
-        translation_error = sm.if_eq_zero(
-            translation_error, sm.Scalar(0.01), translation_error
-        )
-        self.collection.add_velocity_constraint(
-            upper_velocity_limit=max_velocity,
-            lower_velocity_limit=-max_velocity,
-            quadratic_weight=quadratic_weight,
-            task_expression=translation_error,
-            lower_slack_limit=-max_violation,
-            upper_slack_limit=max_violation,
-            velocity_limit=max_velocity,
-            name=name,
-        )
+        for axis in range(3):
+            self.collection.add_velocity_constraint(
+                upper_velocity_limit=max_velocity,
+                lower_velocity_limit=-max_velocity,
+                quadratic_weight=quadratic_weight,
+                task_expression=frame_P_current[axis],
+                lower_slack_limit=-max_violation,
+                upper_slack_limit=max_violation,
+                velocity_limit=max_velocity,
+                name=self._indexed_constraint_name(name, axis),
+            )
 
     def add_rotational_velocity_limit(
         self,

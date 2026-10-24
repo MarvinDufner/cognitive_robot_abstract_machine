@@ -303,6 +303,15 @@ class CartesianPositionTrajectory(CartesianTask):
         """
         return self.goal_reference_frame_P_current_target_point
 
+    @property
+    def offset_from_trajectory(self) -> np.ndarray:
+        """
+        :return: How far :attr:`tracked_point` holds the tip off the trajectory, in the
+            goal reference frame, in m, which is nothing while the tip follows the
+            trajectory rigidly.
+        """
+        return np.zeros(3)
+
     def _init_remaining_distance(self, float_variable_data: FloatVariableData) -> None:
         """
         Create the variable holding the distance left to travel along the trajectory and
@@ -440,7 +449,12 @@ class CartesianPositionTrajectory(CartesianTask):
         )
         context.float_variable_data.set_value(
             self.remaining_distance,
-            self._distance_left_from(self.current_index, goal_reference_frame_P_tip_np),
+            # With the offset taken out, so that a tip deliberately held off the
+            # trajectory can still arrive at the end of it.
+            self._distance_left_from(
+                self.current_index,
+                goal_reference_frame_P_tip_np - self.offset_from_trajectory,
+            ),
         )
         return None
 
@@ -850,8 +864,9 @@ class CartesianPositionVelocityLimit(Task):
     max_linear_velocity: float = field(default=0.1, kw_only=True)
     """
     Maximum allowed linear speed of the tip in meters per second (m/s).
-    Default: 0.1 m/s. The enforcement ensures the Euclidean norm of the
-    tip-frame translational velocity does not exceed this value.
+    Default: 0.1 m/s. Enforced per axis, since a linear program cannot bound a norm, so
+    the tip holds this speed along each axis and at most ``sqrt(3)`` times it along a
+    diagonal.
     """
     weight: float = field(
         default=DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE, kw_only=True

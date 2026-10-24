@@ -118,6 +118,10 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
             self._admittance_position
         )
 
+    @property
+    def offset_from_trajectory(self) -> np.ndarray:
+        return self._state[:3] + self.lead_time * self._state[3:]
+
     def build_artifacts(self, context: MotionStatechartContext) -> NodeArtifacts:
         """
         Compile the admittance before the trajectory constrains the tip to the offset

@@ -40,13 +40,18 @@ from coraplex.plans.failures import MotionMadeNoProgress
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.base import ActionDescription
-from coraplex.robot_plans.mixins import HasTcpGoalThresholds
+from coraplex.robot_plans.mixins import (
+    CartesianVelocityLimitParameters,
+    HasTcpGoalThresholds,
+)
 from coraplex.robot_plans.actions.composite.tool_paths import (
+    ShearXYProfile,
     ToolPath,
     ToolPathSegment,
     build_container_path,
     build_cutting_path,
     build_surface_path,
+    oscillatory_shear_xy_profiled,
     planar_raster_xy,
     planar_spiral_xy,
     planar_sweep_x,
@@ -105,7 +110,12 @@ class FullBodyControlledAction(ActionDescription, ABC):
 
 
 @dataclass(kw_only=True)
-class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
+class ToolMotionAction(
+    FullBodyControlledAction,
+    ABC,
+    CartesianVelocityLimitParameters,
+    HasTcpGoalThresholds,
+):
     """
     An action that moves a tool along a sampled tool path while keeping the tool aligned
     with its target.
@@ -240,6 +250,13 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
 
     ``None`` leaves the default. Only meaningful together with :attr:`desired_force`.
     """
+    look_ahead_distance: Optional[float] = None
+    """
+    How far along the path ahead of the tool the tracked point is placed, in m, which is
+    what sets how fast the tool travels.
+
+    ``None`` leaves the default.
+    """
 
     @property
     def _action_plan(self) -> PlanNode:
@@ -262,6 +279,8 @@ class ToolMotionAction(FullBodyControlledAction, ABC, HasTcpGoalThresholds):
                     admittance_damping=self.admittance_damping,
                     admittance_travel=self.admittance_travel,
                     admittance_lead_time=self.admittance_lead_time,
+                    look_ahead_distance=self.look_ahead_distance,
+                    max_linear_velocity=self.max_linear_velocity,
                 )
             ]
         )
@@ -420,58 +439,115 @@ class WipingAction(ToolMotionAction):
             return build_surface_path(
                 self.surface, technique=self.technique, approach_clearance=0.0
             )
+        footprint = self.tool.root.collision.as_bounding_box_collection_in_frame(
+            self.tool.root
+        ).bounding_box()
+        # Only the tool's face is held against the surface; which way it points along
+        # the path is left to the arm, so a wider strip than its narrow side cannot be
+        # relied on.
+        tool_span = min(footprint.depth, footprint.width)
         if self.technique is WipingTechnique.SPREAD:
-            if self.width > 0.0:
-                return ToolPath(
-                    [
-                        ToolPathSegment(
-                            kind=ToolPathSegmentKind.SWEEP,
-                            duration=2.0,
-                            local_curve=lambda tau: planar_raster_xy(
-                                tau,
-                                width=float(self.length),
-                                height=float(self.width),
-                                lanes=self._lanes(),
-                            ),
-                        )
-                    ]
-                )
+            return self._lane_path(tool_span)
+        if self.technique is WipingTechnique.SHEAR:
+            return self._circling_path(tool_span)
+        return self._spiral_path(tool_span)
+
+    def _inscribed_radius(self, tool_span: float) -> float:
+        """
+        :param tool_span: How wide a strip the tool covers, in m.
+        :return: The largest radius a path circling the patch's centre can have while
+            the tool stays on the patch, in m.
+        """
+        across = float(self.width) if self.width > 0.0 else float(self.length)
+        return max(0.0, 0.5 * min(float(self.length), across) - 0.5 * tool_span)
+
+    def _lane_path(self, tool_span: float) -> ToolPath:
+        """
+        :param tool_span: How wide a strip the tool covers, in m.
+        :return: Parallel lanes covering the patch, or a single lane swept back and
+            forth where the patch has no width.
+
+        The path is the tool's centre line, so it stops half a span short of the patch
+        at every edge and the tool still covers it to the edges.
+        """
+        lane_length = max(0.0, float(self.length) - tool_span)
+        if self.width <= 0.0:
             return ToolPath(
                 [
                     ToolPathSegment(
                         kind=ToolPathSegmentKind.SWEEP,
                         duration=2.0,
                         local_curve=lambda tau: planar_sweep_x(
-                            # Half, because a sweep is given its amplitude while
-                            # :attr:`length` is the patch it has to cover.
+                            # Half, because a sweep is given its amplitude while the
+                            # lane is the line it has to cover.
                             tau,
-                            length=0.5 * float(self.length),
+                            length=0.5 * lane_length,
                             cycles=max(1.0, float(self.cycles)),
                         ),
                     )
                 ]
             )
+        lane_span = max(0.0, float(self.width) - tool_span)
+        # One more lane than the spans between them, so that neighbouring lanes are at
+        # most a tool apart and no strip is left untouched.
+        lanes = max(2, math.ceil(lane_span / tool_span) + 1)
+        return ToolPath(
+            [
+                ToolPathSegment(
+                    kind=ToolPathSegmentKind.SWEEP,
+                    duration=2.0,
+                    local_curve=lambda tau: planar_raster_xy(
+                        tau, width=lane_length, height=lane_span, lanes=lanes
+                    ),
+                )
+            ]
+        )
+
+    def _spiral_path(self, tool_span: float) -> ToolPath:
+        """
+        :param tool_span: How wide a strip the tool covers, in m.
+        :return: An outward spiral over the largest disc the patch inscribes, turning
+            often enough that its pitch stays within that span.
+
+        .. note:: A disc is all a spiral reaches, so a rectangular patch keeps its
+            corners.
+        """
+        radius = self._inscribed_radius(tool_span)
+        turns = max(1.0, float(math.ceil(radius / tool_span)))
         return ToolPath(
             [
                 ToolPathSegment(
                     kind=ToolPathSegmentKind.SPIRAL,
                     duration=2.0,
                     local_curve=lambda tau: planar_spiral_xy(
-                        tau, r0=0.00, r1=0.12, cycles=2.5
+                        tau, r0=0.0, r1=radius, cycles=turns
                     ),
                 )
             ]
         )
 
-    def _lanes(self) -> int:
+    def _circling_path(self, tool_span: float) -> ToolPath:
         """
-        :return: How many lanes cover :attr:`width`, spaced so that the tool overlaps
-            between them and leaves no strip untouched.
+        :param tool_span: How wide a strip the tool covers, in m.
+        :return: Laps around the patch's centre, which is the shearing motion
+            :func:`build_surface_path` gives a whole surface.
         """
-        footprint = self.tool.root.collision.as_bounding_box_collection_in_frame(
-            self.tool.root
-        ).bounding_box()
-        return max(2, math.ceil(self.width / footprint.width) + 1)
+        radius = self._inscribed_radius(tool_span)
+        return ToolPath(
+            [
+                ToolPathSegment(
+                    kind=ToolPathSegmentKind.SHEAR,
+                    duration=2.0,
+                    local_curve=lambda tau: oscillatory_shear_xy_profiled(
+                        tau,
+                        ShearXYProfile(
+                            shear_amp=radius,
+                            shear_cycles=max(1.0, float(self.cycles)),
+                        ),
+                    ),
+                )
+            ]
+        )
 
     def _path_frame(self) -> HomogeneousTransformationMatrix:
         if self.surface is not None:

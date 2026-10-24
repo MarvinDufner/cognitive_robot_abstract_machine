@@ -26,7 +26,7 @@ def stroke(world, waypoints=5):
     ]
 
 
-def build_admittance(world, waypoints=5, **task_arguments):
+def build_admittance(world, waypoints=5, goal_points=None, **task_arguments):
     """
     Compile a chart holding one admittance trajectory and return it with its context.
     """
@@ -36,7 +36,7 @@ def build_admittance(world, waypoints=5, **task_arguments):
             name="admittance",
             root_link=world.root,
             tip_link=world.get_body_by_name(TOOL_FRAME),
-            goal_points=stroke(world, waypoints),
+            goal_points=goal_points if goal_points else stroke(world, waypoints),
             maximum_skip_ahead=2,
             **task_arguments,
         )
@@ -268,6 +268,41 @@ def test_the_offset_stops_at_its_allowed_travel(hsr_world_copy):
 
     assert np.all(np.abs(offsets) <= travel + 1e-9)
     np.testing.assert_allclose(offsets[-1][2], -travel, atol=1e-9)
+
+
+def test_the_offset_the_press_holds_is_not_distance_left_to_travel(hsr_world_copy):
+    """
+    The tip ends up off the trajectory by exactly the offset the press holds, so a press
+    that yields further than the goal threshold could never report arrival if that
+    offset counted as distance left.
+    """
+    travel = 0.02
+    tool = hsr_world_copy.get_body_by_name(TOOL_FRAME)
+    where_the_tool_is = hsr_world_copy.compute_forward_kinematics_np(
+        hsr_world_copy.root, tool
+    )[:3, 3]
+    # Where the trajectory ran before a press yielding its full travel pushed the tool
+    # off it, so the tool now stands exactly where that press would hold it.
+    waypoint = Point3(
+        where_the_tool_is[0],
+        where_the_tool_is[1],
+        where_the_tool_is[2] + travel,
+        reference_frame=hsr_world_copy.root,
+    )
+    task, context, _ = build_admittance(
+        hsr_world_copy,
+        goal_points=[waypoint, waypoint],
+        desired_force=Vector3(z=8.0),
+        maximum_offset=Vector3(x=travel, y=travel, z=travel),
+    )
+    sensor = sensor_of(hsr_world_copy)
+
+    press(task, context, sensor, np.zeros(3))
+
+    np.testing.assert_allclose(task._state[:3], [0.0, 0.0, -travel], atol=1e-9)
+    assert context.float_variable_data.get_value(
+        task.remaining_distance
+    ) == pytest.approx(0.0, abs=1e-6)
 
 
 def test_an_offset_at_its_allowed_travel_yields_again_on_contact(hsr_world_copy):

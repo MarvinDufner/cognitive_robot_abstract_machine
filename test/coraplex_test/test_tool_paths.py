@@ -18,6 +18,7 @@ from coraplex.robot_plans.actions.composite.tool_paths import (
     build_cutting_path,
     build_surface_path,
     clamp_to_cylinder_xy,
+    planar_raster_xy,
     ramp,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -213,6 +214,75 @@ def test_surface_path_stays_inside_xy_bounds(box_body):
         assert np.all(points[:, 1] >= -0.1 - 1e-9)
         assert np.all(points[:, 1] <= 0.1 + 1e-9)
         assert [segment.kind for segment in path.segments] == [expected_kind]
+
+
+# %% changing lanes without stopping
+
+
+def test_a_raster_turns_between_its_lanes_instead_of_reversing():
+    """
+    A lane change that reverses the tool across one waypoint asks it to stop dead, which
+    is where a pressing tool loses the surface.
+    """
+    lanes = 5
+    width, height = 0.3, 0.2
+    points = np.array(
+        [
+            planar_raster_xy(tau, width=width, height=height, lanes=lanes)
+            for tau in np.linspace(0.0, 1.0, 2001)
+        ]
+    )
+    steps = np.diff(points[:, :2], axis=0)
+
+    # A reversal shows up as a step much longer than the rest, and as a heading that
+    # flips by 180 degrees between two steps.
+    assert np.ptp(np.linalg.norm(steps, axis=1)) < 0.2 * np.median(
+        np.linalg.norm(steps, axis=1)
+    )
+    headings = np.arctan2(steps[:, 1], steps[:, 0])
+    turned = np.abs(np.diff(np.unwrap(headings)))
+    assert np.max(turned) < np.radians(10.0)
+
+
+def test_a_raster_covers_its_rectangle_and_turns_just_outside_it():
+    """
+    Lanes that stopped short of the rectangle to make room for their turns would leave a
+    strip unwiped at either end of every lane.
+    """
+    lanes = 5
+    width, height = 0.3, 0.2
+    turn_radius = 0.5 * height / (lanes - 1)
+    points = np.array(
+        [
+            planar_raster_xy(tau, width=width, height=height, lanes=lanes)
+            for tau in np.linspace(0.0, 1.0, 2001)
+        ]
+    )
+
+    # Sampled, so the apex of a turn falls between two samples.
+    assert np.max(np.abs(points[:, 0])) <= 0.5 * width + turn_radius
+    assert np.max(np.abs(points[:, 1])) <= 0.5 * height
+    assert np.ptp(points[:, 0]) == pytest.approx(width + 2.0 * turn_radius, abs=1e-3)
+    assert np.ptp(points[:, 1]) == pytest.approx(height, abs=1e-4)
+    # Every lane runs the full width of the rectangle.
+    for lane_y in -0.5 * height + height * np.arange(lanes) / (lanes - 1):
+        on_the_lane = points[np.abs(points[:, 1] - lane_y) < 1e-9]
+        assert np.ptp(on_the_lane[:, 0]) == pytest.approx(width, abs=1e-3)
+
+
+def test_a_raster_visits_every_lane():
+    lanes = 5
+    height = 0.2
+    points = np.array(
+        [
+            planar_raster_xy(tau, width=0.3, height=height, lanes=lanes)
+            for tau in np.linspace(0.0, 1.0, 2001)
+        ]
+    )
+
+    expected = -0.5 * height + height * np.arange(lanes) / (lanes - 1)
+    for lane_y in expected:
+        assert np.min(np.abs(points[:, 1] - lane_y)) < 1e-6
 
 
 def test_clamp_to_cylinder_xy_clamps_radius_and_height():

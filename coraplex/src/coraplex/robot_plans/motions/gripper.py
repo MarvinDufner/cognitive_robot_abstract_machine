@@ -176,7 +176,7 @@ class MoveFingersToWidthMotion(BaseMotion):
 
 
 @dataclass
-class LowerUntilContactMotion(BaseMotion):
+class LowerUntilContactMotion(BaseMotion, CartesianVelocityLimitParameters):
     """
     Lower a tool until its force/torque sensor feels the surface.
 
@@ -218,6 +218,9 @@ class LowerUntilContactMotion(BaseMotion):
 
     Slow, because the tool travels on between the reading that shows contact and the
     cycle that acts on it.
+
+    .. note:: This normalises the goal's error and does not bound the speed the tool
+        arrives at. :attr:`max_linear_velocity` is what bounds it.
     """
 
     allow_gripper_collision: Optional[bool] = None
@@ -257,6 +260,14 @@ class LowerUntilContactMotion(BaseMotion):
             )
             for pair in self.alignment_pairs
         )
+        if self.max_linear_velocity is not None:
+            tasks.append(
+                CartesianPositionVelocityLimit(
+                    root_link=root_link,
+                    tip_link=tip_link,
+                    max_linear_velocity=self.max_linear_velocity,
+                )
+            )
         motion_statechart_nodes = (
             self._only_allow_gripper_collision_rules(self.arm.end_effector)
             if self.allow_gripper_collision
@@ -437,7 +448,9 @@ class MoveTCPWaypointsMotion(BaseMotion, HasTcpGoalThresholds):
 
 
 @dataclass
-class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
+class MoveTCPWaypointsAlignedMotion(
+    BaseMotion, CartesianVelocityLimitParameters, HasTcpGoalThresholds
+):
     """
     Moves the tool center point (TCP) of the robot along waypoints while keeping the
     given plane alignments.
@@ -508,6 +521,14 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         feels friction needs: yielding to friction drifts the tip until it stalls.
     """
 
+    look_ahead_distance: Optional[float] = None
+    """
+    How far along the waypoints ahead of the tip the tracked point is placed, in m,
+    which is what sets how fast the tool travels.
+
+    ``None`` keeps the task's own default.
+    """
+
     def perform(self):
         return
 
@@ -546,6 +567,8 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         )
         if self.position_threshold is not None:
             trajectory_kwargs["threshold"] = self.position_threshold
+        if self.look_ahead_distance is not None:
+            trajectory_kwargs["look_ahead_distance"] = self.look_ahead_distance
         if self.desired_force is None:
             tasks = [CartesianPositionTrajectory(**trajectory_kwargs)]
         else:
@@ -573,6 +596,14 @@ class MoveTCPWaypointsAlignedMotion(BaseMotion, HasTcpGoalThresholds):
         )
         if isinstance(self.robot, Justin):
             tasks.append(self._upright_torso_task(tip_link, root_link))
+        if self.max_linear_velocity is not None:
+            tasks.append(
+                CartesianPositionVelocityLimit(
+                    root_link=root_link,
+                    tip_link=tip_link,
+                    max_linear_velocity=self.max_linear_velocity,
+                )
+            )
         motion_statechart_nodes = (
             self._only_allow_gripper_collision_rules(self.arm.end_effector)
             if self.allow_gripper_collision

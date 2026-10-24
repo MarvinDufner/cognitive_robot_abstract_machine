@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 
 import numpy as np
-from typing_extensions import ClassVar
+from typing_extensions import ClassVar, List
 
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import ExecutionType, WipingTechnique
@@ -75,11 +75,12 @@ on, not what the 1.6 m wide bench offers.
 APPROACH_HEIGHT = 0.08
 """How far above the bench the tool is brought before it is lowered onto it, in m."""
 
-UNMODELLED_ADAPTER_LENGTH = 0.06
-"""Length of the adapter between the flange and the gripper, in m.
+TURNING_HEIGHT = 0.30
+"""How far above the bench the tool is turned to face it, in m.
 
-.. todo:: Tracy's description is missing this piece, so every gripper frame sits that
-    much too close to the flange. Remove this once the description has it.
+The tool reaches a commanded position before it reaches a commanded orientation, so a
+tool that turns on its way down meets the bench edge first. It turns up here instead and
+holds that orientation for the rest of the plan.
 """
 
 OBSTACLE_CLEARANCE = 0.05
@@ -102,9 +103,17 @@ PRESS_LEAD_TIME = 0.03
 arm takes to reach a commanded height.
 """
 
+WIPE_SPEED = 0.045
+"""How fast the tool travels while wiping, in m/s.
+
+The tendency to be thrown off a crest grows with the square of the speed, so this is the
+speed at which the press keeps contact over an uneven surface as well as on a flat one.
+"""
+
 DESCENT_VELOCITY = 0.02
 """How fast the tool is lowered onto the bench, in m/s. Peak contact force grows with
-the speed the tool arrives at.
+the speed the tool arrives at, and the pad meets a crest on a line rather than on its
+whole face, so arriving slowly is what keeps a touchdown off a crest from spiking.
 """
 
 TOUCHDOWN_FORCE = 5.0
@@ -128,10 +137,6 @@ class TracyWipeTableDemonstration(WipingDemonstration):
     """
 
     ros_node_name: ClassVar[str] = "tracy_wipe_table_demo_node"
-
-    @property
-    def unmodelled_tool_length(self) -> float:
-        return UNMODELLED_ADAPTER_LENGTH
 
     def build_simulated_world(self) -> World:
         """
@@ -158,10 +163,8 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         world = context.world
         sponge = world.get_semantic_annotations_by_type(Sponge)[0]
         patch = self.wiped_pose(world)
-        steps = [
-            ParkArmsAction(arms=context.robot.all_arms),
-            self.build_approach(context, patch),
-        ]
+        steps = [ParkArmsAction(arms=context.robot.all_arms)]
+        steps.extend(self.build_approach(context, patch))
         steps.append(
             LowerUntilContactMotion(
                 goal_point=Point3(
@@ -175,6 +178,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 alignment_pairs=sponge.tool_alignment(patch),
                 contact_force=TOUCHDOWN_FORCE,
                 descent_velocity=DESCENT_VELOCITY,
+                max_linear_velocity=DESCENT_VELOCITY,
                 allow_gripper_collision=True,
             )
         )
@@ -191,30 +195,48 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 admittance_damping=PRESS_DAMPING,
                 admittance_travel=PRESS_TRAVEL,
                 admittance_lead_time=PRESS_LEAD_TIME,
+                max_linear_velocity=WIPE_SPEED,
             )
         )
         return sequential(steps, context=context)
 
-    def build_approach(self, context: Context, patch: Pose) -> PlanNode:
+    def build_approach(
+        self, context: Context, patch: Pose
+    ) -> List[MoveManipulatorAction]:
         """
         :param context: Plan context holding the robot.
         :param patch: Centre of the patch, in the world frame.
-        :return: Bringing the tool over the patch, already pointing at it.
+        :return: Turning the tool onto the patch well above it, then coming straight
+            down to the height the descent starts from.
 
         .. warning:: The approach has to point the sponge down. From the opposite
             orientation the wipe's alignment would have to flip the tool through the one
             pose where it cannot tell which way to turn.
         """
-        return MoveManipulatorAction(
-            target_pose=Pose.from_xyz_rpy(
-                x=patch.to_np()[0, 3],
-                y=patch.to_np()[1, 3],
-                z=patch.to_np()[2, 3] + APPROACH_HEIGHT,
-                roll=math.pi,
-                reference_frame=context.world.root,
-            ),
-            end_effector=self.wiping_arm(context.world).end_effector,
-            allow_gripper_collision=True,
+        end_effector = self.wiping_arm(context.world).end_effector
+        return [
+            MoveManipulatorAction(
+                target_pose=self.pose_over_patch(context, patch, height),
+                end_effector=end_effector,
+                allow_gripper_collision=True,
+            )
+            for height in (TURNING_HEIGHT, APPROACH_HEIGHT)
+        ]
+
+    @staticmethod
+    def pose_over_patch(context: Context, patch: Pose, height: float) -> Pose:
+        """
+        :param context: Plan context holding the world.
+        :param patch: Centre of the patch, in the world frame.
+        :param height: How far above the patch the tool stands, in m.
+        :return: That pose, with the tool facing the patch.
+        """
+        return Pose.from_xyz_rpy(
+            x=patch.to_np()[0, 3],
+            y=patch.to_np()[1, 3],
+            z=patch.to_np()[2, 3] + height,
+            roll=math.pi,
+            reference_frame=context.world.root,
         )
 
     def contact_model(self, world: World) -> SimulatedContactWrench:

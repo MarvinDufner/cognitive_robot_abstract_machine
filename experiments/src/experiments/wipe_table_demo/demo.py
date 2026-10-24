@@ -33,6 +33,9 @@ from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
+from semantic_digital_twin.adapters.ros.wrench_publisher import (
+    MeasuredWrenchPublisher,
+)
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
     ToolContactWrench,
@@ -45,6 +48,7 @@ from semantic_digital_twin.predefined_maps.kitchen_environment import (
     KitchenEnvironment,
 )
 from semantic_digital_twin.robots.hsrb import HSRB
+from semantic_digital_twin.robots.robot_part_mixins import HasTwoFingers
 from semantic_digital_twin.robots.robot_parts import Arm, ForceTorqueSensor
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     DiningTable,
@@ -107,6 +111,14 @@ How far the press may yield from the path it follows, per axis, in m.
 
 Only along the surface normal: the tool feels friction while it travels, and a press
 free to yield to that drifts against its own direction of travel until it stalls.
+"""
+
+SPONGE_PROTRUSION = 0.02
+"""
+How far the sponge's pressing face stands beyond the fingertips holding it, in m.
+
+The fingers must stay clear of the surface while the press yields into it, and what is
+left of the sponge's thickness is what the fingers hold it by.
 """
 
 STANDING_CLEARANCE = 0.05
@@ -328,12 +340,12 @@ class WipingDemonstration(RobotDemonstration, ABC):
 
     def attach_sponge(self, world: World) -> Sponge:
         """
-        Bolt the sponge to the gripper's tool frame and annotate it as a tool.
+        Bolt the sponge into the gripper's fingers and annotate it as a tool.
 
         :param world: World holding the robot.
         :return: The sponge, whose frame follows the wipe path.
         """
-        tool_frame = self.wiping_arm(world).end_effector.tool_frame
+        end_effector = self.wiping_arm(world).end_effector
         sponge_body = Body(
             name=PrefixedName(SPONGE_NAME),
             collision=ShapeCollection([Box(scale=SPONGE_SCALE)]),
@@ -344,17 +356,43 @@ class WipingDemonstration(RobotDemonstration, ABC):
         with world.modify_world():
             world.add_connection(
                 FixedConnection(
-                    parent=tool_frame,
+                    parent=end_effector.tool_frame,
                     child=sponge_body,
-                    parent_T_connection_expression=(
-                        HomogeneousTransformationMatrix.from_xyz_rpy(
-                            z=float(SPONGE_SCALE.z) / 2.0 + self.unmodelled_tool_length
-                        )
-                    ),
+                    parent_T_connection_expression=self.held_sponge_pose(end_effector),
                 )
             )
             world.add_semantic_annotations([sponge])
         return sponge
+
+    def held_sponge_pose(
+        self, end_effector: HasTwoFingers
+    ) -> HomogeneousTransformationMatrix:
+        """
+        :param end_effector: The gripper holding the sponge.
+        :return: Where the sponge sits in that gripper's tool frame: between the
+            fingertips, turned so the fingers close on its narrow side, and sticking
+            :data:`SPONGE_PROTRUSION` past their tips.
+        """
+        fingertips = end_effector.fingertips
+        grasp = fingertips.tool_P_grasp.to_np().flatten()
+        closing_axis = fingertips.closing_axis.to_np().flatten()
+        tips_end_at = max(
+            tip.collision.as_bounding_box_collection_in_frame(end_effector.tool_frame)
+            .bounding_box()
+            .max_z
+            for tip in fingertips.both
+        )
+        return HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=float(grasp[0]),
+            y=float(grasp[1]),
+            z=tips_end_at
+            + SPONGE_PROTRUSION
+            - float(SPONGE_SCALE.z) / 2.0
+            + self.unmodelled_tool_length,
+            # Turning the sponge's own y axis onto the closing axis lays its long side
+            # across the fingers.
+            yaw=float(np.arctan2(-closing_axis[0], closing_axis[1])),
+        )
 
     def build_context(self, world: World) -> Context:
         """
@@ -362,6 +400,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
 
         .. note:: A real run needs the ROS node in the context to reach the controller.
         """
+        self.publish_measured_wrench(world)
         return Context(
             world=world,
             robot=world.get_semantic_annotations_by_type(self.used_robot)[0],
@@ -369,6 +408,28 @@ class WipingDemonstration(RobotDemonstration, ABC):
             evaluate_conditions=False,
             alternative_motion_mappings=self.alternative_motion_mappings,
             world_inputs=self.world_inputs(world),
+        )
+
+    def publish_measured_wrench(self, world: World) -> None:
+        """
+        Publish what the tool's sensor reads while the plan runs, so a simulated press
+        can be watched on a topic as a real one is on the sensor's own.
+
+        Publishes nothing on a real run, which has the sensor's own topic, and nothing
+        where no node has been acquired, as when a plan is only built.
+
+        :param world: World the demonstration acts on.
+        """
+        if self.execution_type is ExecutionType.REAL or self.ros_node is None:
+            return
+        if MeasuredWrenchPublisher.all_callbacks_of_this_type_from_world(world):
+            return
+        MeasuredWrenchPublisher(
+            _world=world,
+            node=self.ros_node,
+            sensor=ForceTorqueSensor.for_tip(
+                world, world.get_body_by_name(SPONGE_NAME)
+            ),
         )
 
     def world_inputs(self, world: World) -> List[InputSynchronizer]:

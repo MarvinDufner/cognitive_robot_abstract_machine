@@ -777,6 +777,17 @@ class ForceTorqueSensor(Sensor, ABC):
         """
         return self.wrench_data.data[:3]
 
+    @property
+    def measured_torque(self) -> np.ndarray:
+        """
+        The torque of the last reading, about the sensor's own origin, in its frame, in
+        N m.
+
+        Reads the values behind :attr:`torque`, which is registered after
+        :attr:`force`.
+        """
+        return self.wrench_data.data[3:6]
+
     @classproperty
     def raw_wrench_topic(cls) -> Optional[str]:
         """
