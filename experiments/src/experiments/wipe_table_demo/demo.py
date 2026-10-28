@@ -33,9 +33,6 @@ from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
-from semantic_digital_twin.adapters.ros.wrench_publisher import (
-    MeasuredWrenchPublisher,
-)
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
     ToolContactWrench,
@@ -315,7 +312,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
     A demonstration that wipes a surface with a sponge held in one hand.
     """
 
-    technique: WipingTechnique = WipingTechnique.SPREAD
+    technique: WipingTechnique = WipingTechnique.SHEAR
     """
     How the tool covers the surface: lanes, a spiral or a shear.
     """
@@ -405,7 +402,6 @@ class WipingDemonstration(RobotDemonstration, ABC):
 
         .. note:: A real run needs the ROS node in the context to reach the controller.
         """
-        self.publish_measured_wrench(world)
         return Context(
             world=world,
             robot=world.get_semantic_annotations_by_type(self.used_robot)[0],
@@ -413,28 +409,6 @@ class WipingDemonstration(RobotDemonstration, ABC):
             evaluate_conditions=False,
             alternative_motion_mappings=self.alternative_motion_mappings,
             world_inputs=self.world_inputs(world),
-        )
-
-    def publish_measured_wrench(self, world: World) -> None:
-        """
-        Publish what the tool's sensor reads while the plan runs, so a simulated press
-        can be watched on a topic as a real one is on the sensor's own.
-
-        Publishes nothing on a real run, which has the sensor's own topic, and nothing
-        where no node has been acquired, as when a plan is only built.
-
-        :param world: World the demonstration acts on.
-        """
-        if self.execution_type is ExecutionType.REAL or self.ros_node is None:
-            return
-        if MeasuredWrenchPublisher.all_callbacks_of_this_type_from_world(world):
-            return
-        MeasuredWrenchPublisher(
-            _world=world,
-            node=self.ros_node,
-            sensor=ForceTorqueSensor.for_tip(
-                world, world.get_body_by_name(SPONGE_NAME)
-            ),
         )
 
     def world_inputs(self, world: World) -> List[InputSynchronizer]:
