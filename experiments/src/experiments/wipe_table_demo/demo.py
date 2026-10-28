@@ -315,6 +315,11 @@ class WipingDemonstration(RobotDemonstration, ABC):
     A demonstration that wipes a surface with a sponge held in one hand.
     """
 
+    technique: WipingTechnique = WipingTechnique.SPREAD
+    """
+    How the tool covers the surface: lanes, a spiral or a shear.
+    """
+
     def wiping_arm(self, world: World) -> Arm:
         """
         :param world: World holding the robot.
@@ -471,11 +476,6 @@ class WipeTableDemonstration(WipingDemonstration):
     """
 
     ros_node_name: ClassVar[str] = "wipe_table_demo_node"
-
-    technique: WipingTechnique = WipingTechnique.SPREAD
-    """
-    How the tool covers the surface: lanes, a spiral or a shear.
-    """
 
     sides: Optional[int] = None
     """

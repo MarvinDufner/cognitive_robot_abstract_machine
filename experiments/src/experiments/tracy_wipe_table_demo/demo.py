@@ -5,9 +5,11 @@ hand, regulating how hard it presses with the left wrist's force/torque sensor.
 The tool is brought over the patch, lowered until the sensor feels the bench, and only
 then wiped, so where the surface really is is measured rather than assumed.
 
-The execution type is the first command line argument, defaulting to ``REAL``::
+The execution type is the first command line argument, defaulting to ``REAL``, and the
+wiping technique the second, defaulting to the lanes of
+:attr:`~coraplex.datastructures.enums.WipingTechnique.SPREAD`::
 
-    python3 demo.py PHYSICALLY_SIMULATED
+    python3 demo.py PHYSICALLY_SIMULATED WIPE
 
 ``PHYSICALLY_SIMULATED`` performs the wipe against MuJoCo, which resolves the contact
 itself, so how hard and how steadily the press holds can be measured without the robot.
@@ -187,7 +189,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 arm=self.wiping_arm(world),
                 tool=sponge,
                 target_pose=patch,
-                technique=WipingTechnique.WIPE,
+                technique=self.technique,
                 length=WIPED_PATCH_LENGTH,
                 width=WIPED_PATCH_WIDTH,
                 desired_force=Vector3(z=PRESS_FORCE),
@@ -280,16 +282,29 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         )
 
 
-def main(execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED) -> None:
+def main(
+    execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED,
+    technique: WipingTechnique = TracyWipeTableDemonstration.technique,
+) -> None:
     """
     Run the demonstration.
+
+    :param execution_type: Whether to drive the real robot or simulate it.
+    :param technique: How the tool covers the patch.
     """
-    TracyWipeTableDemonstration(used_robot=Tracy, execution_type=execution_type).run()
+    TracyWipeTableDemonstration(
+        used_robot=Tracy, execution_type=execution_type, technique=technique
+    ).run()
 
 
 if __name__ == "__main__":
     main(
         execution_type=(
             ExecutionType[sys.argv[1]] if len(sys.argv) > 1 else ExecutionType.REAL
-        )
+        ),
+        technique=(
+            WipingTechnique[sys.argv[2]]
+            if len(sys.argv) > 2
+            else TracyWipeTableDemonstration.technique
+        ),
     )
