@@ -10,20 +10,17 @@ from giskardpy.middleware.ros2.scripts.iai_robots.tracy.configs import (
 from giskardpy.middleware.ros2.utils.utils import load_xacro
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from rclpy import Parameter
-from rclpy.exceptions import ParameterUninitializedException
+from semantic_digital_twin.robots.tracy import Tracy
 
 
 def main():
     rospy.init_node("giskard")
-    try:
-        rospy.get_node().declare_parameters(
-            namespace="", parameters=[("robot_description", Parameter.Type.STRING)]
-        )
-        robot_description = rospy.get_node().get_parameter_or("robot_description").value
-    except ParameterUninitializedException as e:
-        robot_description = load_xacro(
-            "package://iai_tracy_description/urdf/tracy.urdf.xacro"
-        )
+    rospy.get_node().declare_parameters(
+        namespace="", parameters=[("robot_description", Parameter.Type.STRING)]
+    )
+    robot_description = rospy.get_node().get_parameter_or("robot_description").value
+    if robot_description is None:
+        robot_description = load_xacro(Tracy.get_ros_file_path())
     giskard = Giskard(
         world_config=WorldWithTracyConfig(urdf=robot_description),
         robot_interface_config=TracyVelocityInterface(),
