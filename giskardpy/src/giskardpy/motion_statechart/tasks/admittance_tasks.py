@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
+from enum import IntEnum
 
 import numpy as np
 from typing_extensions import List, Optional
 
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from giskardpy.motion_statechart.data_types import ObservationStateValues
-from giskardpy.motion_statechart.exceptions import NonPositiveVirtualMassError
+from giskardpy.motion_statechart.exceptions import (
+    NonPositiveVirtualMassError,
+    SilentForceTorqueSensorError,
+)
 from giskardpy.motion_statechart.graph_node import NodeArtifacts
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPositionTrajectory,
@@ -23,10 +28,16 @@ from krrood.symbolic_math.symbolic_math import (
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.spatial_types import Point3, Vector3
 
-AXES = ("x", "y", "z")
-"""
-Names of the goal frame axes, in the order the admittance state is laid out.
-"""
+
+class GoalFrameAxis(IntEnum):
+    """
+    The goal frame's axes, in the order the admittance state is laid out.
+    """
+
+    X = 0
+    Y = 1
+    Z = 2
+
 
 # %% yielding to contact force
 
@@ -91,6 +102,16 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     the offset on as it stands.
     """
 
+    maximum_silence: timedelta = field(
+        default=timedelta(milliseconds=200), kw_only=True
+    )
+    """
+    How long the press may go without a new reading before the sensor counts as silent.
+
+    Long enough for a sensor slower than the control loop, and short enough that the
+    offset cannot travel far on a reading that stopped arriving.
+    """
+
     _admittance_position: Optional[Vector3] = field(init=False, default=None)
     """
     Symbolic offset added to the tracked point, registered as a float variable so the QP
@@ -112,6 +133,21 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     Live sensor annotation, resolved from :attr:`tip_link`.
     """
 
+    _readings_integrated: int = field(init=False, default=0)
+    """
+    How many readings the sensor had written when this task last integrated one.
+    """
+
+    _silent_ticks: int = field(init=False, default=0)
+    """
+    How many ticks in a row brought no new reading.
+    """
+
+    _control_time_step: timedelta = field(init=False, default=timedelta())
+    """
+    How long one tick of the loop this task was compiled for lasts.
+    """
+
     @property
     def tracked_point(self) -> Point3:
         return self.goal_reference_frame_P_current_target_point + (
@@ -130,13 +166,18 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
         self._force_torque_sensor = ForceTorqueSensor.for_tip(
             context.world, self.tip_link
         )
+        self._control_time_step = context.qp_controller_config.control_time_step
         self._compile_step(context)
         return super().build_artifacts(context)
 
     def on_tick(
         self, context: MotionStatechartContext
     ) -> Optional[ObservationStateValues]:
-        if self._force_torque_sensor.has_received_wrench:
+        """
+        :raises SilentForceTorqueSensorError: If no reading arrived for longer than
+            :attr:`maximum_silence`.
+        """
+        if self._has_a_new_reading():
             # Copies, because the compiled function hands back its own output buffer.
             self._state[:] = self._compiled_step(
                 context.world.state.positions,
@@ -149,8 +190,31 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
             )
         return super().on_tick(context)
 
+    def _has_a_new_reading(self) -> bool:
+        """
+        :return: Whether the sensor wrote a reading this task has not integrated yet.
+        :raises SilentForceTorqueSensorError: If none arrived for longer than
+            :attr:`maximum_silence`.
+        """
+        readings = self._force_torque_sensor.readings_received
+        if readings != self._readings_integrated:
+            self._readings_integrated = readings
+            self._silent_ticks = 0
+            return True
+        if not self._force_torque_sensor.has_received_wrench:
+            return False
+        self._silent_ticks += 1
+        if self._silent_ticks * self._control_time_step > self.maximum_silence:
+            raise SilentForceTorqueSensorError(
+                sensor_name=str(self._force_torque_sensor.name),
+                silence=self._silent_ticks * self._control_time_step,
+            )
+        return False
+
     def on_reset(self, context: MotionStatechartContext) -> None:
         self._state[:] = 0.0
+        self._readings_integrated = self._force_torque_sensor.readings_received
+        self._silent_ticks = 0
         context.float_variable_data.set_value(
             self._admittance_position, self._state[:3]
         )
@@ -165,16 +229,16 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
 
         :raises NonPositiveVirtualMassError: If any axis has a non-positive mass.
         """
-        if any(float(self.mass[axis]) <= 0 for axis in range(len(AXES))):
+        if any(float(self.mass[axis]) <= 0 for axis in GoalFrameAxis):
             raise NonPositiveVirtualMassError(node=self, mass=self.mass)
 
         position_variables = [
-            FloatVariable(name=f"{self.name}/admittance_position.{axis}")
-            for axis in AXES
+            FloatVariable(name=f"{self.name}/admittance_position.{axis.name.lower()}")
+            for axis in GoalFrameAxis
         ]
         velocity_variables = [
-            FloatVariable(name=f"{self.name}/admittance_velocity.{axis}")
-            for axis in AXES
+            FloatVariable(name=f"{self.name}/admittance_velocity.{axis.name.lower()}")
+            for axis in GoalFrameAxis
         ]
         self._admittance_position = Vector3(
             *position_variables, reference_frame=self.goal_reference_frame
@@ -217,7 +281,7 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
         :return: The next offsets followed by the next rates, stacked.
         """
         next_positions, next_velocities = [], []
-        for axis in range(len(AXES)):
+        for axis in GoalFrameAxis:
             position, velocity = positions[axis], velocities[axis]
             error = measured_force[axis] - self.desired_force[axis]
             next_velocity = (

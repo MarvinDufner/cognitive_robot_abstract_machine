@@ -59,15 +59,6 @@ class AlignPlanes(ConvergingTask):
     Priority weight relative to other tasks.
     """
 
-    @property
-    def tracked_normal(self) -> Vector3:
-        """
-        The normal the tip plane is turned onto.
-
-        Subclasses may offset it, for instance to yield to a measured contact torque.
-        """
-        return self.goal_normal
-
     def build_artifacts(self, context: MotionStatechartContext) -> NodeArtifacts:
         """
         Build motion constraints that rotate the tip plane onto the goal plane.
@@ -82,7 +73,7 @@ class AlignPlanes(ConvergingTask):
         )
         tip_V_tip_normal.scale(1)
         root_V_root_normal = context.world.transform(
-            target_frame=self.root_link, spatial_object=self.tracked_normal
+            target_frame=self.root_link, spatial_object=self.goal_normal
         )
         root_V_root_normal.scale(1)
 

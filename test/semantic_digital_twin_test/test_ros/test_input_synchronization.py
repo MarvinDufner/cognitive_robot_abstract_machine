@@ -580,16 +580,6 @@ class SensorWithoutHardware(ForceTorqueSensor):
     Minimal concrete force/torque sensor, to write readings into without a robot.
     """
 
-    def setup_hardware_interfaces(self):
-        pass
-
-    def setup_joint_states(self) -> List[JointState]:
-        return []
-
-    @classmethod
-    def setup_default_configuration_in_world_below_robot_root(cls, robot_root):
-        raise NotImplementedError
-
 
 def wrench_along_z(force_z: float) -> WrenchStamped:
     """
@@ -622,3 +612,22 @@ def test_every_reading_is_written_through(rclpy_node):
     feed(synchronizer, 1.0, 12.0)
 
     assert_allclose(sensor.measured_force, [0.0, 0.0, 12.0])
+
+
+def test_a_cycle_without_a_new_message_writes_nothing(rclpy_node):
+    """
+    A reading the controller already has is not written again, so a sensor that falls
+    silent stops counting readings instead of looking alive on its last one.
+    """
+    sensor = SensorWithoutHardware(name=PrefixedName("quiet", prefix="test"), root=None)
+    synchronizer = WrenchSynchronizer(
+        world=World(), node=rclpy_node, topic_name="wrench", sensor=sensor
+    )
+    feed(synchronizer, 7.0)
+    written = sensor.readings_received
+
+    applied_again = synchronizer.apply()
+
+    assert applied_again is False
+    assert sensor.readings_received == written
+    assert_allclose(sensor.measured_force, [0.0, 0.0, 7.0])

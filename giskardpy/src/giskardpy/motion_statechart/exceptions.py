@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
+from datetime import timedelta
 
 from typing_extensions import TYPE_CHECKING, Type
 
@@ -710,3 +711,36 @@ class NodeStateVariableNotSerializableError(JSONSerializationError):
 
     def suggest_correction(self) -> str:
         return ""
+
+
+@dataclass
+class SilentForceTorqueSensorError(MotionStatechartError):
+    """
+    Raised when a press has gone longer than it may without a new reading.
+
+    Yielding on a reading that is no longer arriving walks the offset to its bound on
+    whatever that reading held, which drives the tool into the surface or lets it settle
+    in mid-air.
+    """
+
+    sensor_name: str
+    """
+    The sensor that stopped publishing.
+    """
+
+    silence: timedelta
+    """
+    How long it has not published for.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{self.sensor_name} published no reading for "
+            f"{self.silence.total_seconds():.2f} s."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Check that the sensor's driver, and any node compensating its readings, "
+            "are still running and publishing on the topic the annotation names."
+        )

@@ -227,14 +227,22 @@ class WrenchSynchronizer(TopicInputSynchronizer[WrenchStamped]):
             np.array([torque.x, torque.y, torque.z]),
         )
 
+    def take_message(self) -> WrenchStamped | None:
+        """
+        Each message once, so a sensor that falls silent stops counting readings instead
+        of looking alive on its last one.
+        """
+        message = self.latest_message
+        self.latest_message = None
+        return message
+
     def apply(self) -> bool:
         """
         Write the latest reading, and report that nothing has to be announced.
 
         A wrench is a measurement rather than a degree of freedom, so the kinematic
-        state is unchanged by it. Reporting a write would recompute the forward
-        kinematics and reach every observer of the world once per reading, which arrive
-        far faster than the robot moves.
+        state is unchanged by it, and announcing one would recompute the forward
+        kinematics once per reading.
         """
         super().apply()
         return False

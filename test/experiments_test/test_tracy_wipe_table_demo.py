@@ -11,25 +11,8 @@ from coraplex.plans.plan_node import MotionNode
 from giskardpy.executor import Executor
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
-from experiments.tracy_wipe_table_demo.demo import (
-    APPROACH_HEIGHT,
-    BENCH_NAME,
-    DESCENT_VELOCITY,
-    OBSTACLE_CLEARANCE,
-    TURNING_HEIGHT,
-    WIPE_SPEED,
-    WIPED_PATCH_LENGTH,
-    WIPED_PATCH_WIDTH,
-    TracyWipeTableDemonstration,
-)
-from experiments.wipe_table_demo.demo import (
-    CONTACT_STIFFNESS,
-    PRESS_FORCE,
-    SPONGE_NAME,
-    SPONGE_PROTRUSION,
-    SPONGE_SCALE,
-    SimulatedContactWrench,
-)
+from experiments.tracy_wipe_table_demo.demo import TracyWipeTableDemonstration
+from experiments.wipe_table_demo.demo import SimulatedContactWrench
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
 )
@@ -61,7 +44,7 @@ def test_the_scene_counts_as_populated_once_the_sponge_is_attached():
 def test_the_sponge_hangs_off_the_wiping_hand():
     demonstration, world = populated_demonstration()
 
-    sponge = world.get_body_by_name(SPONGE_NAME)
+    sponge = world.get_body_by_name(demonstration.sponge_name)
 
     assert world.get_semantic_annotations_by_type(Sponge)
     assert sponge.parent_connection.parent.name.name == "l_gripper_tool_frame"
@@ -73,7 +56,7 @@ def sponge_and_fingertips(demonstration, world):
     """
     tool_frame = world.get_body_by_name("l_gripper_tool_frame")
     fingertips = demonstration.wiping_arm(world).end_effector.fingertips
-    sponge = world.get_body_by_name(SPONGE_NAME)
+    sponge = world.get_body_by_name(demonstration.sponge_name)
     return (
         sponge.collision.as_bounding_box_collection_in_frame(tool_frame).bounding_box(),
         [
@@ -93,7 +76,7 @@ def test_the_sponge_sticks_out_past_the_fingers_that_hold_it():
     sponge, tips = sponge_and_fingertips(demonstration, world)
 
     tips_end_at = max(tip.max_z for tip in tips)
-    assert sponge.max_z == pytest.approx(tips_end_at + SPONGE_PROTRUSION)
+    assert sponge.max_z == pytest.approx(tips_end_at + demonstration.sponge_protrusion)
     assert sponge.min_z < tips_end_at
 
 
@@ -112,8 +95,12 @@ def test_the_fingers_close_on_the_sponges_narrow_side():
     width = sponge.max_x - sponge.min_x
     length = sponge.max_y - sponge.min_y
     np.testing.assert_allclose(np.abs(closing_axis[:3]), [1.0, 0.0, 0.0], atol=1e-9)
-    assert width == pytest.approx(min(float(SPONGE_SCALE.x), float(SPONGE_SCALE.y)))
-    assert length == pytest.approx(max(float(SPONGE_SCALE.x), float(SPONGE_SCALE.y)))
+    assert width == pytest.approx(
+        min(float(demonstration.sponge_scale.x), float(demonstration.sponge_scale.y))
+    )
+    assert length == pytest.approx(
+        max(float(demonstration.sponge_scale.x), float(demonstration.sponge_scale.y))
+    )
 
 
 def test_the_sponge_is_measured_by_the_sensor_of_the_arm_that_holds_it():
@@ -122,7 +109,9 @@ def test_the_sponge_is_measured_by_the_sensor_of_the_arm_that_holds_it():
     """
     demonstration, world = populated_demonstration()
 
-    sensor = ForceTorqueSensor.for_tip(world, world.get_body_by_name(SPONGE_NAME))
+    sensor = ForceTorqueSensor.for_tip(
+        world, world.get_body_by_name(demonstration.sponge_name)
+    )
 
     assert isinstance(sensor, TracyLeftForceTorqueSensor)
 
@@ -132,7 +121,7 @@ def test_the_sponge_is_measured_by_the_sensor_of_the_arm_that_holds_it():
 
 def test_the_bench_top_is_the_surface_and_not_the_fixture_standing_on_it():
     demonstration, world = populated_demonstration()
-    bench = world.get_body_by_name(BENCH_NAME)
+    bench = world.get_body_by_name(demonstration.bench_name)
     boxes = list(bench.collision.as_bounding_box_collection_in_frame(world.root))
     spot = demonstration.wiped_pose(world).to_np()[:3, 3]
 
@@ -150,16 +139,16 @@ def test_the_bench_top_is_the_surface_and_not_the_fixture_standing_on_it():
 
 def test_the_wiped_patch_lies_on_the_bench_top():
     demonstration, world = populated_demonstration()
-    bench = world.get_body_by_name(BENCH_NAME)
+    bench = world.get_body_by_name(demonstration.bench_name)
     footprint = bench.collision.as_bounding_box_collection_in_frame(
         world.root
     ).bounding_box()
     centre = demonstration.wiped_pose(world).to_np()[:3, 3]
 
-    assert footprint.min_x <= centre[0] - WIPED_PATCH_LENGTH / 2
-    assert centre[0] + WIPED_PATCH_LENGTH / 2 <= footprint.max_x
-    assert footprint.min_y <= centre[1] - WIPED_PATCH_WIDTH / 2
-    assert centre[1] + WIPED_PATCH_WIDTH / 2 <= footprint.max_y
+    assert footprint.min_x <= centre[0] - demonstration.patch_length / 2
+    assert centre[0] + demonstration.patch_length / 2 <= footprint.max_x
+    assert footprint.min_y <= centre[1] - demonstration.patch_width / 2
+    assert centre[1] + demonstration.patch_width / 2 <= footprint.max_y
 
 
 def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
@@ -186,8 +175,8 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
     )
     swept_height = max(box.max_z - box.min_z for box in hand)
     centre = demonstration.wiped_pose(world).to_np()[:3, 3]
-    reach_x = WIPED_PATCH_LENGTH / 2 + reach + OBSTACLE_CLEARANCE
-    reach_y = WIPED_PATCH_WIDTH / 2 + reach + OBSTACLE_CLEARANCE
+    reach_x = demonstration.patch_length / 2 + reach + demonstration.obstacle_clearance
+    reach_y = demonstration.patch_width / 2 + reach + demonstration.obstacle_clearance
     patch_min_x, patch_max_x = centre[0] - reach_x, centre[0] + reach_x
     patch_min_y, patch_max_y = centre[1] - reach_y, centre[1] + reach_y
 
@@ -205,7 +194,7 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
             or patch_max_x <= box.min_x
             or box.max_y <= patch_min_y
             or patch_max_y <= box.min_y
-        ), f"the hand would come within {OBSTACLE_CLEARANCE} m of {box}"
+        ), f"the hand would come within {demonstration.obstacle_clearance} m of {box}"
 
 
 # %% force control
@@ -223,7 +212,7 @@ def test_a_simulated_run_feels_the_bench_it_wipes():
     inputs = demonstration.world_inputs(world)
 
     assert [type(reading) for reading in inputs] == [SimulatedContactWrench]
-    assert inputs[0].surface is world.get_body_by_name(BENCH_NAME)
+    assert inputs[0].surface is world.get_body_by_name(demonstration.bench_name)
 
 
 def test_the_wipe_presses_into_the_bench_and_travels_across_it():
@@ -234,22 +223,23 @@ def test_the_wipe_presses_into_the_bench_and_travels_across_it():
     demonstration, world = populated_demonstration()
     bench_height = demonstration.bench_height(world)
     start = world.compute_forward_kinematics_np(
-        world.root, world.get_body_by_name(SPONGE_NAME)
+        world.root, world.get_body_by_name(demonstration.sponge_name)
     )[:3, 3].copy()
 
     world = demonstration.run()
 
     end = world.compute_forward_kinematics_np(
-        world.root, world.get_body_by_name(SPONGE_NAME)
+        world.root, world.get_body_by_name(demonstration.sponge_name)
     )[:3, 3]
     assert np.linalg.norm(end[:2] - start[:2]) > 0.1
     # The press settles where the surface pushes back as hard as it is pressed. What
     # touches is the tool's own face, so that is what sinks into the surface, and its
     # frame sits half a tool above it.
-    face_below_the_frame = float(SPONGE_SCALE.z) / 2
+    face_below_the_frame = float(demonstration.sponge_scale.z) / 2
     np.testing.assert_allclose(
         end[2] - bench_height,
-        face_below_the_frame - PRESS_FORCE / CONTACT_STIFFNESS,
+        face_below_the_frame
+        - demonstration.press.force.to_np().item(2) / SimulatedContactWrench.stiffness,
         atol=5e-3,
     )
 
@@ -320,8 +310,8 @@ def test_the_descent_is_capped_to_the_speed_it_is_asked_to_lower_at():
     steps = plan_steps(demonstration, world)
     descent = steps[index_of(steps, LowerUntilContactMotion)]
 
-    assert descent.max_linear_velocity == DESCENT_VELOCITY
-    assert descent.descent_velocity == DESCENT_VELOCITY
+    assert descent.max_linear_velocity == demonstration.descent_velocity
+    assert descent.descent_velocity == demonstration.descent_velocity
 
 
 def test_the_wipe_is_capped_to_a_travel_speed():
@@ -334,7 +324,7 @@ def test_the_wipe_is_capped_to_a_travel_speed():
     steps = plan_steps(demonstration, world)
     wipe = steps[index_of(steps, WipingAction)]
 
-    assert wipe.max_linear_velocity == WIPE_SPEED
+    assert wipe.max_linear_velocity == demonstration.wipe_speed
 
 
 def test_the_tool_points_at_the_bench_while_it_is_lowered():
@@ -364,7 +354,9 @@ def test_the_tool_turns_onto_the_bench_well_above_it_and_only_then_comes_down():
         approach.target_pose.to_np()[2, 3] - demonstration.bench_height(world)
         for approach in approach_steps(steps)
     ]
-    assert heights == pytest.approx([TURNING_HEIGHT, APPROACH_HEIGHT])
+    assert heights == pytest.approx(
+        [demonstration.turning_height, demonstration.approach_height]
+    )
 
 
 # %% the charts the controller compiles

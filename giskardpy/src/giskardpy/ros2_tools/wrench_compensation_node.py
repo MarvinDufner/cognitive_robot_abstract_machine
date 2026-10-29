@@ -16,31 +16,25 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 import numpy as np
-import rclpy
 from geometry_msgs.msg import WrenchStamped
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
-from typing_extensions import List, Optional, Tuple
+from typing_extensions import List, Optional, Tuple, Type
 
 from giskardpy.middleware.ros2.exceptions import (
     ForceTorqueSensorNotTared,
+    SensorNeedsNoCompensationError,
     WrenchCompensationUnavailable,
 )
 from semantic_digital_twin.robots.robot_parts import (
+    ForceTorqueSensor,
     ForceTorqueSensorLoad,
-    WrenchTopic,
 )
 from semantic_digital_twin.spatial_types import Quaternion
-
-GRAVITY = 9.81
-"""
-Standard gravitational acceleration, in m/s^2.
-"""
 
 
 class RetareOutcome(StrEnum):
@@ -68,7 +62,7 @@ class WrenchGravityCompensator:
     The static load mounted past the sensor.
     """
 
-    gravity: float = GRAVITY
+    gravity: float = 9.81
     """
     Gravitational acceleration, in m/s^2.
     """
@@ -243,29 +237,11 @@ class WrenchCompensationNode(Node):
     working unchanged.
     """
 
-    topic_in: str = WrenchTopic.RAW
+    sensor: Type[ForceTorqueSensor] = field(kw_only=True)
     """
-    Topic the raw wrench is read from.
-    """
+    The sensor to compensate.
 
-    topic_out: str = WrenchTopic.COMPENSATED
-    """
-    Topic the contact wrench is published on.
-    """
-
-    gravity_frame: str = "base_footprint"
-    """
-    Gravity-aligned frame, whose z axis is assumed to point up.
-    """
-
-    sensor_frame: str = "wrist_ft_sensor_frame"
-    """
-    Sensor frame used when an incoming message carries no frame.
-    """
-
-    load: ForceTorqueSensorLoad = field(default_factory=ForceTorqueSensorLoad)
-    """
-    The static load mounted past the sensor, from its robot annotation.
+    Every name this node uses comes from its annotation.
     """
 
     queue_depth: int = 1
@@ -273,25 +249,9 @@ class WrenchCompensationNode(Node):
     Shallow, so a stalled consumer cannot build up latency.
     """
 
-    retare_service_name: str = "~/retare"
+    estimator: BiasEstimator = field(default_factory=BiasEstimator)
     """
-    Service that re-tares this sensor, as its robot annotation declares it.
-
-    Both this node and whatever asks for a re-tare read the name from there, so a robot
-    with a node per arm cannot end up zeroing the wrong one.
-    """
-
-    retare_samples: int = 100
-    """
-    How many samples a re-tare averages.
-    """
-
-    stationary_force_spread: float = 0.5
-    """
-    Largest per-axis force spread a re-tare window may show, in N.
-
-    A sensor noisier than this can never be zeroed, so it belongs above whatever the
-    sensor reads while it sits still.
+    Collects and averages the residuals a re-tare is taken from.
     """
 
     retare_timeout: float = 5.0
@@ -300,12 +260,19 @@ class WrenchCompensationNode(Node):
     """
 
     def __post_init__(self) -> None:
+        """
+        :raises SensorNeedsNoCompensationError: If the sensor's driver already publishes
+            the contact wrench, or if compensating it would feed the node its own
+            output.
+        """
         super().__init__("wrench_compensation")
-        self.compensator = WrenchGravityCompensator(load=self.load)
-        self.estimator = BiasEstimator(
-            required_samples=self.retare_samples,
-            stationary_force_spread=self.stationary_force_spread,
-        )
+        if (
+            self.sensor.compensation is None
+            or self.sensor.compensation.uncompensated_topic_name
+            == self.sensor.topic_name
+        ):
+            raise SensorNeedsNoCompensationError(sensor_type=self.sensor)
+        self.compensator = WrenchGravityCompensator(load=self.sensor.compensation.load)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
@@ -331,16 +298,19 @@ class WrenchCompensationNode(Node):
         group = ReentrantCallbackGroup()
         self.subscription = self.create_subscription(
             WrenchStamped,
-            self.topic_in,
+            self.sensor.compensation.uncompensated_topic_name,
             self._on_message,
             subscription_qos,
             callback_group=group,
         )
         self.publisher = self.create_publisher(
-            WrenchStamped, self.topic_out, publisher_qos
+            WrenchStamped, self.sensor.topic_name, publisher_qos
         )
         self.retare_service = self.create_service(
-            Trigger, self.retare_service_name, self._on_retare, callback_group=group
+            Trigger,
+            self.sensor.compensation.retare_service,
+            self._on_retare,
+            callback_group=group,
         )
 
     def _base_R_sensor(self, sensor_frame: str) -> Optional[np.ndarray]:
@@ -351,15 +321,14 @@ class WrenchCompensationNode(Node):
         """
         # The latest available transform: the wrist reorients slowly compared to the
         # sensor rate, and asking for the latest avoids extrapolating while it moves.
-        if not self.tf_buffer.can_transform(self.gravity_frame, sensor_frame, Time()):
+        gravity_frame = self.sensor.compensation.gravity_frame
+        if not self.tf_buffer.can_transform(gravity_frame, sensor_frame, Time()):
             self.get_logger().warn(
-                f"tf {self.gravity_frame} <- {sensor_frame} is not available yet",
+                f"tf {gravity_frame} <- {sensor_frame} is not available yet",
                 throttle_duration_sec=2.0,
             )
             return None
-        transform = self.tf_buffer.lookup_transform(
-            self.gravity_frame, sensor_frame, Time()
-        )
+        transform = self.tf_buffer.lookup_transform(gravity_frame, sensor_frame, Time())
         rotation = transform.transform.rotation
         return Quaternion(
             x=rotation.x, y=rotation.y, z=rotation.z, w=rotation.w
@@ -367,7 +336,7 @@ class WrenchCompensationNode(Node):
 
     def _on_message(self, message: WrenchStamped) -> None:
         base_R_sensor = self._base_R_sensor(
-            message.header.frame_id or self.sensor_frame
+            message.header.frame_id or self.sensor.frame_name
         )
         if base_R_sensor is None:
             return
@@ -419,9 +388,11 @@ class WrenchCompensationNode(Node):
             # The answer stays exactly the outcome, which the caller parses; how short the
             # window fell only a reader of the log can act on.
             self.get_logger().warn(
-                f"re-tare collected {collected} of {self.retare_samples} readings in "
-                f"{self.retare_timeout} s: {self.topic_in} has to arrive at "
-                f"{self.retare_samples / self.retare_timeout:.0f} Hz or faster, and only "
+                f"re-tare collected {collected} of {self.estimator.required_samples} readings in "
+                f"{self.retare_timeout} s: "
+                f"{self.sensor.compensation.uncompensated_topic_name} has to "
+                f"arrive at "
+                f"{self.estimator.required_samples / self.retare_timeout:.0f} Hz or faster, and only "
                 f"readings whose sensor frame tf can place are counted."
             )
             response.success = False
@@ -443,7 +414,8 @@ class WrenchCompensationNode(Node):
             self._retare_outcome = RetareOutcome.MOVED
             self.get_logger().warn(
                 f"the forces spread by {self.estimator.force_spread:.2f} N over the "
-                f"window, more than the {self.stationary_force_spread:.2f} N a sensor at "
+                f"window, more than the "
+                f"{self.estimator.stationary_force_spread:.2f} N a sensor at "
                 f"rest may, and moved {self.estimator.force_shift:.2f} N from its first "
                 f"half to its second. A shift near the spread means the reading is "
                 f"drifting rather than noisy, and no bias taken now stays valid; a shift "
@@ -455,22 +427,6 @@ class WrenchCompensationNode(Node):
             self._retare_outcome = RetareOutcome.APPLIED
         self.get_logger().info(f"re-tare: {self._retare_outcome}")
         self._retare_done.set()
-
-
-def main():
-    rclpy.init()
-    node = WrenchCompensationNode()
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
-    try:
-        executor.spin()
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
 
 
 # %% asking for a re-tare

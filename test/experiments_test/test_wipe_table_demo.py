@@ -1,21 +1,19 @@
 import math
+from inspect import signature
 
 import numpy as np
 import pytest
 
 from coraplex.datastructures.enums import ExecutionType
 from experiments.wipe_table_demo.demo import (
-    CONTACT_STIFFNESS,
     SimulatedContactWrench,
-    OUTWARD_NORMALS,
-    PRESS_FORCE,
-    SPONGE_NAME,
-    SPONGE_SCALE,
-    STANDING_CLEARANCE,
+    TableSide,
     WipeTableDemonstration,
+    main,
 )
 from semantic_digital_twin.robots.hsrb import HSRB
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
+from semantic_digital_twin.world_description.connections import OmniDrive
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     DiningTable,
     Sponge,
@@ -43,11 +41,11 @@ def test_the_scene_counts_as_populated_once_the_sponge_is_attached():
 
 
 def test_populating_brings_in_the_table_and_the_sponge():
-    _, world = populated_demonstration()
+    demonstration, world = populated_demonstration()
 
     assert world.get_semantic_annotations_by_type(DiningTable)
     assert world.get_semantic_annotations_by_type(Sponge)
-    assert world.get_body_by_name(SPONGE_NAME).has_collision()
+    assert world.get_body_by_name(demonstration.sponge_name).has_collision()
 
 
 def test_the_sponge_hangs_off_the_gripper():
@@ -55,9 +53,9 @@ def test_the_sponge_hangs_off_the_gripper():
     It has to move with the hand: the wipe drives the sponge's own frame along the tool
     path.
     """
-    _, world = populated_demonstration()
+    demonstration, world = populated_demonstration()
 
-    sponge = world.get_body_by_name(SPONGE_NAME)
+    sponge = world.get_body_by_name(demonstration.sponge_name)
 
     assert sponge.parent_connection.parent.name.name == "hand_gripper_tool_frame"
 
@@ -67,9 +65,11 @@ def test_the_sponge_is_measured_by_the_wrist_sensor():
     The admittance resolves its sensor from the tool, so the sponge has to sit below the
     wrist sensor on the kinematic chain.
     """
-    _, world = populated_demonstration()
+    demonstration, world = populated_demonstration()
 
-    sensor = ForceTorqueSensor.for_tip(world, world.get_body_by_name(SPONGE_NAME))
+    sensor = ForceTorqueSensor.for_tip(
+        world, world.get_body_by_name(demonstration.sponge_name)
+    )
 
     assert sensor.root.name.name == "wrist_ft_sensor_frame"
 
@@ -87,7 +87,7 @@ def test_only_sides_the_base_fits_at_are_offered():
 
     poses = demonstration.standing_poses(world, table)
 
-    assert 0 < len(poses) < len(OUTWARD_NORMALS)
+    assert 0 < len(poses) < len(TableSide)
     for pose in poses:
         assert demonstration.has_room_for_the_base(world, table, pose)
 
@@ -120,7 +120,7 @@ def test_the_base_stands_clear_of_the_table_edge():
     extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
     world_T_table = world.compute_forward_kinematics_np(world.root, body)
     robot = world.get_semantic_annotations_by_type(HSRB)[0]
-    expected = robot.mobile_base.base_radius + STANDING_CLEARANCE
+    expected = robot.mobile_base.base_radius + demonstration.standing_clearance
 
     for pose in demonstration.standing_poses(world, table):
         table_P_base = np.linalg.inv(world_T_table) @ np.append(
@@ -181,22 +181,79 @@ def test_the_wipe_presses_into_the_surface_and_travels_across_it():
     """
     demonstration, world = populated_demonstration()
     table = world.get_semantic_annotations_by_type(DiningTable)[0]
-    surface_height = demonstration.surface_height(world, table)
+    surface_height = demonstration.contact_model(world).surface_height
     start = world.compute_forward_kinematics_np(
-        world.root, world.get_body_by_name(SPONGE_NAME)
+        world.root, world.get_body_by_name(demonstration.sponge_name)
     )[:3, 3].copy()
 
     world = demonstration.run()
 
-    sponge = world.get_body_by_name(SPONGE_NAME)
+    sponge = world.get_body_by_name(demonstration.sponge_name)
     end = world.compute_forward_kinematics_np(world.root, sponge)[:3, 3]
     assert np.linalg.norm(end[:2] - start[:2]) > 0.1
     # The press settles where the surface pushes back as hard as it is pressed. What
     # touches is the tool's own face, so that is what sinks into the surface, and its
     # frame sits half a tool above it.
-    face_below_the_frame = float(SPONGE_SCALE.z) / 2
+    face_below_the_frame = demonstration.sponge_scale.z / 2
     np.testing.assert_allclose(
         end[2] - surface_height,
-        face_below_the_frame - PRESS_FORCE / CONTACT_STIFFNESS,
+        face_below_the_frame
+        - demonstration.press.force.to_np().item(2) / SimulatedContactWrench.stiffness,
         atol=5e-3,
     )
+
+
+def drive_the_sponge_over(world, table, sponge) -> None:
+    """
+    Put the base where the tool it holds is above the table, which is what the surface
+    model feels contact over.
+    """
+    footprint = table.root.collision.as_bounding_box_collection_in_frame(
+        world.root
+    ).bounding_box()
+    drive = world.get_connections_by_type(OmniDrive)[0]
+    sponge_position = world.compute_forward_kinematics_np(world.root, sponge)[:3, 3]
+    wanted = np.array(
+        [
+            0.5 * (footprint.min_x + footprint.max_x),
+            0.5 * (footprint.min_y + footprint.max_y),
+        ]
+    )
+    for dof, offset in zip(drive.active_dofs, wanted - sponge_position[:2]):
+        world.state[dof.id].position += offset
+    world.notify_state_change()
+
+
+def test_the_surface_never_pushes_harder_than_it_says_it_does():
+    """
+    The cap bounds the push of the whole face, not of each spring under it, or a tool
+    arriving fast reports many times the force the model documents.
+    """
+    demonstration, world = populated_demonstration()
+    contact = demonstration.world_inputs(world)[0]
+    sponge = world.get_body_by_name(demonstration.sponge_name)
+    sensor = ForceTorqueSensor.for_tip(world, sponge)
+    table = world.get_semantic_annotations_by_type(DiningTable)[0]
+    drive_the_sponge_over(world, table, sponge)
+    # A long way through the surface, so every sampled spring is compressed past the
+    # cap on its own.
+    contact.surface_height = (
+        world.compute_forward_kinematics_np(world.root, sponge)[2, 3] + 1.0
+    )
+
+    force, _ = contact.contact_wrench(sensor)
+
+    assert contact.over_the_surface(
+        world.compute_forward_kinematics_np(world.root, sponge)[:3, 3, None]
+    ).all()
+    assert np.linalg.norm(force) <= contact.maximum_force + 1e-6
+
+
+def test_the_demonstration_simulates_unless_it_is_told_otherwise():
+    """
+    The module documents a simulated default, and one that drives the real robot unless
+    told otherwise is the wrong way round.
+    """
+    default = signature(main).parameters["execution_type"].default
+
+    assert default is ExecutionType.KINEMATICALLY_SIMULATED

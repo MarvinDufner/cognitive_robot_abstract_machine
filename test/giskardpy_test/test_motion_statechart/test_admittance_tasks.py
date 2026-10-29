@@ -3,7 +3,10 @@ import pytest
 
 from giskardpy.executor import Executor
 from giskardpy.motion_statechart.context import MotionStatechartContext
-from giskardpy.motion_statechart.exceptions import NonPositiveVirtualMassError
+from giskardpy.motion_statechart.exceptions import (
+    NonPositiveVirtualMassError,
+    SilentForceTorqueSensorError,
+)
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.motion_statechart.tasks.admittance_tasks import (
@@ -359,3 +362,44 @@ def test_the_tracked_point_is_handed_on_ahead_of_the_offset(hsr_world_copy):
         handed_on, task._state[:3] + lead_time * task._state[3:], atol=1e-12
     )
     assert abs(handed_on[2]) > abs(task._state[2])
+
+
+# %% a sensor that falls silent
+
+
+def silent_ticks_allowed(task, context) -> int:
+    """
+    :return: How many ticks in a row the task may see no new reading for.
+    """
+    return int(task.maximum_silence / context.qp_controller_config.control_time_step)
+
+
+def test_a_press_carries_on_between_readings(hsr_world_copy):
+    """
+    The sensor publishes slower than the loop controls, so a cycle without a new reading
+    holds the offset the last one produced.
+    """
+    task, context, _ = build_admittance(hsr_world_copy)
+    sensor = sensor_of(hsr_world_copy)
+    sensor.write_wrench(np.array([0.0, 0.0, -5.0]), np.zeros(3))
+    task.on_tick(context)
+
+    for _ in range(silent_ticks_allowed(task, context)):
+        task.on_tick(context)
+
+    assert np.any(task._state[:3] != 0.0)
+
+
+def test_a_press_stops_when_its_sensor_falls_silent(hsr_world_copy):
+    """
+    Without a reading the offset would walk to :attr:`maximum_offset` into the surface
+    on whatever the last reading held.
+    """
+    task, context, _ = build_admittance(hsr_world_copy)
+    sensor = sensor_of(hsr_world_copy)
+    sensor.write_wrench(np.array([0.0, 0.0, -5.0]), np.zeros(3))
+    task.on_tick(context)
+
+    with pytest.raises(SilentForceTorqueSensorError):
+        for _ in range(silent_ticks_allowed(task, context) + 1):
+            task.on_tick(context)

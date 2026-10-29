@@ -1644,6 +1644,28 @@ class NoForceTorqueSensorForTipError(UsageError):
 
 
 @dataclass
+class UnnamedSensorFrameError(UsageError):
+    """
+    Raised when a sensor is set up from a robot description without naming the body it
+    measures in.
+    """
+
+    sensor_type: type
+    """
+    The kind of sensor that names no frame.
+    """
+
+    def error_message(self) -> str:
+        return f"{self.sensor_type.__name__} does not name the body it measures in."
+
+    def suggest_correction(self) -> str:
+        return (
+            f"Give {self.sensor_type.__name__} a frame_name classproperty holding the "
+            "name the robot description gives that body."
+        )
+
+
+@dataclass
 class MissingWorldError(UsageError):
     """
     Raised when trying to access a world that is None, but a world is required for the

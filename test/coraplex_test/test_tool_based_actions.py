@@ -13,8 +13,9 @@ from coraplex.datastructures.enums import (
     PouringSide,
     WipingTechnique,
 )
-from coraplex.exceptions import WipingTargetMissing
+from coraplex.exceptions import ToolWithoutFootprint, WipingTargetMissing
 from coraplex.plans.failures import MotionMadeNoProgress
+from coraplex.robot_plans.mixins import Press
 from giskardpy.motion_statechart.exceptions import NoProgressError
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.monitors.progress_monitors import StillProgressing
@@ -547,8 +548,18 @@ def test_a_patch_narrower_than_the_tool_is_wiped_along_one_line(tool_action_worl
 # %% pressing while wiping
 
 
-def pressing_wipe(world, robot, sponge, **arguments) -> WipingAction:
+def press_of(**arguments) -> Press:
     """
+    :param arguments: What to vary from a plain press.
+    :return: A press of a known force.
+    """
+    return Press(force=Vector3(z=10.0), **arguments)
+
+
+def pressing_wipe(world, robot, sponge, press=None, **arguments) -> WipingAction:
+    """
+    :param press: How hard to press, defaulting to what :func:`press_of` gives.
+    :param arguments: What else to give the wipe.
     :return: A wipe that presses onto a patch at a known height.
     """
     return WipingAction(
@@ -557,7 +568,7 @@ def pressing_wipe(world, robot, sponge, **arguments) -> WipingAction:
         target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
         technique=WipingTechnique.SPREAD,
         length=0.3,
-        desired_force=Vector3(z=10.0),
+        press=press if press is not None else press_of(),
         **arguments,
     )
 
@@ -589,7 +600,7 @@ def test_a_press_tracks_ahead_of_its_own_offset_when_asked_to(tool_action_world)
     sponge = Sponge(root=tool_body)
     lead_time = 0.04
 
-    action = pressing_wipe(world, robot, sponge, admittance_lead_time=lead_time)
+    action = pressing_wipe(world, robot, sponge, press=press_of(lead_time=lead_time))
     motions = _expanded_aligned_motions(action, context)
     trajectory = next(
         node
@@ -600,30 +611,6 @@ def test_a_press_tracks_ahead_of_its_own_offset_when_asked_to(tool_action_world)
     )
 
     assert trajectory.lead_time == lead_time
-
-
-def test_a_wipe_travels_as_fast_as_its_tracked_point_runs_ahead(tool_action_world):
-    """
-    The tool follows a point placed ahead of it along the path, so how far ahead that
-    point sits is how fast the tool travels.
-    """
-    world, robot, context, container, tool_body = tool_action_world
-    sponge = Sponge(root=tool_body)
-    look_ahead_distance = 0.0025
-
-    action = pressing_wipe(
-        world, robot, sponge, look_ahead_distance=look_ahead_distance
-    )
-    motions = _expanded_aligned_motions(action, context)
-    trajectory = next(
-        node
-        for group in motions[0].motion_chart.nodes
-        if isinstance(group, Goal)
-        for node in group.nodes
-        if isinstance(node, AdmittanceCartesianTrajectory)
-    )
-
-    assert trajectory.look_ahead_distance == look_ahead_distance
 
 
 def test_a_wipe_can_be_capped_to_a_travel_speed(tool_action_world):
@@ -660,7 +647,7 @@ def test_a_press_yields_only_as_far_as_it_is_allowed_to_travel(tool_action_world
     sponge = Sponge(root=tool_body)
     travel = Vector3(x=0.0, y=0.0, z=0.03)
 
-    action = pressing_wipe(world, robot, sponge, admittance_travel=travel)
+    action = pressing_wipe(world, robot, sponge, press=press_of(travel=travel))
     motions = _expanded_aligned_motions(action, context)
     trajectory = next(
         node
@@ -671,3 +658,62 @@ def test_a_press_yields_only_as_far_as_it_is_allowed_to_travel(tool_action_world
     )
 
     assert trajectory.maximum_offset is travel
+
+
+# %% a tool the path cannot be sized from
+
+
+def _add_body_without_collision(world, name, position):
+    body = Body(name=PrefixedName(name))
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body)
+        world.add_connection(
+            FixedConnection(
+                parent=world.root,
+                child=body,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    *position, reference_frame=world.root
+                ),
+            )
+        )
+    return body
+
+
+def _wipe_with(world, robot, tool_body, **arguments):
+    return WipingAction(
+        arm=robot.right_arm,
+        tool=Sponge(root=tool_body),
+        target_pose=Pose.from_xyz_rpy(x=2.4, y=2.2, z=1.0, reference_frame=world.root),
+        length=0.3,
+        **arguments,
+    )
+
+
+@pytest.mark.parametrize("technique", list(WipingTechnique))
+def test_a_tool_without_a_footprint_is_rejected(tool_action_world, technique):
+    """
+    How wide a strip the tool covers is what sizes the path, and a tool with no
+    collision shape states no width.
+    """
+    world, robot, context, _, _ = tool_action_world
+    shapeless = _add_body_without_collision(world, "shapeless_tool", (1.0, 1.0, 1.0))
+
+    action = _wipe_with(world, robot, shapeless, technique=technique)
+
+    with pytest.raises(ToolWithoutFootprint):
+        _expanded_aligned_motions(action, context)
+
+
+@pytest.mark.parametrize("technique", list(WipingTechnique))
+def test_a_tool_flat_on_one_axis_is_rejected(tool_action_world, technique):
+    """
+    A footprint with no extent across covers a strip of no width, which no number of
+    lanes or turns can cover a patch with.
+    """
+    world, robot, context, _, _ = tool_action_world
+    flat = _add_box_body(world, "flat_tool", (0.04, 0.0, 0.2), (1.0, 1.0, 1.0))
+
+    action = _wipe_with(world, robot, flat, technique=technique)
+
+    with pytest.raises(ToolWithoutFootprint):
+        _expanded_aligned_motions(action, context)

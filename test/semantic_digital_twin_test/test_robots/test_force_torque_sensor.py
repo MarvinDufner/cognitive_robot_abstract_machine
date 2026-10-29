@@ -18,22 +18,17 @@ from semantic_digital_twin.robots.input_source import (
 )
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import (
-    TracyFrame,
     TracyLeftForceTorqueSensor,
     TracyRightForceTorqueSensor,
-    TracyWrenchService,
     TracyWrenchTopic,
 )
 from semantic_digital_twin.world_description.world_entity import (
     KinematicStructureEntity,
 )
 
-WRIST_SENSOR_FRAME = "wrist_ft_sensor_frame"
 TOOL_FRAME = "hand_gripper_tool_frame"
 LEFT_TOOL_FRAME = "l_gripper_tool_frame"
 RIGHT_TOOL_FRAME = "r_gripper_tool_frame"
-LEFT_DRIVER_WRENCH_FRAME = "left_tool0"
-"""The frame the left arm's driver stamps its wrench messages with."""
 
 
 @dataclass(eq=False)
@@ -43,25 +38,13 @@ class SensorClosestToTip(ForceTorqueSensor):
     already carries one.
     """
 
-    def setup_hardware_interfaces(self):
-        pass
-
-    def setup_joint_states(self) -> List[JointState]:
-        return []
-
-    @classmethod
-    def setup_default_configuration_in_world_below_robot_root(
-        cls, robot_root: KinematicStructureEntity
-    ):
-        raise NotImplementedError
-
 
 def test_the_hsrb_annotates_a_sensor_at_its_wrist(hsr_world_copy):
     sensors = hsr_world_copy.get_semantic_annotations_by_type(ForceTorqueSensor)
 
     assert len(sensors) == 1
     assert isinstance(sensors[0], HSRBWristForceTorqueSensor)
-    assert sensors[0].root.name.name == WRIST_SENSOR_FRAME
+    assert sensors[0].root.name.name == HSRBWristForceTorqueSensor.frame_name
 
 
 def test_the_sensor_is_found_from_the_tip_it_measures_for(hsr_world_copy):
@@ -69,7 +52,7 @@ def test_the_sensor_is_found_from_the_tip_it_measures_for(hsr_world_copy):
 
     sensor = ForceTorqueSensor.for_tip(hsr_world_copy, tool)
 
-    assert sensor.root.name.name == WRIST_SENSOR_FRAME
+    assert sensor.root.name.name == HSRBWristForceTorqueSensor.frame_name
 
 
 def test_the_sensor_closest_to_the_tip_wins(hsr_world_copy):
@@ -84,7 +67,7 @@ def test_the_sensor_closest_to_the_tip_wins(hsr_world_copy):
 
     sensor = ForceTorqueSensor.for_tip(hsr_world_copy, tool)
 
-    assert sensor.root.name.name == WRIST_SENSOR_FRAME
+    assert sensor.root.name.name == HSRBWristForceTorqueSensor.frame_name
 
 
 def test_a_tip_off_the_sensor_chain_has_no_sensor(hsr_world_copy):
@@ -177,67 +160,43 @@ def test_the_two_arms_of_a_two_armed_robot_read_their_own_topic():
     """
     One topic for both arms would feed each admittance the other hand's contact.
     """
-    assert TracyLeftForceTorqueSensor.topic_name is TracyWrenchTopic.LEFT_RAW
-    assert TracyRightForceTorqueSensor.topic_name is TracyWrenchTopic.RIGHT_RAW
+    assert TracyLeftForceTorqueSensor.topic_name is TracyWrenchTopic.LEFT
+    assert TracyRightForceTorqueSensor.topic_name is TracyWrenchTopic.RIGHT
 
 
-def test_each_arm_declares_everything_its_compensation_needs(tracy_world):
+@pytest.mark.parametrize(
+    "sensor", [TracyLeftForceTorqueSensor, TracyRightForceTorqueSensor]
+)
+def test_a_sensor_whose_driver_compensates_it_states_no_compensation(sensor):
     """
-    A node is started per arm from these alone, so a name left pointing at the other arm
-    would compensate one sensor against the other's readings.
+    Tracy's driver publishes the contact wrench already, so a load taken off it here
+    would be subtracted twice, and nothing is left to zero or to republish.
     """
-    for sensor, service in (
-        (TracyLeftForceTorqueSensor, TracyWrenchService.LEFT),
-        (TracyRightForceTorqueSensor, TracyWrenchService.RIGHT),
-    ):
-        assert sensor.retare_service is service
-        assert sensor.gravity_frame is TracyFrame.LEVEL
+    assert sensor.compensation is None
 
 
-def test_the_frame_gravity_is_measured_against_is_level(tracy_world):
-    """
-    The load's weight is removed using the sensor's orientation against this frame, so a
-    frame that is itself tilted would leave part of the weight in the reading.
-    """
-    level = tracy_world.get_body_by_name(TracyFrame.LEVEL)
-
-    world_R_level = tracy_world.compute_forward_kinematics_np(tracy_world.root, level)[
-        :3, :3
-    ]
-
-    np.testing.assert_allclose(world_R_level[2], [0.0, 0.0, 1.0], atol=1e-9)
-
-
-def test_each_arm_is_zeroed_through_its_own_compensation(tracy_world):
-    """
-    Each arm needs its own compensation node, so zeroing one must not zero the other.
-    """
-    assert TracyLeftForceTorqueSensor.retare_service is TracyWrenchService.LEFT
-    assert TracyRightForceTorqueSensor.retare_service is TracyWrenchService.RIGHT
-
-
-def test_a_sensor_nothing_compensates_has_nothing_to_be_zeroed_through(hsr_world_copy):
+def test_a_sensor_nothing_compensates_states_no_compensation():
     """
     The default says so, rather than naming a service no node offers.
     """
-    sensor = ForceTorqueSensor.for_tip(
-        hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
-    )
-
-    assert sensor.retare_service is None
+    assert SensorClosestToTip.compensation is None
 
 
 def test_the_sensor_sits_in_the_frame_its_readings_are_stamped_with(tracy_world):
     """
     A reading is written axis by axis, so the sensor has to be rooted where the driver
-    measures. The wrist's own ``ft_frame`` sits at the same place but half a turn around,
-    which would silently flip two of the three axes.
+    measures.
+
+    The wrist's own ``ft_frame`` sits at the same place but half a turn around, which
+    would silently flip two of the three axes.
     """
     sensor = ForceTorqueSensor.for_tip(
         tracy_world, tracy_world.get_body_by_name(LEFT_TOOL_FRAME)
     )
 
-    assert sensor.root is tracy_world.get_body_by_name(LEFT_DRIVER_WRENCH_FRAME)
+    assert sensor.root is tracy_world.get_body_by_name(
+        TracyLeftForceTorqueSensor.frame_name
+    )
 
     ft_frame = tracy_world.get_body_by_name("left_ft_frame")
     np.testing.assert_allclose(
@@ -292,3 +251,47 @@ def test_a_robot_reads_its_sensors_from_the_topics_they_declare(
     assert sensor.source.topic_name == sensor.topic_name
     assert sensor.source in robot.get_input_synchronizers()
     sensor.use_simulated_source()
+
+
+# %% the compensation each sensor declares
+
+
+def test_a_compensation_node_never_publishes_onto_the_topic_it_reads():
+    """
+    A node whose output is its own input compensates every reading again and again, and
+    hands the controller a mix of raw and repeatedly compensated ones.
+    """
+    compensation = HSRBWristForceTorqueSensor.compensation
+
+    assert compensation.uncompensated_topic_name != (
+        HSRBWristForceTorqueSensor.topic_name
+    )
+
+
+def test_a_compensated_sensor_states_everything_its_node_needs():
+    """
+    A node is started from the annotation alone, so a name missing here is a name
+    nothing can supply.
+    """
+    compensation = HSRBWristForceTorqueSensor.compensation
+
+    assert compensation.uncompensated_topic_name
+    assert compensation.gravity_frame
+    assert compensation.retare_service
+    assert compensation.load.mass > 0.0
+
+
+@pytest.mark.parametrize(
+    "sensor",
+    [
+        TracyLeftForceTorqueSensor,
+        TracyRightForceTorqueSensor,
+        HSRBWristForceTorqueSensor,
+    ],
+)
+def test_every_sensor_names_the_frame_it_measures_in(sensor):
+    """
+    The frame is what places the sensor in the world and what tf is asked for, so a
+    sensor that names none can be set up from neither.
+    """
+    assert sensor.frame_name is not None

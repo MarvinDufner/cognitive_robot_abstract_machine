@@ -67,14 +67,16 @@ class MeasuredWrenchPublisher(StateChangeCallback, HasROS2Node):
         message = WrenchStamped()
         message.header.stamp = self.node.get_clock().now().to_msg()
         message.header.frame_id = str(self.sensor.root.name)
-        force = self.sensor.measured_force
-        torque = self.sensor.measured_torque
-        message.wrench.force.x = float(force[0])
-        message.wrench.force.y = float(force[1])
-        message.wrench.force.z = float(force[2])
-        message.wrench.torque.x = float(torque[0])
-        message.wrench.torque.y = float(torque[1])
-        message.wrench.torque.z = float(torque[2])
+        (
+            message.wrench.force.x,
+            message.wrench.force.y,
+            message.wrench.force.z,
+        ) = map(float, self.sensor.measured_force)
+        (
+            message.wrench.torque.x,
+            message.wrench.torque.y,
+            message.wrench.torque.z,
+        ) = map(float, self.sensor.measured_torque)
         self.publisher.publish(message)
 
     def stop(self) -> None:

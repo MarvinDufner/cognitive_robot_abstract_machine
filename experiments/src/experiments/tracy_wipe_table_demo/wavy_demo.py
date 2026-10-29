@@ -6,8 +6,8 @@ The plan is the one of :mod:`experiments.tracy_wipe_table_demo.demo`: the descen
 for the first crest it meets and the press holds the force from there on, so how well
 contact is kept over the crests is what this run measures.
 
-The execution type is the first command line argument, defaulting to
-``PHYSICALLY_SIMULATED``, and the wiping technique the second::
+The execution type is the first command line argument and the wiping technique the
+second, both defaulting to what :func:`main` takes::
 
     python3 wavy_demo.py PHYSICALLY_SIMULATED WIPE
 
@@ -25,10 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from coraplex.datastructures.enums import ExecutionType, WipingTechnique
-from experiments.tracy_wipe_table_demo.demo import (
-    TracyWipeTableDemonstration,
-    WIPED_PATCH_LENGTH,
-)
+from experiments.tracy_wipe_table_demo.demo import TracyWipeTableDemonstration
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
@@ -37,28 +34,6 @@ from semantic_digital_twin.world_description.connections import FixedConnection
 from semantic_digital_twin.world_description.geometry import Cylinder
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
-
-# %% the bench's ridges
-
-WAVE_AMPLITUDE = 0.02
-"""
-How far the crests stand above the bench top, in m.
-"""
-
-WAVE_LENGTH = 0.12
-"""
-Distance between two crests, in m, along the sweep.
-"""
-
-WAVE_RADIUS = 0.06
-"""
-Radius of the ridges, in m: the curvature the tool is thrown off by at a crest.
-"""
-
-RIDGE_LENGTH = 0.6
-"""
-Length of each ridge across the bench, in m: wider than the wiped patch.
-"""
 
 # %% the demonstration
 
@@ -69,24 +44,24 @@ class TracyWipeWavyBenchDemonstration(TracyWipeTableDemonstration):
     Tracy wipes a bench with ridges across it.
     """
 
-    wave_amplitude: float = WAVE_AMPLITUDE
+    wave_amplitude: float = 0.02
     """
     How far the crests stand above the bench top, in m.
     """
 
-    wave_length: float = WAVE_LENGTH
+    wave_length: float = 0.12
     """
-    Distance between two crests, in m.
-    """
-
-    wave_radius: float = WAVE_RADIUS
-    """
-    Radius of the ridges, in m.
+    Distance between two crests, in m, along the sweep.
     """
 
-    ridge_length: float = RIDGE_LENGTH
+    wave_radius: float = 0.06
     """
-    Length of each ridge across the bench, in m.
+    Radius of the ridges, in m: the curvature the tool is thrown off by at a crest.
+    """
+
+    ridge_length: float = 0.6
+    """
+    Length of each ridge across the bench, in m: wider than the wiped patch.
     """
 
     def populate_scene(self, world: World) -> None:
@@ -96,7 +71,7 @@ class TracyWipeWavyBenchDemonstration(TracyWipeTableDemonstration):
         super().populate_scene(world)
         bench_top = self.bench_height(world)
         centre = self.wiped_pose(world).to_np()[:3, 3]
-        crests = int(0.5 * WIPED_PATCH_LENGTH / self.wave_length) + 2
+        crests = int(0.5 * self.patch_length / self.wave_length) + 2
         with world.modify_world():
             for index in range(-crests, crests + 1):
                 world.add_connection(
@@ -151,15 +126,8 @@ def main(
 
 
 if __name__ == "__main__":
+    # Only what the command line names, so each default lives once, in main.
     main(
-        execution_type=(
-            ExecutionType[sys.argv[1]]
-            if len(sys.argv) > 1
-            else ExecutionType.PHYSICALLY_SIMULATED
-        ),
-        technique=(
-            WipingTechnique[sys.argv[2]]
-            if len(sys.argv) > 2
-            else TracyWipeWavyBenchDemonstration.technique
-        ),
+        *(ExecutionType[name] for name in sys.argv[1:2]),
+        *(WipingTechnique[name] for name in sys.argv[2:3]),
     )

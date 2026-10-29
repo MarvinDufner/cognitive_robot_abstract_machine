@@ -36,6 +36,7 @@ from coraplex.exceptions import (
     MissingWaypoints,
     WipingTargetMissing,
 )
+from coraplex.exceptions import ToolWithoutFootprint
 from coraplex.plans.failures import MotionMadeNoProgress
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
@@ -43,6 +44,7 @@ from coraplex.robot_plans.actions.base import ActionDescription
 from coraplex.robot_plans.mixins import (
     CartesianVelocityLimitParameters,
     HasTcpGoalThresholds,
+    Press,
 )
 from coraplex.robot_plans.actions.composite.tool_paths import (
     ShearXYProfile,
@@ -136,13 +138,6 @@ class ToolMotionAction(
     Keep every Nth sampled waypoint for execution.
     """
 
-    standing_pose: Optional[Pose] = None
-    """
-    Where the robot will stand while this motion runs, for :attr:`skip_unreachable`.
-
-    Defaults to where it stands when the plan is built.
-    """
-
     skip_unreachable: bool = False
     """
     Drop the waypoints the arm cannot reach from where the robot stands, so a path that
@@ -150,6 +145,14 @@ class ToolMotionAction(
 
     .. note:: The bound is purely kinematic, so a kept waypoint may still be blocked or
         need a posture the arm cannot hold.
+    """
+
+    press: Optional[Press] = None
+    """
+    How hard the tool is held against the target while it moves.
+
+    ``None`` follows the tool path as generated, which keeps the tool just clear of the
+    surface.
     """
 
     @abstractmethod
@@ -178,7 +181,7 @@ class ToolMotionAction(
         """
         path_frame = self._path_frame()
         _, points, _ = self._build_tool_path().sample(frame=path_frame)
-        if self.desired_force is not None:
+        if self.press is not None:
             points = (
                 points + path_frame.to_np()[:3, 2] * self.tool.contact_face_distance
             )
@@ -198,13 +201,14 @@ class ToolMotionAction(
         :param points: Sampled path points in the world frame.
         :return: Which of them the arm can reach from where the robot stands, measured
             horizontally, as the arm's own reach is.
+
+        .. note:: Where the robot stands now, which is where it will wipe from: an
+            action is expanded when the steps before it have run, so a plan that drives
+            somewhere first has already arrived.
         """
-        if self.standing_pose is None:
-            standing = self.world.compute_forward_kinematics_np(
-                self.world.root, self.robot.root
-            )[:2, 3]
-        else:
-            standing = self.standing_pose.to_np()[:2, 3]
+        standing = self.world.compute_forward_kinematics_np(
+            self.world.root, self.robot.root
+        )[:2, 3]
         distances = np.linalg.norm(points[:, :2] - standing, axis=1)
         return distances <= self.arm.maximum_reach()
 
@@ -218,45 +222,6 @@ class ToolMotionAction(
         if target is None:
             return []
         return self.tool.tool_alignment(target)
-
-    admittance_mass: Optional[Vector3] = None
-    """
-    Virtual mass the press yields with, per axis, in kg.
-
-    ``None`` leaves the default. Only meaningful together with :attr:`desired_force`.
-    """
-    admittance_damping: Optional[Vector3] = None
-    """
-    Virtual damping the press yields with, per axis, in N s/m.
-
-    ``None`` leaves the default. Only meaningful together with :attr:`desired_force`.
-    """
-    desired_force: Optional[Vector3] = None
-    """
-    Contact force to hold against the target while the tool moves, in the world frame.
-
-    ``None`` follows the tool path as generated, which keeps the tool just clear of the
-    surface.
-    """
-    admittance_lead_time: float = 0.0
-    """
-    How far ahead of the press's own offset the tracked point is placed, in s.
-
-    Only meaningful together with :attr:`desired_force`.
-    """
-    admittance_travel: Optional[Vector3] = None
-    """
-    How far the press may yield from the path, per axis, in m.
-
-    ``None`` leaves the default. Only meaningful together with :attr:`desired_force`.
-    """
-    look_ahead_distance: Optional[float] = None
-    """
-    How far along the path ahead of the tool the tracked point is placed, in m, which is
-    what sets how fast the tool travels.
-
-    ``None`` leaves the default.
-    """
 
     @property
     def _action_plan(self) -> PlanNode:
@@ -274,12 +239,7 @@ class ToolMotionAction(
                     tip=self.tool.get_tool_frame(),
                     position_threshold=self.position_threshold,
                     orientation_threshold=self.orientation_threshold,
-                    desired_force=self.desired_force,
-                    admittance_mass=self.admittance_mass,
-                    admittance_damping=self.admittance_damping,
-                    admittance_travel=self.admittance_travel,
-                    admittance_lead_time=self.admittance_lead_time,
-                    look_ahead_distance=self.look_ahead_distance,
+                    press=self.press,
                     max_linear_velocity=self.max_linear_velocity,
                 )
             ]
@@ -432,25 +392,38 @@ class WipingAction(ToolMotionAction):
 
     def _build_tool_path(self) -> ToolPath:
         if self.surface is not None:
-            if self.desired_force is None:
-                return build_surface_path(self.surface, technique=self.technique)
             # Pressing puts the path on the surface and lets the admittance regulate how
             # hard; the default clearance would keep the tool just above it instead.
+            clearance = {} if self.press is None else {"approach_clearance": 0.0}
             return build_surface_path(
-                self.surface, technique=self.technique, approach_clearance=0.0
+                self.surface, technique=self.technique, **clearance
             )
-        footprint = self.tool.root.collision.as_bounding_box_collection_in_frame(
+        if self.technique is WipingTechnique.SPREAD:
+            return self._lane_path(self._tool_span)
+        if self.technique is WipingTechnique.SHEAR:
+            return self._circling_path(self._tool_span)
+        return self._spiral_path(self._tool_span)
+
+    @property
+    def _tool_span(self) -> float:
+        """
+        :return: How wide a strip the tool covers, in m.
+        :raises ToolWithoutFootprint: If the tool states no such strip.
+
+        Only the tool's face is held against the surface; which way it points along the
+        path is left to the arm, so a wider strip than its narrow side cannot be relied
+        on.
+        """
+        shapes = self.tool.root.collision
+        if not shapes:
+            raise ToolWithoutFootprint(tool_name=str(self.tool.root.name))
+        footprint = shapes.as_bounding_box_collection_in_frame(
             self.tool.root
         ).bounding_box()
-        # Only the tool's face is held against the surface; which way it points along
-        # the path is left to the arm, so a wider strip than its narrow side cannot be
-        # relied on.
-        tool_span = min(footprint.depth, footprint.width)
-        if self.technique is WipingTechnique.SPREAD:
-            return self._lane_path(tool_span)
-        if self.technique is WipingTechnique.SHEAR:
-            return self._circling_path(tool_span)
-        return self._spiral_path(tool_span)
+        span = min(footprint.depth, footprint.width)
+        if span <= 0.0:
+            raise ToolWithoutFootprint(tool_name=str(self.tool.root.name))
+        return span
 
     def _inscribed_radius(self, tool_span: float) -> float:
         """
@@ -458,8 +431,8 @@ class WipingAction(ToolMotionAction):
         :return: The largest radius a path circling the patch's centre can have while
             the tool stays on the patch, in m.
         """
-        across = float(self.width) if self.width > 0.0 else float(self.length)
-        return max(0.0, 0.5 * min(float(self.length), across) - 0.5 * tool_span)
+        across = self.width if self.width > 0.0 else self.length
+        return max(0.0, 0.5 * min(self.length, across) - 0.5 * tool_span)
 
     def _lane_path(self, tool_span: float) -> ToolPath:
         """
@@ -470,7 +443,7 @@ class WipingAction(ToolMotionAction):
         The path is the tool's centre line, so it stops half a span short of the patch
         at every edge and the tool still covers it to the edges.
         """
-        lane_length = max(0.0, float(self.length) - tool_span)
+        lane_length = max(0.0, self.length - tool_span)
         if self.width <= 0.0:
             return ToolPath(
                 [
@@ -482,12 +455,12 @@ class WipingAction(ToolMotionAction):
                             # lane is the line it has to cover.
                             tau,
                             length=0.5 * lane_length,
-                            cycles=max(1.0, float(self.cycles)),
+                            cycles=max(1.0, self.cycles),
                         ),
                     )
                 ]
             )
-        lane_span = max(0.0, float(self.width) - tool_span)
+        lane_span = max(0.0, self.width - tool_span)
         # One more lane than the spans between them, so that neighbouring lanes are at
         # most a tool apart and no strip is left untouched.
         lanes = max(2, math.ceil(lane_span / tool_span) + 1)
@@ -513,7 +486,7 @@ class WipingAction(ToolMotionAction):
             corners.
         """
         radius = self._inscribed_radius(tool_span)
-        turns = max(1.0, float(math.ceil(radius / tool_span)))
+        turns = max(1.0, math.ceil(radius / tool_span))
         return ToolPath(
             [
                 ToolPathSegment(
@@ -542,7 +515,7 @@ class WipingAction(ToolMotionAction):
                         tau,
                         ShearXYProfile(
                             shear_amp=radius,
-                            shear_cycles=max(1.0, float(self.cycles)),
+                            shear_cycles=max(1.0, self.cycles),
                         ),
                     ),
                 )
@@ -573,14 +546,14 @@ class WipingAction(ToolMotionAction):
         except MotionMadeNoProgress:
             if not self._tool_reached_final_waypoint():
                 raise
-        self._report_how_far_the_tool_got()
+        self._log_how_far_the_tool_got()
 
-    def _report_how_far_the_tool_got(self) -> None:
+    def _log_how_far_the_tool_got(self) -> None:
         """
         Log where the tool ended up relative to the path it was given.
         """
         remaining = self._distance_to_final_waypoint()
-        if remaining <= float(self.final_waypoint_success_tolerance):
+        if remaining <= self.final_waypoint_success_tolerance:
             logger.info(f"wiped to the end of the path, {remaining:.3f} m from it")
             return
         logger.warning(
@@ -594,21 +567,25 @@ class WipingAction(ToolMotionAction):
         :return: True if the tool's root ended up within the success tolerance of the
             final waypoint.
         """
-        return self._distance_to_final_waypoint() <= float(
-            self.final_waypoint_success_tolerance
+        return (
+            self._distance_to_final_waypoint() <= self.final_waypoint_success_tolerance
         )
 
     def _distance_to_final_waypoint(self) -> float:
         """
         :return: How far the tool's root ended up from the last waypoint of its path.
         """
-        tool_point = self.world.transform(
-            self.tool.root.global_pose.position, self.world.root
+        tool = (
+            self.world.transform(self.tool.root.global_pose.position, self.world.root)
+            .to_np()
+            .flatten()[:3]
         )
-        tool_xyz = np.asarray(tool_point.to_np(), dtype=float).reshape(-1)[:3]
-        goal_point = self.world.transform(self._waypoints[-1], self.world.root)
-        goal_xyz = np.asarray(goal_point.to_np(), dtype=float).reshape(-1)[:3]
-        return float(np.linalg.norm(tool_xyz - goal_xyz))
+        goal = (
+            self.world.transform(self._waypoints[-1], self.world.root)
+            .to_np()
+            .flatten()[:3]
+        )
+        return float(np.linalg.norm(tool - goal))
 
 
 @dataclass(kw_only=True)

@@ -43,7 +43,7 @@ from semantic_digital_twin.robots.robot_parts import (
     Camera,
     ForceTorqueSensor,
     ForceTorqueSensorLoad,
-    WrenchTopic,
+    WrenchCompensation,
     Finger,
     Neck,
     Torso,
@@ -68,6 +68,49 @@ class HSRBTopic(StrEnum):
     ODOMETRY = "laser_odom"
     """
     The topic the mobile base reports its odometry on.
+    """
+
+    RAW_WRENCH = "/wrist_wrench/raw"
+    """
+    What the wrist's force/torque sensor publishes, still carrying the gripper's weight.
+    """
+
+    LOAD_COMPENSATED_WRENCH = "/wrist_wrench/load_compensated"
+    """
+    The external contact wrench, once this workspace's compensation node has removed the
+    gripper's weight and the sensor's bias.
+
+    .. warning:: Named apart from the driver's own ``compensated`` topic on purpose. Two
+        publishers on one topic would hand the controller alternating compensations,
+        which differ by the gripper's weight.
+    """
+
+
+class HSRBService(StrEnum):
+    """
+    The services of the HSRB that something outside the kinematic chain has to name.
+    """
+
+    RETARE_WRENCH = "/wrist_wrench/retare"
+    """
+    Zeroes the wrist sensor's compensation, so what it reads afterwards is contact
+    alone.
+    """
+
+
+class HSRBFrame(StrEnum):
+    """
+    Frames of the HSRB that something outside the kinematic chain has to name.
+    """
+
+    LEVEL = "base_footprint"
+    """
+    The frame on the floor below the base: level, so its z axis points up.
+    """
+
+    WRIST_FORCE_TORQUE_SENSOR = "wrist_ft_sensor_frame"
+    """
+    The frame the wrist's force/torque sensor measures in.
     """
 
 
@@ -226,44 +269,32 @@ class HSRBWristForceTorqueSensor(ForceTorqueSensor):
     The Minebea six-axis force/torque sensor between the HSRB's wrist and its gripper.
     """
 
-    def setup_hardware_interfaces(self):
-        pass
-
-    def setup_joint_states(self) -> List[JointState]:
-        return []
-
-    @classmethod
-    def setup_default_configuration_in_world_below_robot_root(
-        cls, robot_root: KinematicStructureEntity
-    ) -> Self:
-        return cls(
-            root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "wrist_ft_sensor_frame"
-            )
-        )
+    @classproperty
+    def frame_name(cls) -> str:
+        return HSRBFrame.WRIST_FORCE_TORQUE_SENSOR
 
     @classproperty
     def topic_name(cls) -> str:
-        return WrenchTopic.COMPENSATED
+        return HSRBTopic.LOAD_COMPENSATED_WRENCH
 
     @classproperty
-    def gravity_frame(cls) -> str:
-        return "base_footprint"
-
-    @classproperty
-    def load(cls) -> ForceTorqueSensorLoad:
+    def compensation(cls) -> WrenchCompensation:
         """
         The gripper hanging past the sensor, identified from a full-orientation sweep.
 
-        The offsets are a starting point rather than a constant: they drift across
-        power cycles, so a re-tare in free space corrects them per session, while the
-        mass and first moment stay put.
+        .. note:: The offsets drift across power cycles, so a re-tare in free space
+            corrects them per session, while the mass and first moment stay put.
         """
-        return ForceTorqueSensorLoad(
-            mass=0.5776,
-            first_moment=np.array([0.0010, 0.0011, -0.0292]),
-            force_offset=np.array([-9.290, 12.430, -57.135]),
-            torque_offset=np.array([-0.0585, -0.0315, 0.1374]),
+        return WrenchCompensation(
+            uncompensated_topic_name=HSRBTopic.RAW_WRENCH,
+            gravity_frame=HSRBFrame.LEVEL,
+            retare_service=HSRBService.RETARE_WRENCH,
+            load=ForceTorqueSensorLoad(
+                mass=0.5776,
+                first_moment=np.array([0.0010, 0.0011, -0.0292]),
+                force_offset=np.array([-9.290, 12.430, -57.135]),
+                torque_offset=np.array([-0.0585, -0.0315, 0.1374]),
+            ),
         )
 
 

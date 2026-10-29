@@ -11,7 +11,7 @@ from semantic_digital_twin.exceptions import (
 )
 from semantic_digital_twin.orm.ormatic_interface import *  # noqa
 from semantic_digital_twin.reasoning.predicates import LeftOf
-from semantic_digital_twin.robots.hsrb import HSRB
+from semantic_digital_twin.robots.hsrb import HSRB, HSRBWristForceTorqueSensor
 from semantic_digital_twin.robots.pr2 import (
     PR2,
     PR2BaseLidar,
@@ -31,7 +31,12 @@ from semantic_digital_twin.robots.pr2 import (
 )
 from semantic_digital_twin.robots.robot_parts import KinematicChain
 from semantic_digital_twin.robots.stretch import Stretch
-from semantic_digital_twin.robots.tracy import Tracy
+from semantic_digital_twin.robots.tracy import (
+    Tracy,
+    TracyCamera,
+    TracyLeftForceTorqueSensor,
+    TracyRightForceTorqueSensor,
+)
 from semantic_digital_twin.spatial_computations.ik_solver import (
     MaxIterationsException,
     UnreachableException,
@@ -493,7 +498,11 @@ def test_tracy_semantic_annotation(tracy_world):
     tracy_world._notify_model_change()
 
     assert len(tracy.all_end_effectors) == 2
-    assert len(tracy.all_sensors) == 1
+    assert {type(sensor) for sensor in tracy.all_sensors} == {
+        TracyCamera,
+        TracyLeftForceTorqueSensor,
+        TracyRightForceTorqueSensor,
+    }
 
 
 def test_hsrb_semantic_annotation(_hsr_world_setup):
@@ -503,7 +512,8 @@ def test_hsrb_semantic_annotation(_hsr_world_setup):
     assert len(hsrb.all_end_effectors) == 1
     assert len(hsrb.all_arms) == 1
 
-    assert len(hsrb.all_sensors) == 6
+    assert HSRBWristForceTorqueSensor in {type(sensor) for sensor in hsrb.all_sensors}
+    assert len(hsrb.all_sensors) == 7
     assert hsrb.mobile_base.torso is not None
 
 

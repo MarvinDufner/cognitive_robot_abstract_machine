@@ -3,7 +3,7 @@ The HSRB wipes a kitchen table, regulating how hard it presses with its wrist
 force/torque sensor.
 
 The wipe itself is coraplex's :class:`~coraplex.robot_plans.actions.composite.tool_based.
-WipingAction`; giving it a ``desired_force`` is what turns its geometric tool path into a
+WipingAction`; giving it a ``press`` is what turns its geometric tool path into a
 compliant one. The table is wider than the arm reaches, so the plan simply drives to each
 side in turn and wipes again -- each wipe covers what it can and stops when it can get no
 further.
@@ -21,10 +21,13 @@ import math
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from datetime import timedelta
 
 import numpy as np
 from typing_extensions import ClassVar, List, Optional, Tuple
+
+from krrood.ormatic.utils import classproperty
 
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import ExecutionType, WipingTechnique
@@ -33,6 +36,7 @@ from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
+from coraplex.robot_plans.mixins import Press
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
     ToolContactWrench,
@@ -68,100 +72,45 @@ from semantic_digital_twin.world_description.geometry import Box, Scale
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
-SPONGE_NAME = "wipe_sponge"
-"""
-Name of the sponge body bolted to the gripper.
-"""
 
-SPONGE_SCALE = Scale(0.08, 0.055, 0.03)
-"""
-Size of the sponge.
-"""
+class TableSide(Enum):
+    """
+    The four sides of a table, as outward normals in its own frame.
+    """
 
-SPONGE_CONTACT = ContactParameters(
-    friction=ContactFriction(sliding=0.4),
-    stiffness=ContactStiffness(time_constant=timedelta(milliseconds=500)),
-    impedance=ContactImpedance(minimum=0.4, maximum=0.7, width=0.01),
-)
-"""
-What the sponge's surface does when it is pressed onto something: soft over a centimetre
-of squash and only moderately grippy, as a damp sponge is.
+    FRONT = (1.0, 0.0)
+    BACK = (-1.0, 0.0)
+    LEFT = (0.0, 1.0)
+    RIGHT = (0.0, -1.0)
 
-.. warning:: The resolution time leaves the pad about as stiff as
-    :data:`CONTACT_STIFFNESS`. A tenth of it makes the pad a rigid block the press can
-    only chase: half the wipe out of contact, touching down at 132 N instead of 12 N.
-"""
 
-APPROACH_POSE = HomogeneousTransformationMatrix.from_xyz_rpy(x=2.0, y=5.705, z=0.0)
-"""
-Where the robot is put down in the kitchen, in front of the dining table.
-"""
+@dataclass(frozen=True)
+class TableSideStanding:
+    """
+    Where the base would stand to wipe from one side of a table.
+    """
 
-PRESS_FORCE = 15.0
-"""
-Contact force the admittance holds against the table, in N.
-"""
+    pose: Pose
+    """
+    Where the base stands, facing the table.
+    """
 
-PRESS_TRAVEL = Vector3(x=0.0, y=0.0, z=0.02)
-"""
-How far the press may yield from the path it follows, per axis, in m.
+    across: float
+    """
+    How far the arm has to reach across the table from there, in m.
+    """
 
-Only along the surface normal: the tool feels friction while it travels, and a press
-free to yield to that drifts against its own direction of travel until it stalls.
-"""
+    def preference(self, robot_position: np.ndarray) -> Tuple[float, float]:
+        """
+        :param robot_position: Where the robot stands now, in the world frame.
+        :return: What orders this side against the others: shallow sides first, since
+            the arm has to reach across the table, and among equals the one the robot
+            is already closest to.
+        """
+        return self.across, float(
+            np.linalg.norm(self.pose.to_np()[:2, 3] - robot_position)
+        )
 
-SPONGE_PROTRUSION = 0.02
-"""
-How far the sponge's pressing face stands beyond the fingertips holding it, in m.
-
-The fingers must stay clear of the surface while the press yields into it, and what is
-left of the sponge's thickness is what the fingers hold it by.
-"""
-
-STANDING_CLEARANCE = 0.05
-"""
-Gap left between the base and the table edge when standing at a side, in m.
-"""
-
-SIMULATED_CONTROL_PERIOD = 1 / 50
-"""
-Time between two simulated control cycles, in s, matching the rate coraplex simulates
-at.
-"""
-
-CONTACT_STIFFNESS = 2000.0
-"""
-Stiffness of the simulated table surface, in N/m.
-"""
-
-MAXIMUM_CONTACT_FORCE = 50.0
-"""
-Largest force the simulated surface pushes back with, in N.
-
-A control cycle is long enough that a fast approach registers as deep penetration, which
-this model would otherwise report as a spike of many kilonewtons.
-"""
-
-CONTACT_VELOCITY_GAIN = 4000.0
-"""
-Extra contact stiffness per metre per second of approach speed, in N s/m^2.
-
-Damps the simulated impact so the press settles instead of ringing.
-"""
-
-WAYPOINT_STRIDE = 10
-"""
-Keep every Nth point of the generated tool path.
-
-The path is sampled at 0.4 mm, far finer than a wipe needs, and the trajectory advances
-at most a couple of waypoints per control cycle, so the raw density alone decides how
-long the motion takes. Thinning it costs no coverage.
-"""
-
-OUTWARD_NORMALS = ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0))
-"""
-The four sides of a table, as outward normals in its own frame.
-"""
 
 # %% simulated contact
 
@@ -177,9 +126,12 @@ class SimulatedContactWrench(ToolContactWrench):
     contacts.
     """
 
-    surface_height: float = field(kw_only=True)
+    surface_height: Optional[float] = field(default=None, kw_only=True)
     """
     Height of the wiped surface in the world frame, in m.
+
+    ``None`` takes the top of :attr:`surface`, which is right for a surface that is one
+    slab and wrong for one carrying a fixture taller than it.
     """
 
     surface: Body = field(kw_only=True)
@@ -192,19 +144,25 @@ class SimulatedContactWrench(ToolContactWrench):
     Time between two readings, in s, used to measure how fast the tool approaches.
     """
 
-    stiffness: float = field(default=CONTACT_STIFFNESS, kw_only=True)
+    stiffness: float = field(default=2000.0, kw_only=True)
     """
     Stiffness of the simulated surface, in N/m.
+
+    .. warning:: A control cycle is long enough that a fast approach registers as deep
+        penetration, which this model would otherwise report as a spike of many
+        kilonewtons; :attr:`maximum_force` bounds that.
     """
 
-    velocity_gain: float = field(default=CONTACT_VELOCITY_GAIN, kw_only=True)
+    velocity_gain: float = field(default=4000.0, kw_only=True)
     """
-    Extra stiffness per unit approach speed, in N s/m^2.
+    Extra stiffness per metre per second of approach speed, in N s/m^2.
+
+    Damps the simulated impact so the press settles instead of ringing.
     """
 
-    maximum_force: float = field(default=MAXIMUM_CONTACT_FORCE, kw_only=True)
+    maximum_force: float = field(default=50.0, kw_only=True)
     """
-    Largest force this surface pushes back with, in N.
+    Largest force this surface pushes the whole contact face back with, in N.
     """
 
     face_samples: int = field(default=5, kw_only=True)
@@ -227,6 +185,14 @@ class SimulatedContactWrench(ToolContactWrench):
     """
 
     def __post_init__(self):
+        if self.surface_height is None:
+            self.surface_height = (
+                self.surface.collision.as_bounding_box_collection_in_frame(
+                    self.world.root
+                )
+                .bounding_box()
+                .max_z
+            )
         box = self.tool.collision.as_bounding_box_collection_in_frame(
             self.tool
         ).bounding_box()
@@ -244,18 +210,20 @@ class SimulatedContactWrench(ToolContactWrench):
             ]
         )
 
-    def is_over_the_surface(self, tool_position: np.ndarray) -> bool:
+    def over_the_surface(self, points: np.ndarray) -> np.ndarray:
         """
-        :param tool_position: Where the tool is, in the world frame.
-        :return: Whether the tool is above the surface rather than beside it, where
+        :param points: Points in the world frame, as columns.
+        :return: Which of them stand over the surface rather than beside it, where
             there is nothing to touch.
         """
         box = self.surface.collision.as_bounding_box_collection_in_frame(
             self.world.root
         ).bounding_box()
         return (
-            box.min_x <= tool_position[0] <= box.max_x
-            and box.min_y <= tool_position[1] <= box.max_y
+            (box.min_x <= points[0])
+            & (points[0] <= box.max_x)
+            & (box.min_y <= points[1])
+            & (points[1] <= box.max_y)
         )
 
     def contact_wrench(
@@ -269,10 +237,7 @@ class SimulatedContactWrench(ToolContactWrench):
         )
         points = (world_T_tool @ self._tool_face)[:3]
         penetrations = self.surface_height - points[2]
-        touching = penetrations > 0.0
-        for index in np.flatnonzero(touching):
-            if not self.is_over_the_surface(points[:, index]):
-                touching[index] = False
+        touching = (penetrations > 0.0) & self.over_the_surface(points)
 
         mean_penetration = (
             float(penetrations[touching].sum()) / self._tool_face.shape[1]
@@ -290,9 +255,12 @@ class SimulatedContactWrench(ToolContactWrench):
         per_point = (
             self.stiffness + self.velocity_gain * approach_speed
         ) / self._tool_face.shape[1]
-        magnitudes = np.clip(
-            penetrations * touching * per_point, 0.0, self.maximum_force
-        )
+        magnitudes = penetrations * touching * per_point
+        # The cap bounds what the whole face is pushed with. Scaling the springs down
+        # together rather than clipping each keeps the lopsidedness that is the torque.
+        pushed_with = magnitudes.sum()
+        if pushed_with > self.maximum_force:
+            magnitudes = magnitudes * (self.maximum_force / pushed_with)
         world_forces = np.zeros((3, len(magnitudes)))
         world_forces[2] = magnitudes
         levers = points - world_T_sensor[:3, 3][:, None]
@@ -317,6 +285,60 @@ class WipingDemonstration(RobotDemonstration, ABC):
     How the tool covers the surface: lanes, a spiral or a shear.
     """
 
+    sponge_name: str = "wipe_sponge"
+    """
+    Name of the sponge body bolted to the gripper.
+    """
+
+    sponge_scale: Scale = field(default_factory=lambda: Scale(0.08, 0.055, 0.03))
+    """
+    Size of the sponge, in m.
+    """
+
+    sponge_protrusion: float = 0.02
+    """
+    How far the sponge's pressing face stands beyond the fingertips holding it, in m.
+
+    The fingers must stay clear of the surface while the press yields into it, and what
+    is left of the sponge's thickness is what the fingers hold it by.
+    """
+
+    press: Press = field(
+        default_factory=lambda: Press(
+            force=Vector3(z=15.0),
+            # Only along the surface normal: the tool feels friction while it travels,
+            # and a press free to yield to that drifts against its own direction of
+            # travel until it stalls.
+            travel=Vector3(x=0.0, y=0.0, z=0.02),
+        )
+    )
+    """
+    How hard the tool is held against the surface, and how it may yield to get there.
+    """
+
+    simulated_control_period: float = 1 / 50
+    """
+    Time between two simulated control cycles, in s, matching the rate coraplex
+    simulates at.
+    """
+
+    @classproperty
+    def sponge_contact(cls) -> ContactParameters:
+        """
+        What the sponge's surface does when it is pressed onto something: soft over a
+        centimetre of squash and only moderately grippy, as a damp sponge is.
+
+        .. warning:: The resolution time leaves the pad about as stiff as
+            :attr:`SimulatedContactWrench.stiffness`. A tenth of it makes the pad a
+            rigid block the press can only chase: half the wipe out of contact,
+            touching down at 132 N instead of 12 N.
+        """
+        return ContactParameters(
+            friction=ContactFriction(sliding=0.4),
+            stiffness=ContactStiffness(time_constant=timedelta(milliseconds=500)),
+            impedance=ContactImpedance(minimum=0.4, maximum=0.7, width=0.01),
+        )
+
     def wiping_arm(self, world: World) -> Arm:
         """
         :param world: World holding the robot.
@@ -338,7 +360,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
         return 0.0
 
     def is_scene_populated(self, world: World) -> bool:
-        return world.is_kinematic_structure_entity_in_world_by_name(SPONGE_NAME)
+        return world.is_kinematic_structure_entity_in_world_by_name(self.sponge_name)
 
     def attach_sponge(self, world: World) -> Sponge:
         """
@@ -349,11 +371,11 @@ class WipingDemonstration(RobotDemonstration, ABC):
         """
         end_effector = self.wiping_arm(world).end_effector
         sponge_body = Body(
-            name=PrefixedName(SPONGE_NAME),
-            collision=ShapeCollection([Box(scale=SPONGE_SCALE)]),
-            visual=ShapeCollection([Box(scale=SPONGE_SCALE)]),
+            name=PrefixedName(self.sponge_name),
+            collision=ShapeCollection([Box(scale=self.sponge_scale)]),
+            visual=ShapeCollection([Box(scale=self.sponge_scale)]),
         )
-        SPONGE_CONTACT.apply_to([sponge_body])
+        self.sponge_contact.apply_to([sponge_body])
         sponge = Sponge(root=sponge_body)
         with world.modify_world():
             world.add_connection(
@@ -373,7 +395,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
         :param end_effector: The gripper holding the sponge.
         :return: Where the sponge sits in that gripper's tool frame: between the
             fingertips, turned so the fingers close on its narrow side, and sticking
-            :data:`SPONGE_PROTRUSION` past their tips.
+            :attr:`sponge_protrusion` past their tips.
         """
         fingertips = end_effector.fingertips
         grasp = fingertips.tool_P_grasp.to_np().flatten()
@@ -388,8 +410,8 @@ class WipingDemonstration(RobotDemonstration, ABC):
             x=float(grasp[0]),
             y=float(grasp[1]),
             z=tips_end_at
-            + SPONGE_PROTRUSION
-            - float(SPONGE_SCALE.z) / 2.0
+            + self.sponge_protrusion
+            - self.sponge_scale.z / 2.0
             + self.unmodelled_tool_length,
             # Turning the sponge's own y axis onto the closing axis lays its long side
             # across the fingers.
@@ -423,7 +445,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
         """
         if self.execution_type is ExecutionType.REAL:
             return []
-        tool = world.get_body_by_name(SPONGE_NAME)
+        tool = world.get_body_by_name(self.sponge_name)
         if self.simulation is None:
             pressed_with = self.contact_model(world)
         else:
@@ -459,6 +481,29 @@ class WipeTableDemonstration(WipingDemonstration):
     it. Set this to shorten a demonstration.
     """
 
+    approach_pose: HomogeneousTransformationMatrix = field(
+        default_factory=lambda: HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=2.0, y=5.705, z=0.0
+        )
+    )
+    """
+    Where the robot is put down in the kitchen, in front of the dining table.
+    """
+
+    standing_clearance: float = 0.05
+    """
+    Gap left between the base and the table edge when standing at a side, in m.
+    """
+
+    waypoint_stride: int = 10
+    """
+    Keep every Nth point of the generated tool path.
+
+    The path is sampled at 0.4 mm, far finer than a wipe needs, and the trajectory
+    advances at most a couple of waypoints per control cycle, so the raw density alone
+    decides how long the motion takes. Thinning it costs no coverage.
+    """
+
     def build_simulated_world(self) -> World:
         """
         Put the robot on its drive in an otherwise empty world; the kitchen is added by
@@ -469,7 +514,7 @@ class WipeTableDemonstration(WipingDemonstration):
             robots=[
                 RobotSpecification(
                     semantic_annotation_type=self.used_robot,
-                    odom_T_robot_start=APPROACH_POSE,
+                    odom_T_robot_start=self.approach_pose,
                 )
             ],
         ).to_domain_object()
@@ -505,103 +550,98 @@ class WipeTableDemonstration(WipingDemonstration):
                     tool=sponge,
                     surface=table.root,
                     technique=self.technique,
-                    pointer_stride=WAYPOINT_STRIDE,
+                    pointer_stride=self.waypoint_stride,
                     skip_unreachable=True,
-                    standing_pose=standing_pose,
-                    desired_force=Vector3(z=PRESS_FORCE),
-                    admittance_travel=PRESS_TRAVEL,
+                    press=self.press,
                 )
             )
         return sequential(steps, context=context)
 
     def contact_model(self, world: World) -> SimulatedContactWrench:
-        table = world.get_semantic_annotations_by_type(DiningTable)[0]
         return SimulatedContactWrench(
             world=world,
-            tool=world.get_body_by_name(SPONGE_NAME),
-            surface=table.root,
-            surface_height=self.surface_height(world, table),
-            control_period=SIMULATED_CONTROL_PERIOD,
-        )
-
-    @staticmethod
-    def surface_height(world: World, table: DiningTable) -> float:
-        """
-        :param world: World holding the table.
-        :param table: The table whose top is wanted.
-        :return: Height of the table top in the world frame, in m.
-        """
-        body = table.root
-        top_in_table_frame = (
-            body.collision.as_bounding_box_collection_in_frame(body)
-            .bounding_box()
-            .max_z
-        )
-        return (
-            float(world.compute_forward_kinematics_np(world.root, body)[2, 3])
-            + top_in_table_frame
+            tool=world.get_body_by_name(self.sponge_name),
+            surface=world.get_semantic_annotations_by_type(DiningTable)[0].root,
+            control_period=self.simulated_control_period,
         )
 
     def standing_poses(self, world: World, table: DiningTable) -> List[Pose]:
         """
-        Where the base can stand to wipe, one pose per side of the table.
-
         :param world: World holding the table and the robot.
         :param table: The table being wiped.
-        :return: Poses just clear of each edge, facing the table, nearest side first.
+        :return: Where the base can stand to wipe, one pose per usable side, just clear
+            of the edge and facing the table, nearest side first.
+        """
+        usable = [
+            side
+            for side in self.sides_of(world, table)
+            if self.has_room_for_the_base(world, table, side.pose)
+            and self.arm_reaches_the_middle(world, table, side.pose)
+        ]
+        robot_position = world.compute_forward_kinematics_np(
+            world.root, self.wiping_arm(world)._robot.root
+        )[:2, 3]
+        return [
+            side.pose
+            for side in sorted(usable, key=lambda side: side.preference(robot_position))
+        ]
+
+    def sides_of(self, world: World, table: DiningTable) -> List[TableSideStanding]:
+        """
+        :param world: World holding the table and the robot.
+        :param table: The table being wiped.
+        :return: Where the base would stand at each of the table's four sides.
         """
         body = table.root
         extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
         world_T_table = world.compute_forward_kinematics_np(world.root, body)
+        table_yaw = math.atan2(world_T_table[1, 0], world_T_table[0, 0])
         robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
-        standoff = robot.mobile_base.base_radius + STANDING_CLEARANCE
-        half_depth = 0.5 * extent.depth
-        half_width = 0.5 * extent.width
+        standoff = robot.mobile_base.base_radius + self.standing_clearance
 
-        poses = []
-        for normal_x, normal_y in OUTWARD_NORMALS:
-            table_P_base = np.array(
+        standings = []
+        for side in TableSide:
+            normal_x, normal_y = side.value
+            world_P_base = world_T_table @ np.array(
                 [
-                    normal_x * (half_depth + standoff),
-                    normal_y * (half_width + standoff),
+                    normal_x * (0.5 * extent.depth + standoff),
+                    normal_y * (0.5 * extent.width + standoff),
                     0.0,
                     1.0,
                 ]
             )
-            world_P_base = world_T_table @ table_P_base
-            table_yaw = math.atan2(world_T_table[1, 0], world_T_table[0, 0])
-            across = extent.depth if normal_x else extent.width
-            poses.append(
-                (
-                    Pose.from_xyz_rpy(
+            standings.append(
+                TableSideStanding(
+                    pose=Pose.from_xyz_rpy(
                         x=float(world_P_base[0]),
                         y=float(world_P_base[1]),
                         z=0.0,
                         yaw=table_yaw + math.atan2(-normal_y, -normal_x),
                         reference_frame=world.root,
                     ),
-                    across,
+                    across=extent.depth if normal_x else extent.width,
                 )
             )
-        robot_position = world.compute_forward_kinematics_np(world.root, robot.root)[
-            :2, 3
-        ]
+        return standings
 
-        def preference(entry) -> tuple:
-            """
-            Shallow sides first, since the arm has to reach across the table, and among
-            equals the one the robot is already closest to.
-            """
-            pose, across = entry
-            distance = float(np.linalg.norm(pose.to_np()[:2, 3] - robot_position))
-            return across, distance
+    def arm_reaches_the_middle(
+        self, world: World, table: DiningTable, pose: Pose
+    ) -> bool:
+        """
+        :param world: World holding the table and the robot.
+        :param table: The table being wiped.
+        :param pose: Where the base would stand.
+        :return: Whether the arm reaches the middle of the table top from there.
 
-        usable = [
-            entry
-            for entry in poses
-            if self.has_room_for_the_base(world, table, entry[0])
-        ]
-        return [pose for pose, _ in sorted(usable, key=preference)]
+        The wipe is laid out around the middle of the surface, so a side the arm cannot
+        reach the middle from covers none of it.
+        """
+        body = table.root
+        middle = world.compute_forward_kinematics_np(world.root, body)[:2, 3]
+        standing = pose.to_np()[:2, 3]
+        return bool(
+            np.linalg.norm(middle - standing) <= self.wiping_arm(world).maximum_reach()
+        )
 
     def has_room_for_the_base(
         self, world: World, table: DiningTable, pose: Pose
@@ -609,7 +649,7 @@ class WipeTableDemonstration(WipingDemonstration):
         """
         Whether the base fits where a side would be wiped from.
 
-        The table itself is ignored, since :data:`STANDING_CLEARANCE` already holds the
+        The table itself is ignored, since :attr:`standing_clearance` already holds the
         base off its edge.
 
         :param world: World holding the table and whatever surrounds it.
@@ -620,7 +660,7 @@ class WipeTableDemonstration(WipingDemonstration):
         robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
         base = robot.mobile_base
         base_box = base.bounding_box
-        clearance = base.base_radius + STANDING_CLEARANCE
+        clearance = base.base_radius + self.standing_clearance
         standing = pose.to_np()[:2, 3]
         ignored = set(robot.bodies_with_collision) | set(
             world.get_kinematic_structure_entities_of_branch(table.root)
@@ -652,8 +692,5 @@ def main(execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED) 
 
 
 if __name__ == "__main__":
-    main(
-        execution_type=(
-            ExecutionType[sys.argv[1]] if len(sys.argv) > 1 else ExecutionType.REAL
-        )
-    )
+    # Only what the command line names, so the default lives once, in main.
+    main(*(ExecutionType[name] for name in sys.argv[1:2]))

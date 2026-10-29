@@ -34,7 +34,7 @@ from krrood.class_diagrams.attribute_introspector import (
 from krrood.entity_query_language.factories import variable, contains, a, entity
 from krrood.ormatic.utils import classproperty
 from krrood.symbolic_math.float_variable_data import FloatVariableData
-from krrood.symbolic_math.symbolic_math import VariableParameters
+from krrood.symbolic_math.symbolic_math import CompiledFunction, VariableParameters
 from krrood.utils import get_generic_type_parameters
 from semantic_digital_twin.datastructures.definitions import JointStateType
 from semantic_digital_twin.datastructures.field_of_view import FieldOfView
@@ -49,6 +49,7 @@ from semantic_digital_twin.exceptions import (
     DuplicateRobotAssignmentsError,
     MissingDefaultCameraError,
     NoForceTorqueSensorForTipError,
+    UnnamedSensorFrameError,
 )
 from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.robots.exceptions import MissingDriveConnectionError
@@ -624,18 +625,6 @@ A kind of camera.
 """
 
 
-class WrenchTopic(StrEnum):
-    """
-    The topics a force/torque reading travels on between the sensor and its consumers.
-    """
-
-    RAW = "/wrist_wrench/raw"
-    """What the sensor itself publishes, still carrying the weight of the tool."""
-
-    COMPENSATED = "/wrist_wrench/compensated"
-    """The external contact wrench, once the load and the bias have been removed."""
-
-
 @dataclass(frozen=True)
 class ForceTorqueSensorLoad:
     """
@@ -660,19 +649,46 @@ class ForceTorqueSensorLoad:
     """Constant torque bias of the unloaded sensor, in N m."""
 
 
+@dataclass(frozen=True)
+class WrenchCompensation:
+    """
+    What a node needs to turn a force/torque sensor's own reading into the external
+    contact wrench, and what a caller needs to zero it.
+    """
+
+    uncompensated_topic_name: str
+    """
+    Topic the driver publishes the sensor's reading on, load and bias included.
+    """
+
+    gravity_frame: str
+    """
+    A frame of this robot whose z axis points up.
+
+    Removing the load's weight needs the sensor's orientation against gravity, and only
+    the robot knows which of its frames is level.
+    """
+
+    retare_service: str
+    """
+    The service that zeroes this sensor's compensation.
+    """
+
+    load: ForceTorqueSensorLoad = field(default_factory=ForceTorqueSensorLoad)
+    """
+    The static load mounted past the sensor. Defaults to nothing mounted, so an
+    uncalibrated sensor compensates to its own raw reading.
+    """
+
+
 @dataclass(eq=False)
 class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
     """
     A six-axis force/torque sensor, measuring the wrench acting at its root frame.
 
     The sensor owns the symbolic force and torque of its live wrench together with the
-    values behind them, mirroring how a degree of freedom owns its position symbol.
-    Consumers reach the symbols through the robot annotation; the source pushes new
-    readings through :meth:`write_wrench`.
-
-    .. note:: A wrench is pushed rather than read on demand, because the controller
-        consumes it through expressions compiled against :attr:`wrench_data` and a
-        simulated contact is only valid at the instant the simulation resolved it.
+    values behind them, as a degree of freedom owns its position symbol. The source
+    pushes new readings through :meth:`write_wrench`.
     """
 
     source: TGenericInputSource = field(
@@ -701,12 +717,10 @@ class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
     motion statechart holds.
     """
 
-    has_received_wrench: bool = field(
-        init=False, default=False, compare=False, repr=False
-    )
+    readings_received: int = field(init=False, default=0, compare=False, repr=False)
     """
-    Whether a reading has been written, so consumers can tell an idle sensor from one
-    measuring zero.
+    How many readings have been written, so a consumer can tell an idle sensor from one
+    measuring zero, and a repeat of the last reading from a new one.
     """
 
     def __post_init__(self):
@@ -720,25 +734,29 @@ class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
 
     def write_wrench(self, force: np.ndarray, torque: np.ndarray) -> None:
         """
-        Overwrite the live wrench.
-
-        .. note:: Writes and returns; this never notifies the world of a state change.
+        Overwrite the live wrench, without notifying the world of a state change.
 
         :param force: Measured force in the sensor frame.
         :param torque: Measured torque in the sensor frame.
         """
         self.wrench_data.set_value(self.force, force)
         self.wrench_data.set_value(self.torque, torque)
-        self.has_received_wrench = True
+        self.readings_received += 1
+
+    @property
+    def has_received_wrench(self) -> bool:
+        """
+        Whether any reading has been written.
+        """
+        return self.readings_received > 0
 
     @classmethod
     def for_tip(cls, world: World, tip: KinematicStructureEntity) -> ForceTorqueSensor:
         """
-        Return the sensor whose measurements pertain to ``tip``: the one rooted at a
-        kinematic ancestor of ``tip``, closest to it when several lie on the chain.
-
         :param world: World holding the sensor annotation.
         :param tip: Tip whose measurements are wanted.
+        :return: The sensor rooted at a kinematic ancestor of ``tip``, the closest to it
+            where several lie on the chain.
         :raises NoForceTorqueSensorForTipError: If no sensor lies on the chain.
         """
         chain = world.compute_chain_of_kinematic_structure_entities(world.root, tip)
@@ -759,12 +777,10 @@ class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
                 entity = connection.parent
             return None
 
-        depths = {
-            sensor: depth_on_chain(sensor)
-            for sensor in world.get_semantic_annotations_by_type(cls)
-        }
         on_chain = {
-            sensor: depth for sensor, depth in depths.items() if depth is not None
+            sensor: depth
+            for sensor in world.get_semantic_annotations_by_type(cls)
+            if (depth := depth_on_chain(sensor)) is not None
         }
         if not on_chain:
             raise NoForceTorqueSensorForTipError(tip=tip)
@@ -774,9 +790,6 @@ class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
     def measured_force(self) -> np.ndarray:
         """
         The force of the last reading, in the sensor frame, in N.
-
-        Reads the values behind :attr:`force`, which is registered first, rather than
-        evaluating the expression, which a control cycle cannot afford.
         """
         return self.wrench_data.data[:3]
 
@@ -785,9 +798,6 @@ class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
         """
         The torque of the last reading, about the sensor's own origin, in its frame, in
         N m.
-
-        Reads the values behind :attr:`torque`, which is registered after
-        :attr:`force`.
         """
         return self.wrench_data.data[3:6]
 
@@ -805,35 +815,44 @@ class ForceTorqueSensor(Sensor, HasInputSource[WrenchSource], ABC):
         )
 
     @classproperty
-    def gravity_frame(cls) -> Optional[str]:
+    def frame_name(cls) -> Optional[str]:
         """
-        A frame of this robot whose z axis points up.
-
-        Removing the load's weight needs the sensor's orientation against gravity, and
-        only the robot knows which of its frames is level.
+        Name of the body this kind of sensor measures in, which is the frame its driver
+        stamps its readings with.
         """
         return None
 
     @classproperty
-    def retare_service(cls) -> Optional[str]:
+    def compensation(cls) -> Optional[WrenchCompensation]:
         """
-        The service that zeroes this kind of sensor's compensation.
+        What a node needs to turn this kind of sensor's own reading into contact force.
 
-        ``None`` for a sensor whose readings need no zeroing, or that nothing
-        compensates.
+        ``None`` for a sensor whose driver already publishes the contact wrench, which
+        is then read from :attr:`topic_name` with nothing in between.
         """
         return None
 
-    @classproperty
-    def load(cls) -> ForceTorqueSensorLoad:
-        """
-        The static load this kind of sensor carries.
+    def setup_hardware_interfaces(self) -> None:
+        pass
 
-        A property of the sensor model rather than of one instance, so a tool that has no
-        world, such as an offline bag check, can still ask for it. Defaults to nothing
-        mounted, so an uncalibrated sensor compensates to its own raw reading.
+    def setup_joint_states(self) -> List[JointState]:
+        return []
+
+    @classmethod
+    def setup_default_configuration_in_world_below_robot_root(
+        cls, robot_root: KinematicStructureEntity
+    ) -> Self:
         """
-        return ForceTorqueSensorLoad()
+        :raises UnnamedSensorFrameError: If this kind of sensor does not name the body it
+            measures in.
+        """
+        if cls.frame_name is None:
+            raise UnnamedSensorFrameError(sensor_type=cls)
+        return cls(
+            root=robot_root._world.get_body_in_branch_by_name(
+                robot_root, cls.frame_name
+            )
+        )
 
 
 @dataclass(eq=False)
@@ -1020,29 +1039,8 @@ class Arm(KinematicChain, HasEndEffector[TGenericEndEffector], ABC):
             is sampled at. Interior samples are required because the farthest reach sits
             at an intermediate joint angle rather than at a limit.
         """
-        # Both bounds are required: has_position_limits already holds when only one
-        # side is set, which is not an interval that can be sampled.
-        degrees_of_freedom = [
-            dof
-            for connection in self.connections
-            if isinstance(connection, ActiveConnection)
-            for dof in connection.active_dofs
-            if dof.has_position_limits
-            and dof.limits.lower.position is not None
-            and dof.limits.upper.position is not None
-        ]
-        root_P_tool = self._world.compose_forward_kinematics_expression(
-            self._robot.root, self.end_effector.tool_frame
-        ).position
-        horizontal_distance = (
-            Vector3(x=root_P_tool.x, y=root_P_tool.y)
-            .norm()
-            .compile(
-                parameters=VariableParameters.from_lists(
-                    self._world.state.position_float_variables
-                )
-            )
-        )
+        degrees_of_freedom = self._sweepable_degrees_of_freedom
+        horizontal_distance = self._compile_horizontal_tool_distance()
         samples = [
             np.linspace(
                 dof.limits.lower.position,
@@ -1060,6 +1058,43 @@ class Arm(KinematicChain, HasEndEffector[TGenericEndEffector], ABC):
         self._world.state.set_derivative(Derivatives.position, initial_positions)
         self._world.notify_state_change()
         return reach
+
+    @property
+    def _sweepable_degrees_of_freedom(self) -> List[DegreeOfFreedom]:
+        """
+        :return: The degrees of freedom of this chain whose position is bounded on both
+            sides, which are the ones a sweep can sample.
+
+        .. note:: Both bounds are checked, because ``has_position_limits`` already holds
+            when only one side is set, which is not an interval.
+        """
+        return [
+            dof
+            for connection in self.connections
+            if isinstance(connection, ActiveConnection)
+            for dof in connection.active_dofs
+            if dof.has_position_limits
+            and dof.limits.lower.position is not None
+            and dof.limits.upper.position is not None
+        ]
+
+    def _compile_horizontal_tool_distance(self) -> CompiledFunction:
+        """
+        :return: How far this arm's tool frame stands from the robot's root measured in
+            the horizontal plane, as a function of the world's joint positions.
+        """
+        root_P_tool = self._world.compose_forward_kinematics_expression(
+            self._robot.root, self.end_effector.tool_frame
+        ).position
+        return (
+            Vector3(x=root_P_tool.x, y=root_P_tool.y)
+            .norm()
+            .compile(
+                parameters=VariableParameters.from_lists(
+                    self._world.state.position_float_variables
+                )
+            )
+        )
 
 
 @dataclass(eq=False)

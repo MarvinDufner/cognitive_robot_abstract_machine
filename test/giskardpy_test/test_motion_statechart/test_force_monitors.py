@@ -192,3 +192,48 @@ def test_a_reset_monitor_waits_for_the_whole_count_again(hsr_world_copy):
     observed = push(monitor, context, hsr_world_copy, touching, 1)
 
     assert observed is ObservationStateValues.FALSE
+
+
+# %% a reading confirms, a control cycle does not
+
+
+def tick(
+    monitor: ContactForceReached, context: MotionStatechartContext, ticks: int
+) -> ObservationStateValues:
+    """
+    Run the monitor without the sensor publishing anything new.
+
+    :return: What it observed on the last tick.
+    """
+    for _ in range(ticks):
+        observation = monitor.on_tick(context)
+    return observation
+
+
+def test_one_reading_is_not_confirmed_by_further_control_cycles(hsr_world_copy):
+    """
+    The control loop runs faster than some sensors publish, so a spike would confirm
+    itself if the count advanced per cycle rather than per reading.
+    """
+    monitor, context = build_monitor(hsr_world_copy)
+
+    push(monitor, context, hsr_world_copy, np.array([0.0, 0.0, -50.0 * THRESHOLD]), 1)
+    observed = tick(monitor, context, monitor.confirming_readings)
+
+    assert observed is ObservationStateValues.FALSE
+
+
+def test_a_cycle_without_a_new_reading_keeps_the_last_observation(hsr_world_copy):
+    """
+    Contact already confirmed stays confirmed while the next reading is on its way.
+    """
+    monitor, context = build_monitor(hsr_world_copy)
+    touching = np.array([0.0, 0.0, -2.0 * THRESHOLD])
+
+    confirmed = push(
+        monitor, context, hsr_world_copy, touching, monitor.confirming_readings
+    )
+    held = tick(monitor, context, 3)
+
+    assert confirmed is ObservationStateValues.TRUE
+    assert held is ObservationStateValues.TRUE

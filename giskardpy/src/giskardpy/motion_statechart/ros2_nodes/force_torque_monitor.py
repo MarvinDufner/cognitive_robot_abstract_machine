@@ -4,6 +4,9 @@ from typing import Optional
 import numpy as np
 from geometry_msgs.msg import WrenchStamped
 
+from giskardpy.motion_statechart.monitors.force_monitors import (
+    ForceThresholdMonitor,
+)
 from giskardpy.motion_statechart.ros2_nodes.topic_monitor import TopicSubscriberNode
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from giskardpy.motion_statechart.data_types import ObservationStateValues
@@ -44,19 +47,30 @@ class ForceTorqueNode(TopicSubscriberNode[WrenchStamped]):
 
 
 @dataclass(eq=False, repr=False)
-class ForceImpactMonitor(ForceTorqueNode):
+class ForceImpactMonitor(ForceThresholdMonitor, ForceTorqueNode):
     """
-    This node checks if the force magnitude is above a threshold.
+    Watches the force published on a topic, for a wrench that is not a sensor the robot
+    annotates.
     """
 
-    threshold: float = field(kw_only=True)
+    _observed_msg: Optional[WrenchStamped] = field(init=False, default=None, repr=False)
+    """
+    The message this node last took a reading from.
+    """
 
     def on_tick(
         self, context: MotionStatechartContext
     ) -> Optional[ObservationStateValues]:
-        super().on_tick(context)
-        if not self.has_msg():
-            return ObservationStateValues.UNKNOWN
-        if self.force_magnitude() > self.threshold:
-            return ObservationStateValues.TRUE
-        return ObservationStateValues.FALSE
+        ForceTorqueNode.on_tick(self, context)
+        return ForceThresholdMonitor.on_tick(self, context)
+
+    def new_force(self) -> Optional[np.ndarray]:
+        if self.current_msg is self._observed_msg:
+            return None
+        self._observed_msg = self.current_msg
+        return self.force_as_np()
+
+    def on_reset(self, context: MotionStatechartContext):
+        ForceTorqueNode.on_reset(self, context)
+        ForceThresholdMonitor.on_reset(self, context)
+        self._observed_msg = None

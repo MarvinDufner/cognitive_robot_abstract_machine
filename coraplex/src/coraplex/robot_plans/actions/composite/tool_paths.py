@@ -179,7 +179,7 @@ def planar_sweep_x(tau: float, length: float, cycles: float) -> np.ndarray:
 
 def planar_raster_xy(tau: float, width: float, height: float, lanes: int) -> np.ndarray:
     """
-    :param tau: Normalized time in [0, 1].
+    :param tau: Normalized parameter in [0, 1].
     :param width: Width of the covered rectangle along X in meters.
     :param height: Height of the covered rectangle along Y in meters.
     :param lanes: Number of parallel lanes of the raster scan.
@@ -190,38 +190,71 @@ def planar_raster_xy(tau: float, width: float, height: float, lanes: int) -> np.
     spacing, so the tool turns onto the next lane instead of reversing on the spot, and
     they reach that far beyond the rectangle's ends.
     """
-    lane_length = float(width)
     number_of_lanes = max(2, int(lanes))
-    lane_spacing = float(height) / (number_of_lanes - 1)
+    lane_spacing = height / (number_of_lanes - 1)
     turn_radius = 0.5 * lane_spacing
-    turn_length = float(np.pi) * turn_radius
-    travelled = float(np.clip(tau, 0.0, 1.0)) * (
-        number_of_lanes * lane_length + (number_of_lanes - 1) * turn_length
+    turn_length = np.pi * turn_radius
+    travelled = np.clip(tau, 0.0, 1.0) * (
+        number_of_lanes * width + (number_of_lanes - 1) * turn_length
     )
 
-    lane_y = -0.5 * float(height)
+    lane_y = -0.5 * height
     direction = 1.0
-    for lane in range(number_of_lanes):
-        if travelled <= lane_length or lane == number_of_lanes - 1:
-            along_the_lane = min(travelled, lane_length)
-            return np.array(
-                [direction * (along_the_lane - 0.5 * lane_length), lane_y, 0.0],
-                dtype=float,
-            )
-        travelled -= lane_length
+    for _ in range(number_of_lanes - 1):
+        if travelled <= width:
+            return _point_on_lane(travelled, width, lane_y, direction)
+        travelled -= width
         if turn_radius > 0.0 and travelled <= turn_length:
-            angle = float(np.pi) * travelled / turn_length
-            return np.array(
-                [
-                    direction * (0.5 * lane_length + turn_radius * np.sin(angle)),
-                    lane_y + turn_radius * (1.0 - np.cos(angle)),
-                    0.0,
-                ],
-                dtype=float,
+            return _point_on_lane_change(
+                travelled, turn_length, turn_radius, width, lane_y, direction
             )
         travelled -= turn_length
         lane_y += lane_spacing
         direction = -direction
+    return _point_on_lane(min(travelled, width), width, lane_y, direction)
+
+
+def _point_on_lane(
+    along_the_lane: float, width: float, lane_y: float, direction: float
+) -> np.ndarray:
+    """
+    :param along_the_lane: How far along this lane the tool has travelled, in m.
+    :param width: Length of a lane, in m.
+    :param lane_y: Where this lane lies across the rectangle, in m.
+    :param direction: Which way this lane is travelled.
+    :return: That point on the lane.
+    """
+    return np.array(
+        [direction * (along_the_lane - 0.5 * width), lane_y, 0.0], dtype=float
+    )
+
+
+def _point_on_lane_change(
+    travelled: float,
+    turn_length: float,
+    turn_radius: float,
+    width: float,
+    lane_y: float,
+    direction: float,
+) -> np.ndarray:
+    """
+    :param travelled: How far into the turn the tool has travelled, in m.
+    :param turn_length: Length of the half turn, in m.
+    :param turn_radius: Radius of the half turn, in m.
+    :param width: Length of a lane, in m.
+    :param lane_y: Where the lane being left lies across the rectangle, in m.
+    :param direction: Which way that lane was travelled.
+    :return: That point on the turn onto the next lane.
+    """
+    angle = np.pi * travelled / turn_length
+    return np.array(
+        [
+            direction * (0.5 * width + turn_radius * np.sin(angle)),
+            lane_y + turn_radius * (1.0 - np.cos(angle)),
+            0.0,
+        ],
+        dtype=float,
+    )
 
 
 @dataclass(frozen=True)

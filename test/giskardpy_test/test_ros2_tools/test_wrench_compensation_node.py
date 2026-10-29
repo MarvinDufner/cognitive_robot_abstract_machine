@@ -10,12 +10,12 @@ from giskardpy.middleware.ros2.exceptions import (
     WrenchCompensationUnavailable,
 )
 from giskardpy.ros2_tools.wrench_compensation_node import (
-    GRAVITY,
     BiasEstimator,
     RetareOutcome,
     WrenchCompensationClient,
     WrenchGravityCompensator,
 )
+from semantic_digital_twin.robots.hsrb import HSRBService
 from semantic_digital_twin.robots.robot_parts import (
     ForceTorqueSensor,
     ForceTorqueSensorLoad,
@@ -36,7 +36,9 @@ def reading_at_rest(load: ForceTorqueSensorLoad, base_R_sensor: np.ndarray):
     """
     The raw wrench the identified model predicts when nothing touches the tool.
     """
-    gravity_in_sensor = base_R_sensor.T @ np.array([0.0, 0.0, -GRAVITY])
+    gravity_in_sensor = base_R_sensor.T @ np.array(
+        [0.0, 0.0, -WrenchGravityCompensator().gravity]
+    )
     return (
         load.force_offset + load.mass * gravity_in_sensor,
         load.torque_offset + np.cross(load.first_moment, gravity_in_sensor),
@@ -50,7 +52,7 @@ def wrist_load(hsr_world_copy) -> ForceTorqueSensorLoad:
     """
     return ForceTorqueSensor.for_tip(
         hsr_world_copy, hsr_world_copy.get_body_by_name("hand_gripper_tool_frame")
-    ).load
+    ).compensation.load
 
 
 # %% removing the load
@@ -101,7 +103,7 @@ def test_gravity_points_down_in_a_level_sensor():
     compensator = WrenchGravityCompensator()
 
     np.testing.assert_allclose(
-        compensator.gravity_in_sensor(UPRIGHT), [0.0, 0.0, -GRAVITY]
+        compensator.gravity_in_sensor(UPRIGHT), [0.0, 0.0, -compensator.gravity]
     )
 
 
@@ -220,13 +222,13 @@ def test_the_wrist_load_is_read_from_the_robot(hsr_world_copy):
         hsr_world_copy, hsr_world_copy.get_body_by_name("hand_gripper_tool_frame")
     )
 
-    assert sensor.load.mass > 0.0
-    assert sensor.load.first_moment.shape == (3,)
+    assert sensor.compensation.load.mass > 0.0
+    assert sensor.compensation.load.first_moment.shape == (3,)
 
 
 # %% asking for a re-tare
 
-RETARE_SERVICE = "/left_arm/wrench_compensation/retare"
+RETARE_SERVICE = HSRBService.RETARE_WRENCH
 
 
 @dataclass

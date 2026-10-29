@@ -6,9 +6,6 @@ from giskardpy.motion_statechart.goals.templates import Parallel, Sequence
 from giskardpy.motion_statechart.graph_node import MotionStatechartNode, Task
 from giskardpy.motion_statechart.binding_policy import GoalBindingPolicy
 from giskardpy.motion_statechart.tasks.align_planes import AlignPlanes
-from giskardpy.motion_statechart.tasks.admittance_tasks import (
-    AdmittanceCartesianTrajectory,
-)
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPose,
     CartesianPosition,
@@ -42,6 +39,7 @@ from coraplex.robot_plans.mixins import (
     CartesianVelocityLimitParameters,
     GripperStallToleranceParameters,
     HasTcpGoalThresholds,
+    Press,
 )
 from coraplex.robot_plans.motions.base import BaseMotion
 from coraplex.datastructures.enums import (
@@ -483,50 +481,13 @@ class MoveTCPWaypointsAlignedMotion(
     Defaults to the arm's tool frame.
     """
 
-    admittance_mass: Optional[Vector3] = None
+    press: Optional[Press] = None
     """
-    Virtual mass the press yields with, per axis, in kg.
+    How hard the tool is held against the surface while it follows the waypoints.
 
-    ``None`` keeps the task's own default.
-    """
-
-    admittance_damping: Optional[Vector3] = None
-    """
-    Virtual damping the press yields with, per axis, in N s/m.
-
-    ``None`` keeps the task's own default.
-    """
-
-    desired_force: Optional[Vector3] = None
-    """
-    Contact force to hold against the surface while following the waypoints, in the
-    waypoints' own frame. ``None`` follows them rigidly.
+    ``None`` follows them rigidly.
 
     .. note:: Pressing needs a force/torque sensor on the chain to the tip.
-    """
-
-    admittance_lead_time: float = 0.0
-    """
-    How far ahead of the press's own offset the tracked point is placed, in s, to
-    compensate the delay before the arm reaches a commanded pose.
-    """
-
-    admittance_travel: Optional[Vector3] = None
-    """
-    How far the press may yield from the waypoints, per axis, in m.
-
-    ``None`` keeps the task's own default.
-
-    .. note:: Zero on an axis keeps the tip rigid along it, which an axis that only
-        feels friction needs: yielding to friction drifts the tip until it stalls.
-    """
-
-    look_ahead_distance: Optional[float] = None
-    """
-    How far along the waypoints ahead of the tip the tracked point is placed, in m,
-    which is what sets how fast the tool travels.
-
-    ``None`` keeps the task's own default.
     """
 
     def perform(self):
@@ -567,23 +528,10 @@ class MoveTCPWaypointsAlignedMotion(
         )
         if self.position_threshold is not None:
             trajectory_kwargs["threshold"] = self.position_threshold
-        if self.look_ahead_distance is not None:
-            trajectory_kwargs["look_ahead_distance"] = self.look_ahead_distance
-        if self.desired_force is None:
+        if self.press is None:
             tasks = [CartesianPositionTrajectory(**trajectory_kwargs)]
         else:
-            if self.admittance_mass is not None:
-                trajectory_kwargs["mass"] = self.admittance_mass
-            if self.admittance_damping is not None:
-                trajectory_kwargs["damping"] = self.admittance_damping
-            if self.admittance_travel is not None:
-                trajectory_kwargs["maximum_offset"] = self.admittance_travel
-            trajectory_kwargs["lead_time"] = self.admittance_lead_time
-            tasks = [
-                AdmittanceCartesianTrajectory(
-                    desired_force=self.desired_force, **trajectory_kwargs
-                )
-            ]
+            tasks = [self.press.yielding_trajectory(**trajectory_kwargs)]
         tasks.extend(
             AlignPlanes(
                 tip_link=tip_link,

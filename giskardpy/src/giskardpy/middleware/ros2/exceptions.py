@@ -450,3 +450,55 @@ class ForceTorqueSensorNotTared(ExecutionException):
 
     def suggest_correction(self) -> str:
         return "Hold the sensor still and out of contact, then ask again."
+
+
+@dataclass
+class SensorNeedsNoCompensationError(SetupException):
+    """
+    Raised when a compensation node is started for a sensor that has nothing to
+    compensate, or whose output is the reading it would have to read.
+    """
+
+    sensor_type: type
+    """
+    The sensor the node was started for.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{self.sensor_type.__name__} states no wrench compensation, or states one "
+            f"that publishes onto the very topic it reads."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Read the sensor straight off its driver, or give its annotation a "
+            "compensation whose uncompensated topic differs from the one the sensor is "
+            "read from."
+        )
+
+
+@dataclass
+class NoTransformChainInBagError(SetupException):
+    """
+    Raised when a recording does not connect two frames a replay has to relate.
+    """
+
+    tip: str
+    """
+    The frame the chain was to start at.
+    """
+
+    root: str
+    """
+    The frame the chain was to end at.
+    """
+
+    def error_message(self) -> str:
+        return f"The recording holds no transform chain {self.tip} -> {self.root}."
+
+    def suggest_correction(self) -> str:
+        return (
+            "Record /tf and /tf_static alongside the wrench, over a stretch in which "
+            "both frames are published."
+        )

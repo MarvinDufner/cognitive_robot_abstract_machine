@@ -245,6 +245,30 @@ class WipingTargetMissing(DataclassException):
 
 
 @dataclass
+class ToolWithoutFootprint(DataclassException):
+    """
+    Raised when a tool path cannot be sized because the tool covers no strip.
+    """
+
+    tool_name: str
+    """
+    The tool whose footprint states no width.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{self.tool_name} has no footprint to size a tool path from: it carries "
+            f"no collision shape, or its shape is flat on one axis."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Give the tool's body a collision shape with extent on both axes across "
+            "its working face."
+        )
+
+
+@dataclass
 class MissingToolFrame(DataclassException):
     """
     Raised when no tool frame is available for the requested arm.

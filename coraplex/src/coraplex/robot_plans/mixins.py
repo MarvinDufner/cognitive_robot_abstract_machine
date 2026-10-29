@@ -1,13 +1,79 @@
 from dataclasses import dataclass, field
 
 import numpy as np
-from typing_extensions import Optional
+from typing_extensions import Any, Optional
 
 
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from giskardpy.motion_statechart.tasks.admittance_tasks import (
+    AdmittanceCartesianTrajectory,
+)
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Vector3,
+)
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.robots.robot_parts import EndEffector
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
+
+
+@dataclass
+class Press:
+    """
+    How hard a motion holds its tool against what it works on, and how it may yield to
+    reach that force.
+    """
+
+    force: Vector3
+    """
+    Contact force to hold, in the frame the path is given in, in N.
+    """
+
+    mass: Optional[Vector3] = None
+    """
+    Virtual mass the press yields with, per axis, in kg. ``None`` keeps the task's own
+    default.
+    """
+
+    damping: Optional[Vector3] = None
+    """
+    Virtual damping the press yields with, per axis, in N s/m. ``None`` keeps the
+    task's own default.
+    """
+
+    travel: Optional[Vector3] = None
+    """
+    How far the press may yield from the path, per axis, in m. ``None`` keeps the
+    task's own default.
+
+    .. note:: Zero on an axis keeps the tip rigid along it, which an axis that only
+        feels friction needs: yielding to friction drifts the tip until it stalls.
+    """
+
+    lead_time: float = 0.0
+    """
+    How far ahead of its own offset the press tracks, in s, to compensate the delay
+    before the arm reaches a commanded pose.
+    """
+
+    def yielding_trajectory(
+        self, **trajectory_arguments: Any
+    ) -> AdmittanceCartesianTrajectory:
+        """
+        :param trajectory_arguments: What a rigid trajectory over the same path takes.
+        :return: That trajectory, yielding to this press rather than following the path
+            rigidly.
+        """
+        overrides = {
+            "mass": self.mass,
+            "damping": self.damping,
+            "maximum_offset": self.travel,
+        }
+        return AdmittanceCartesianTrajectory(
+            desired_force=self.force,
+            lead_time=self.lead_time,
+            **{name: value for name, value in overrides.items() if value is not None},
+            **trajectory_arguments,
+        )
 
 
 @dataclass
