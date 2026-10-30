@@ -93,8 +93,7 @@ class HSRBService(StrEnum):
 
     RETARE_WRENCH = "/wrist_wrench/retare"
     """
-    Zeroes the wrist sensor's compensation, so what it reads afterwards is contact
-    alone.
+    Tares the wrist sensor's compensation, so what it reads afterwards is contact alone.
     """
 
 

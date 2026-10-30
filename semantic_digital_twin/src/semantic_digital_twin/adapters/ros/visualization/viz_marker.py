@@ -115,7 +115,7 @@ class VizMarkerPublisher(ModelChangeCallback, HasROS2Node):
     the world, since those outlive this one.
     """
 
-    _publisher: Publisher = field(init=False)
+    publisher: Publisher = field(init=False, repr=False)
     """
     The ROS publisher for the marker.
     """

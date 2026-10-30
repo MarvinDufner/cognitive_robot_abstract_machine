@@ -203,27 +203,6 @@ def test_the_wipe_presses_into_the_surface_and_travels_across_it():
     )
 
 
-def drive_the_sponge_over(world, table, sponge) -> None:
-    """
-    Put the base where the tool it holds is above the table, which is what the surface
-    model feels contact over.
-    """
-    footprint = table.root.collision.as_bounding_box_collection_in_frame(
-        world.root
-    ).bounding_box()
-    drive = world.get_connections_by_type(OmniDrive)[0]
-    sponge_position = world.compute_forward_kinematics_np(world.root, sponge)[:3, 3]
-    wanted = np.array(
-        [
-            0.5 * (footprint.min_x + footprint.max_x),
-            0.5 * (footprint.min_y + footprint.max_y),
-        ]
-    )
-    for dof, offset in zip(drive.active_dofs, wanted - sponge_position[:2]):
-        world.state[dof.id].position += offset
-    world.notify_state_change()
-
-
 def test_the_surface_never_pushes_harder_than_it_says_it_does():
     """
     The cap bounds the push of the whole face, not of each spring under it, or a tool
@@ -233,19 +212,15 @@ def test_the_surface_never_pushes_harder_than_it_says_it_does():
     contact = demonstration.world_inputs(world)[0]
     sponge = world.get_body_by_name(demonstration.sponge_name)
     sensor = ForceTorqueSensor.for_tip(world, sponge)
-    table = world.get_semantic_annotations_by_type(DiningTable)[0]
-    drive_the_sponge_over(world, table, sponge)
-    # A long way through the surface, so every sampled spring is compressed past the
-    # cap on its own.
+    # The tool's own body stands in for the surface, so every sampled point of its face
+    # is over it wherever the robot happens to be.
+    contact.surface = sponge
     contact.surface_height = (
         world.compute_forward_kinematics_np(world.root, sponge)[2, 3] + 1.0
     )
 
     force, _ = contact.contact_wrench(sensor)
 
-    assert contact.over_the_surface(
-        world.compute_forward_kinematics_np(world.root, sponge)[:3, 3, None]
-    ).all()
     assert np.linalg.norm(force) <= contact.maximum_force + 1e-6
 
 

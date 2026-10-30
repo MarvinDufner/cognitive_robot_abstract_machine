@@ -322,7 +322,7 @@ class TracyWrenchTopic(StrEnum):
 
     LEFT = "/left_arm/force_torque_sensor_broadcaster/wrench"
     """
-    The left arm's contact wrench. The control program zeroes the sensor as it starts,
+    The left arm's contact wrench. The control program tares the sensor as it starts,
     so what the driver publishes already has the gripper's weight taken off it.
     """
 

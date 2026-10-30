@@ -36,6 +36,11 @@ from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
+from coraplex.robot_plans.actions.core.robot_body import (
+    MoveManipulatorAction,
+    ParkArmsAction,
+)
+from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
 from coraplex.robot_plans.mixins import Press
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
@@ -55,7 +60,11 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     DiningTable,
     Sponge,
 )
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Vector3
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Point3,
+    Vector3,
+)
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
@@ -68,7 +77,7 @@ from semantic_digital_twin.world_description.contact import (
     ContactParameters,
     ContactStiffness,
 )
-from semantic_digital_twin.world_description.geometry import Box, Scale
+from semantic_digital_twin.world_description.geometry import Box, Cylinder, Scale
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -418,6 +427,116 @@ class WipingDemonstration(RobotDemonstration, ABC):
             yaw=float(np.arctan2(-closing_axis[0], closing_axis[1])),
         )
 
+    approach_height: float = 0.08
+    """
+    How far above the surface the tool is brought before it is lowered onto it, in m.
+    """
+
+    turning_height: float = 0.30
+    """
+    How far above the surface the tool is turned to face it, in m.
+
+    The tool reaches a commanded position before it reaches a commanded orientation, so
+    a tool that turns on its way down meets the surface edge first. It turns up here
+    instead and holds that orientation for the rest of the plan.
+    """
+
+    touchdown_force: float = 5.0
+    """
+    Force magnitude that ends the descent onto the surface, in N: above what the sensor
+    reports out of contact, far below what the press holds.
+    """
+
+    descent_velocity: float = 0.02
+    """
+    How fast the tool is lowered onto the surface, in m/s.
+
+    Peak contact force grows with the speed the tool arrives at, and the pad meets a
+    crest on a line rather than on its whole face, so arriving slowly is what keeps a
+    touchdown off a crest from spiking.
+    """
+
+    descent_overshoot: float = 0.02
+    """
+    How far below the surface the descent aims, in m. Contact ends the descent, so the
+    goal has to lie past the surface, and close enough to bound a descent that feels
+    nothing.
+    """
+
+    @abstractmethod
+    def touchdown_pose(self, world: World) -> Pose:
+        """
+        :param world: World the demonstration acts on.
+        :return: Where on the surface the tool is set down before it starts wiping, in
+            the world frame.
+        """
+
+    def build_approach(
+        self, context: Context, patch: Pose
+    ) -> List[MoveManipulatorAction]:
+        """
+        :param context: Plan context holding the robot.
+        :param patch: Where the tool is set down, in the world frame.
+        :return: Turning the tool onto the patch well above it, then coming straight
+            down to the height the descent starts from.
+
+        .. warning:: The approach has to point the tool down. From the opposite
+            orientation the wipe's alignment would have to flip the tool through the one
+            pose where it cannot tell which way to turn.
+        """
+        end_effector = self.wiping_arm(context.world).end_effector
+        return [
+            MoveManipulatorAction(
+                target_pose=self.pose_over_patch(context, patch, height),
+                end_effector=end_effector,
+                # Collision avoidance stays on: the approach holds the tool over the
+                # surface without touching it, and only the descent may touch.
+                allow_gripper_collision=False,
+            )
+            for height in (self.turning_height, self.approach_height)
+        ]
+
+    @staticmethod
+    def pose_over_patch(context: Context, patch: Pose, height: float) -> Pose:
+        """
+        :param context: Plan context holding the world.
+        :param patch: Where the tool is set down, in the world frame.
+        :param height: How far above the patch the tool stands, in m.
+        :return: That pose, with the tool facing the patch.
+        """
+        return Pose.from_xyz_rpy(
+            x=patch.to_np()[0, 3],
+            y=patch.to_np()[1, 3],
+            z=patch.to_np()[2, 3] + height,
+            roll=math.pi,
+            reference_frame=context.world.root,
+        )
+
+    def build_touchdown(self, context: Context, patch: Pose) -> LowerUntilContactMotion:
+        """
+        :param context: Plan context holding the robot.
+        :param patch: Where the tool is set down, in the world frame.
+        :return: Lowering the tool until the sensor feels the surface, so where the
+            surface really is is measured rather than assumed.
+        """
+        world = context.world
+        tool = world.get_semantic_annotations_by_type(Sponge)[0]
+        return LowerUntilContactMotion(
+            goal_point=Point3(
+                x=patch.to_np()[0, 3],
+                y=patch.to_np()[1, 3],
+                z=patch.to_np()[2, 3] - self.descent_overshoot,
+                reference_frame=world.root,
+            ),
+            arm=self.wiping_arm(world),
+            tip=tool.get_tool_frame(),
+            alignment_pairs=tool.tool_alignment(patch),
+            contact_force=self.touchdown_force,
+            descent_velocity=self.descent_velocity,
+            max_linear_velocity=self.descent_velocity,
+            allow_gripper_collision=True,
+        )
+
     def build_context(self, world: World) -> Context:
         """
         Build the plan context around the robot in ``world``.
@@ -466,6 +585,89 @@ class WipingDemonstration(RobotDemonstration, ABC):
 
 
 @dataclass
+class RidgedSurface(WipingDemonstration, ABC):
+    """
+    A wiping demonstration whose surface carries ridges across the wiped patch, so the
+    tool has to follow a surface nothing told it about.
+
+    .. warning:: Only a physically simulated run resolves the ridges. A kinematically
+        simulated one models a flat surface at the height of the top and feels nothing
+        of them, and a real run would wipe the bare surface while the plan believes the
+        ridges are there.
+    """
+
+    wave_amplitude: float = 0.02
+    """
+    How far the crests stand above the surface, in m.
+    """
+
+    wave_length: float = 0.12
+    """
+    Distance between two crests, in m, along the sweep.
+    """
+
+    wave_radius: float = 0.06
+    """
+    Radius of the ridges, in m: the curvature the tool is thrown off by at a crest.
+    """
+
+    ridge_length: float = 0.6
+    """
+    Length of each ridge across the surface, in m: wider than the wiped patch.
+    """
+
+    ridged_span: float = 0.3
+    """
+    How far the ridges reach along the sweep, in m: the wiped patch, or wider.
+    """
+
+    def populate_scene(self, world: World) -> None:
+        """
+        Populate the scene as the flat demonstration does, then lay the ridges across
+        the wiped patch.
+        """
+        super().populate_scene(world)
+        patch = self.touchdown_pose(world).to_np()[:3, 3]
+        crests = int(0.5 * self.ridged_span / self.wave_length) + 2
+        with world.modify_world():
+            for index in range(-crests, crests + 1):
+                world.add_connection(
+                    FixedConnection(
+                        parent=world.root,
+                        child=self.ridge(f"ridge_{index + crests}"),
+                        parent_T_connection_expression=(
+                            HomogeneousTransformationMatrix.from_xyz_rpy(
+                                x=patch[0] + index * self.wave_length,
+                                y=patch[1],
+                                # Sunk into the surface, so only the crest stands out
+                                # of it and the tool rides a wave rather than a step.
+                                z=patch[2] + self.wave_amplitude - self.wave_radius,
+                                roll=np.pi / 2.0,
+                            )
+                        ),
+                    )
+                )
+
+    def ridge(self, name: str) -> Body:
+        """
+        :param name: Name the ridge is added under.
+        :return: One ridge, lying across the surface.
+        """
+        return Body(
+            name=PrefixedName(name),
+            collision=ShapeCollection([self.ridge_shape()]),
+            visual=ShapeCollection([self.ridge_shape()]),
+        )
+
+    def ridge_shape(self) -> Cylinder:
+        """
+        :return: The shape of one ridge, as its own instance, since a body's collision
+            and its visual each own theirs.
+        """
+        return Cylinder(width=2.0 * self.wave_radius, height=self.ridge_length)
+
+
+@dataclass
 class WipeTableDemonstration(WipingDemonstration):
     """
     The HSRB wipes the kitchen's dining table, one side at a time.
@@ -481,13 +683,30 @@ class WipeTableDemonstration(WipingDemonstration):
     it. Set this to shorten a demonstration.
     """
 
+    turning_height: float = 0.15
+    """
+    How far above the table the tool is turned to face it, in m.
+
+    Lower than a long-armed robot would need: the HSRB holds the tool out across the
+    table, and the higher it has to hold it there the sooner it runs out of reach.
+    """
+
+    approach_height: float = 0.05
+    """
+    How far above the table the tool is brought before it is lowered onto it, in m.
+    """
+
     approach_pose: HomogeneousTransformationMatrix = field(
         default_factory=lambda: HomogeneousTransformationMatrix.from_xyz_rpy(
-            x=2.0, y=5.705, z=0.0
+            x=3.45, y=5.705, z=0.0, yaw=math.pi
         )
     )
     """
-    Where the robot is put down in the kitchen, in front of the dining table.
+    Where the robot is put down in the kitchen, facing the dining table.
+
+    .. warning:: Clear of the cooking counter along the far side of the table, which
+        the base used to be put down inside of. A kinematic run tolerates that; a
+        physics engine resolves it.
     """
 
     standing_clearance: float = 0.05
@@ -524,8 +743,15 @@ class WipeTableDemonstration(WipingDemonstration):
         Add the kitchen and bolt the sponge into the gripper.
         """
         if not world.get_semantic_annotations_by_type(DiningTable):
+            kitchen = KitchenEnvironment().get_world()
             with world.modify_world():
-                world.merge_world(KitchenEnvironment().get_world())
+                # Bolted to the world root. Merging without a connection leaves the
+                # kitchen on six free degrees of freedom, which a physics engine reads
+                # as one unanchored rigid body and drops under gravity.
+                world.merge_world(
+                    kitchen,
+                    FixedConnection(parent=world.root, child=kitchen.root),
+                )
         self.attach_sponge(world)
 
     def build_plan(self, context: Context) -> PlanNode:
@@ -544,6 +770,10 @@ class WipeTableDemonstration(WipingDemonstration):
         steps = []
         for standing_pose in self.standing_poses(world, table)[: self.sides]:
             steps.append(NavigateAction(standing_pose))
+            # No pose-based approach: the descent aligns the tool from the tool's own
+            # alignment pairs, while a commanded pose would have to state an
+            # orientation convention, and the one Tracy uses is not the HSRB's.
+            steps.append(self.build_touchdown(context, self.touchdown_pose(world)))
             steps.append(
                 WipingAction(
                     arm=self.wiping_arm(world),
@@ -552,10 +782,39 @@ class WipeTableDemonstration(WipingDemonstration):
                     technique=self.technique,
                     pointer_stride=self.waypoint_stride,
                     skip_unreachable=True,
+                    standing_pose=standing_pose,
                     press=self.press,
                 )
             )
         return sequential(steps, context=context)
+
+    def touchdown_pose(self, world: World) -> Pose:
+        """
+        :param world: World holding the table and the robot.
+        :return: Where the tool is set down: the point of the table top nearest the
+            robot, held a sponge's width clear of the edge.
+
+        The middle of the table is what the wipe is laid out around, but the arm has to
+        hold the tool out there, and the near edge is what it can reach while the base
+        stands clear of the table.
+        """
+        table = world.get_semantic_annotations_by_type(DiningTable)[0]
+        footprint = table.root.collision.as_bounding_box_collection_in_frame(
+            world.root
+        ).bounding_box()
+        robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
+        standing = world.compute_forward_kinematics_np(world.root, robot.root)[:2, 3]
+        inset = 0.5 * max(self.sponge_scale.x, self.sponge_scale.y)
+        return Pose.from_xyz_rpy(
+            x=float(
+                np.clip(standing[0], footprint.min_x + inset, footprint.max_x - inset)
+            ),
+            y=float(
+                np.clip(standing[1], footprint.min_y + inset, footprint.max_y - inset)
+            ),
+            z=self.contact_model(world).surface_height,
+            reference_frame=world.root,
+        )
 
     def contact_model(self, world: World) -> SimulatedContactWrench:
         return SimulatedContactWrench(
@@ -694,3 +953,15 @@ def main(execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED) 
 if __name__ == "__main__":
     # Only what the command line names, so the default lives once, in main.
     main(*(ExecutionType[name] for name in sys.argv[1:2]))
+
+
+@dataclass
+class WipeWavyTableDemonstration(RidgedSurface, WipeTableDemonstration):
+    """
+    The HSRB wipes a dining table with ridges laid across it.
+
+    The plan is the flat demonstration's, so how well contact is kept over the crests
+    is what this run measures.
+    """
+
+    ros_node_name: ClassVar[str] = "wipe_wavy_table_demo_node"

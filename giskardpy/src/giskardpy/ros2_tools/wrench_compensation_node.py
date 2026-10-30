@@ -372,8 +372,7 @@ class WrenchCompensationNode(Node):
 
     def _on_retare(self, request: Trigger.Request, response: Trigger.Response):
         """
-        Zero the residual for this session: hold the sensor still in free space, then
-        call this.
+        Tare the sensor for this session: hold it still in free space, then call this.
 
         Blocks until the window fills or times out.
         """
@@ -419,7 +418,7 @@ class WrenchCompensationNode(Node):
                 f"rest may, and moved {self.estimator.force_shift:.2f} N from its first "
                 f"half to its second. A shift near the spread means the reading is "
                 f"drifting rather than noisy, and no bias taken now stays valid; a shift "
-                f"near zero means the spread is this sensor's own noise, and the allowed "
+                f"near nothing means the spread is this sensor's own noise, and the "
                 f"spread belongs above it."
             )
         else:
@@ -455,7 +454,7 @@ class WrenchCompensationClient:
 
     def retare(self) -> None:
         """
-        Zero the sensor, so that what it reads afterwards is contact alone.
+        Tare the sensor, so that what it reads afterwards is contact alone.
 
         The sensor has to hang free and be held still while this runs: the node refuses a
         window it saw move.

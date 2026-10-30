@@ -429,7 +429,7 @@ class WrenchCompensationUnavailable(SetupException):
 @dataclass
 class ForceTorqueSensorNotTared(ExecutionException):
     """
-    Raised when a force/torque sensor could not be zeroed before it is used.
+    Raised when a force/torque sensor could not be tared before it is used.
 
     Pressing with an untared sensor drives the tool by whatever the reading holds
     besides contact, which is mostly the weight of what hangs past the sensor.

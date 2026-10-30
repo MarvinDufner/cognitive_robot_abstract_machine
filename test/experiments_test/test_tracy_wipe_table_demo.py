@@ -123,7 +123,7 @@ def test_the_bench_top_is_the_surface_and_not_the_fixture_standing_on_it():
     demonstration, world = populated_demonstration()
     bench = world.get_body_by_name(demonstration.bench_name)
     boxes = list(bench.collision.as_bounding_box_collection_in_frame(world.root))
-    spot = demonstration.wiped_pose(world).to_np()[:3, 3]
+    spot = demonstration.touchdown_pose(world).to_np()[:3, 3]
 
     height = demonstration.bench_height(world)
 
@@ -143,7 +143,7 @@ def test_the_wiped_patch_lies_on_the_bench_top():
     footprint = bench.collision.as_bounding_box_collection_in_frame(
         world.root
     ).bounding_box()
-    centre = demonstration.wiped_pose(world).to_np()[:3, 3]
+    centre = demonstration.touchdown_pose(world).to_np()[:3, 3]
 
     assert footprint.min_x <= centre[0] - demonstration.patch_length / 2
     assert centre[0] + demonstration.patch_length / 2 <= footprint.max_x
@@ -174,7 +174,7 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
         for box in hand
     )
     swept_height = max(box.max_z - box.min_z for box in hand)
-    centre = demonstration.wiped_pose(world).to_np()[:3, 3]
+    centre = demonstration.touchdown_pose(world).to_np()[:3, 3]
     reach_x = demonstration.patch_length / 2 + reach + demonstration.obstacle_clearance
     reach_y = demonstration.patch_width / 2 + reach + demonstration.obstacle_clearance
     patch_min_x, patch_max_x = centre[0] - reach_x, centre[0] + reach_x

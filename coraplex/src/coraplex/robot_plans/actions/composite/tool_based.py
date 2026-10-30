@@ -138,6 +138,15 @@ class ToolMotionAction(
     Keep every Nth sampled waypoint for execution.
     """
 
+    standing_pose: Optional[Pose] = None
+    """
+    Where the robot will stand while this motion runs, for :attr:`skip_unreachable`.
+
+    ``None`` measures from where the robot stands when the path is sampled, which is
+    only the same place once it has arrived: a plan may lay its steps out before it
+    drives, and a base does not land exactly on the pose it was given.
+    """
+
     skip_unreachable: bool = False
     """
     Drop the waypoints the arm cannot reach from where the robot stands, so a path that
@@ -187,7 +196,7 @@ class ToolMotionAction(
             )
         stride = max(1, int(self.pointer_stride))
         if self.skip_unreachable:
-            points = points[self._within_reach(points)]
+            points = points[self._longest_reachable_stretch(points)]
         waypoints = [
             Point3(x=point[0], y=point[1], z=point[2], reference_frame=self.world.root)
             for point in points
@@ -196,19 +205,40 @@ class ToolMotionAction(
             raise MissingWaypoints(self)
         return waypoints
 
+    def _longest_reachable_stretch(self, points: np.ndarray) -> slice:
+        """
+        :param points: Sampled path points in the world frame.
+        :return: The longest run of them the arm can reach without interruption.
+
+        .. warning:: Taking every reachable point instead would carve holes out of the
+            middle of a path that leaves the arm's reach and comes back, as a raster or
+            a spiral does in every lane, and the tool would be commanded to jump the
+            gaps: it leaves the surface and lands on it again at every hole.
+        """
+        reachable = self._within_reach(points)
+        best_start, best_length, start = 0, 0, None
+        for index, within in enumerate(np.append(reachable, False)):
+            if within and start is None:
+                start = index
+            elif not within and start is not None:
+                if index - start > best_length:
+                    best_start, best_length = start, index - start
+                start = None
+        return slice(best_start, best_start + best_length)
+
     def _within_reach(self, points: np.ndarray) -> np.ndarray:
         """
         :param points: Sampled path points in the world frame.
         :return: Which of them the arm can reach from where the robot stands, measured
             horizontally, as the arm's own reach is.
 
-        .. note:: Where the robot stands now, which is where it will wipe from: an
-            action is expanded when the steps before it have run, so a plan that drives
-            somewhere first has already arrived.
         """
-        standing = self.world.compute_forward_kinematics_np(
-            self.world.root, self.robot.root
-        )[:2, 3]
+        if self.standing_pose is not None:
+            standing = self.standing_pose.to_np()[:2, 3]
+        else:
+            standing = self.world.compute_forward_kinematics_np(
+                self.world.root, self.robot.root
+            )[:2, 3]
         distances = np.linalg.norm(points[:, :2] - standing, axis=1)
         return distances <= self.arm.maximum_reach()
 

@@ -653,7 +653,7 @@ class ForceTorqueSensorLoad:
 class WrenchCompensation:
     """
     What a node needs to turn a force/torque sensor's own reading into the external
-    contact wrench, and what a caller needs to zero it.
+    contact wrench, and what a caller needs to tare it.
     """
 
     uncompensated_topic_name: str
@@ -671,7 +671,7 @@ class WrenchCompensation:
 
     retare_service: str
     """
-    The service that zeroes this sensor's compensation.
+    The service that tares this sensor, measuring the bias to subtract.
     """
 
     load: ForceTorqueSensorLoad = field(default_factory=ForceTorqueSensorLoad)
