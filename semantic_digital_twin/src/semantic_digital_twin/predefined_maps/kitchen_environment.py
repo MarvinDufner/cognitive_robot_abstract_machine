@@ -1,5 +1,10 @@
+from importlib.resources import files
+from pathlib import Path
+
 import numpy as np
-from enum import Enum
+from enum import Enum, StrEnum
+
+from krrood.patterns.path_enumeration import PathEnumeration
 
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Room, Floor
@@ -21,11 +26,17 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Desk,
     Sink,
     Dishwasher,
+    WashingMachine,
     Cooktop,
     Oven,
     WallPanel,
     KitchenIsland,
 )
+from semantic_digital_twin.adapters.package_resolver import (
+    CompositePathResolver,
+    FileUriResolver,
+)
+from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.specifications.connections import (
     PrismaticConnectionSpecification,
     RevoluteConnectionSpecification,
@@ -70,6 +81,37 @@ class MaximumSpeed(float, Enum):
     """
 
 
+class KitchenEnvironmentResource(PathEnumeration):
+    """
+    The files under the semantic_digital_twin resources the kitchen environment is built
+    from.
+    """
+
+    RESOURCES = Path(files("semantic_digital_twin")).parent.parent / "resources"
+    """
+    The resources directory, which the mesh paths in the URDFs are relative to.
+    """
+
+    WASHING_MACHINE = RESOURCES / "urdf" / "miele_washing_machine.urdf"
+    """
+    The Miele washing machine with its porthole door and detergent drawer, front facing
+    -X and origin at the floor in the centre of its footprint.
+    """
+
+
+class WashingMachineLink(StrEnum):
+    """
+    The links of :attr:`KitchenEnvironmentResource.WASHING_MACHINE` that carry a
+    semantic annotation.
+    """
+
+    BODY = "washing_machine"
+    DOOR = "washing_machine_door"
+    DOOR_HANDLE = "washing_machine_door_handle"
+    DETERGENT_DRAWER = "washing_machine_detergent_drawer"
+    DETERGENT_DRAWER_HANDLE = "washing_machine_detergent_drawer_handle"
+
+
 class KitchenEnvironment:
     """
     Manages the Kitchen Environment world with walls, furniture, and room layouts.
@@ -86,6 +128,7 @@ class KitchenEnvironment:
 
         self._build_environment_walls(world)
         self._build_environment_furniture(world)
+        self._build_washing_machine(world)
         self._build_environment_rooms(world)
 
         return world
@@ -1713,6 +1756,59 @@ class KitchenEnvironment:
                     shape.color = Color.BEIGE()
                 dining_table.add(leg)
         return world
+
+    def _build_washing_machine(self, world: World):
+        """
+        Stand the washing machine in the kitchen, its front facing the counter, and
+        annotate its door, detergent drawer and their handles.
+        """
+        washing_machine_world = URDFParser.from_file(
+            str(KitchenEnvironmentResource.WASHING_MACHINE),
+            path_resolver=CompositePathResolver(
+                [
+                    FileUriResolver(
+                        base_directory=str(KitchenEnvironmentResource.RESOURCES)
+                    )
+                ]
+            ),
+        ).parse()
+        world.merge_world(
+            washing_machine_world,
+            FixedConnection(
+                parent=world.root,
+                child=washing_machine_world.root,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=2.8, y=-0.8
+                ),
+            ),
+        )
+        with world.modify_world():
+            washing_machine = WashingMachine(
+                name=PrefixedName(WashingMachineLink.BODY),
+                root=world.get_body_by_name(WashingMachineLink.BODY),
+            )
+            door = Door(
+                name=PrefixedName(WashingMachineLink.DOOR),
+                root=world.get_body_by_name(WashingMachineLink.DOOR),
+                handle=Handle(
+                    name=PrefixedName(WashingMachineLink.DOOR_HANDLE),
+                    root=world.get_body_by_name(WashingMachineLink.DOOR_HANDLE),
+                ),
+            )
+            drawer = Drawer(
+                name=PrefixedName(WashingMachineLink.DETERGENT_DRAWER),
+                root=world.get_body_by_name(WashingMachineLink.DETERGENT_DRAWER),
+                handle=Handle(
+                    name=PrefixedName(WashingMachineLink.DETERGENT_DRAWER_HANDLE),
+                    root=world.get_body_by_name(
+                        WashingMachineLink.DETERGENT_DRAWER_HANDLE
+                    ),
+                ),
+            )
+            for annotation in (washing_machine, door, drawer):
+                world.add_semantic_annotation_recursively(annotation)
+            washing_machine.add(door)
+            washing_machine.add(drawer)
 
     def _build_coffee_table(self, world):
         """
