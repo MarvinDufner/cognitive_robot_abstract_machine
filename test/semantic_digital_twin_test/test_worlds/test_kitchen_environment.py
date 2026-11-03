@@ -42,7 +42,7 @@ def test_module_1_has_fixed_face_plate_above_door() -> None:
     """
     Module 1 should have a 14.3 cm face plate separated from its door.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     face_plate_bounds = visual_world_bounds(world, "module_1_face_plate")
     door_bounds = visual_world_bounds(world, "module_1_door")
 
@@ -55,7 +55,7 @@ def test_module_1_front_piece_is_59_5_centimeters_wide(body_name: str) -> None:
     """
     Each Module 1 front piece should be narrower than the cabinet carcass.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     body = world.get_body_by_name(body_name)
 
     assert np.isclose(body.visual.combined_mesh.extents[1], 0.595)
@@ -65,7 +65,7 @@ def test_module_1_handle_top_is_four_centimeters_below_door_top() -> None:
     """
     The Module 1 handle should be inset from the shortened door's top edge.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     handle_bounds = visual_world_bounds(world, "module_1_handle")
     door_bounds = visual_world_bounds(world, "module_1_door")
 
@@ -87,7 +87,7 @@ def test_horizontal_door_handle_fits_within_door_width(
     """
     A full-width horizontal handle should not extend beyond either door edge.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     handle_bounds = visual_world_bounds(world, handle_name)
     door_bounds = visual_world_bounds(world, door_name)
 
@@ -99,7 +99,7 @@ def test_fridge_door_handle_is_near_free_edge() -> None:
     """
     The vertical fridge handle should be inset from the edge opposite its hinge.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     handle_bounds = visual_world_bounds(world, "fridge_door_handle")
     door_bounds = visual_world_bounds(world, "fridge_door")
 
@@ -117,7 +117,7 @@ def test_the_sideboard_is_a_kitchen_island_built_from_its_corpus_under_its_workt
     The sideboard is the kitchen island: its corpus is the cabinet built into it and its
     worktop is the island's counter top, as in the other modelled kitchens.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     [island] = world.get_semantic_annotations_by_type(KitchenIsland)
 
     assert island.cabinets == [
@@ -131,7 +131,7 @@ def test_the_island_worktop_still_carries_its_cooktop() -> None:
     """
     Naming the worktop a counter top must not lose what stands on it.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     worktop = world.get_semantic_annotation_by_name("sideboard")
 
     assert worktop.get_objects_of_type(Cooktop) == [
@@ -147,7 +147,7 @@ def test_washing_machine_door_and_drawer_move_on_their_joints() -> None:
     The washing machine's door turns on a hinge and its detergent drawer slides, each
     carrying its handle.
     """
-    world = KitchenEnvironment().get_world()
+    world = KitchenEnvironment().create_world()
     [washing_machine] = world.get_semantic_annotations_by_type(WashingMachine)
     [door] = washing_machine.doors
     [drawer] = washing_machine.drawers
