@@ -367,16 +367,37 @@ def test_a_motion_that_stops_approaching_its_goal_is_given_up_on(
 
 
 def test_a_motion_that_outlasts_the_simulation_time_limit_is_given_up_on(
-    reach_action_executable, monkeypatch
+    reach_action_executable,
 ):
     """
     A simulated motion is given up on once it exceeds the simulation time limit.
     """
-    monkeypatch.setattr(GiskardExecutable, "simulation_time_limit", timedelta(0))
-
-    with kinematically_simulated_robot:
+    with ExecutionEnvironment(
+        ExecutionType.KINEMATICALLY_SIMULATED, simulation_time_limit=timedelta(0)
+    ):
         with pytest.raises(MotionExceededSimulationTimeLimit):
             reach_action_executable.execute()
+
+
+def test_a_plan_that_is_meant_to_take_long_says_how_long_it_may_take(
+    reach_action_executable,
+):
+    """
+    A wipe covering a table top is minutes of travel, so the limit is the plan's to set
+    and to hand back when it is done.
+    """
+    generous = timedelta(hours=1)
+
+    with ExecutionEnvironment(
+        ExecutionType.KINEMATICALLY_SIMULATED, simulation_time_limit=generous
+    ):
+        assert GiskardExecutable.simulation_time_limit == generous
+        with ExecutionEnvironment(
+            ExecutionType.KINEMATICALLY_SIMULATED, simulation_time_limit=timedelta(0)
+        ):
+            assert GiskardExecutable.simulation_time_limit == timedelta(0)
+        assert GiskardExecutable.simulation_time_limit == generous
+    assert GiskardExecutable.simulation_time_limit == timedelta(minutes=2)
 
 
 def test_a_motion_that_violates_collision_avoidance_fails_as_a_plan_failure(
@@ -405,15 +426,15 @@ def test_a_motion_that_violates_collision_avoidance_fails_as_a_plan_failure(
 
 
 def test_a_physically_simulated_motion_is_given_the_same_time_limit(
-    reach_action_executable, monkeypatch
+    reach_action_executable,
 ):
     """
     Both simulated paths tick the same loop, so a motion performed in physics is given
     up on by the same limit as one projected kinematically.
     """
-    monkeypatch.setattr(GiskardExecutable, "simulation_time_limit", timedelta(0))
-
-    with PhysicallySimulatedRobot(simulation=SimulationThatCountsItsSteps()):
+    with PhysicallySimulatedRobot(
+        simulation=SimulationThatCountsItsSteps(), simulation_time_limit=timedelta(0)
+    ):
         with pytest.raises(MotionExceededSimulationTimeLimit):
             reach_action_executable.execute()
 

@@ -51,6 +51,7 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import Spon
 from semantic_digital_twin.spatial_types import Point3, Vector3
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.world_entity import Body
 
 
 @dataclass
@@ -92,33 +93,6 @@ class TracyWipeTableDemonstration(WipingDemonstration):
     """
     Gap kept between the hand and anything standing on the bench, in m: the hand reaches
     almost twice as far sideways as the sponge it holds.
-    """
-
-    press: Press = field(
-        default_factory=lambda: Press(
-            force=Vector3(z=15.0),
-            # Light, because the mass over the damping is phase lag the loop does not
-            # need: 10 kg costs a third of the contact.
-            mass=Vector3(x=2.0, y=2.0, z=2.0),
-            # The press chases the surface at the force asked for divided by this, so
-            # 5 cm/s here.
-            damping=Vector3(x=300.0, y=300.0, z=300.0),
-            travel=Vector3(x=0.0, y=0.0, z=0.02),
-            # About half of the 50 ms the arm takes to reach a commanded height.
-            lead_time=0.03,
-        )
-    )
-    """
-    How hard the tool is held against the bench, and how it may yield to get there.
-    """
-
-    wipe_speed: float = 0.045
-    """
-    How fast the tool travels while wiping, in m/s.
-
-    The tendency to be thrown off a crest grows with the square of the speed, so this is
-    the speed at which the press keeps contact over an uneven surface as well as on a
-    flat one.
     """
 
     @classproperty
@@ -168,11 +142,14 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         )
         return sequential(steps, context=context)
 
+    def wiped_surface(self, world: World) -> Body:
+        return world.get_body_by_name(self.bench_name)
+
     def contact_model(self, world: World) -> SimulatedContactWrench:
         return SimulatedContactWrench(
             world=world,
             tool=world.get_body_by_name(self.sponge_name),
-            surface=world.get_body_by_name(self.bench_name),
+            surface=self.wiped_surface(world),
             surface_height=self.bench_height(world),
             control_period=self.simulated_control_period,
         )
@@ -182,7 +159,7 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         :param world: World holding the bench.
         :return: Height of the bench top in the world frame, in m.
         """
-        bench = world.get_body_by_name(self.bench_name)
+        bench = self.wiped_surface(world)
         # The bench carries a fixture as well as its top, so the top is the tallest of
         # the shapes that span it rather than the tallest shape.
         boxes = list(bench.collision.as_bounding_box_collection_in_frame(world.root))

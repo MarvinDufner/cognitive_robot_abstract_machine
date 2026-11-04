@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from datetime import timedelta
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 
@@ -165,6 +166,15 @@ class RobotDemonstration(ABC):
     Whether collision avoidance is added to every motion state chart of this run.
     """
 
+    simulation_time_limit: timedelta = timedelta(minutes=2)
+    """
+    The simulated time after which a simulated motion of this run is given up on,
+    however it is progressing.
+
+    A demonstration whose plan is meant to take longer than this raises it; the chart's
+    own stall monitor is what ends a motion that has stopped converging.
+    """
+
     event_segmentation: bool = True
     """
     Whether the events of this run are segmented while the plan is performed, as
@@ -311,10 +321,12 @@ class RobotDemonstration(ABC):
             return ExecutionEnvironment(
                 execution_type=self.execution_type,
                 collision_avoidance=self.collision_avoidance,
+                simulation_time_limit=self.simulation_time_limit,
             )
         return PhysicallySimulatedRobot(
             simulation=self.simulation,
             collision_avoidance=self.collision_avoidance,
+            simulation_time_limit=self.simulation_time_limit,
         )
 
     def run(self) -> World:

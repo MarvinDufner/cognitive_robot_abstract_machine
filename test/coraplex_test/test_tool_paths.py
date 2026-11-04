@@ -207,7 +207,7 @@ def test_surface_path_stays_inside_xy_bounds(box_body):
         WipingTechnique.SPREAD: ToolPathSegmentKind.RASTER,
     }
     for technique, expected_kind in expected_kinds.items():
-        path = build_surface_path(box_body, technique=technique)
+        path = build_surface_path(box_body, lane_spacing=0.02, technique=technique)
         _, points, _ = _sample(path)
         assert np.all(points[:, 0] >= -0.1 - 1e-9)
         assert np.all(points[:, 0] <= 0.1 + 1e-9)

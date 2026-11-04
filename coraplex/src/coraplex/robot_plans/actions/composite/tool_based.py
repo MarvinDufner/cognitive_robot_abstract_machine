@@ -69,20 +69,28 @@ logger = logging.getLogger(__name__)
 @dataclass(kw_only=True)
 class FullBodyControlledAction(ActionDescription, ABC):
     """
-    An action that executes its plan with the robot's full body controlled, so the base
-    can support the arm motion.
+    An action that says, for the length of its plan, whether the robot's base is
+    controlled together with the arm, and hands the robot's own setting back afterwards.
     """
 
     def execute(self) -> Any:
         """
-        Perform the action's plan with full body control enabled, restoring the previous
-        control state afterwards.
+        Perform the action's plan with the base driven or held as
+        :attr:`_base_supports_the_arm` says, restoring the robot's own setting
+        afterwards.
         """
-        previous_full_body_controlled = self._enable_full_body_control()
+        previous_full_body_controlled = self._take_over_the_base()
         try:
             self._perform_plan()
         finally:
-            self._restore_full_body_control(previous_full_body_controlled)
+            self._give_the_base_back(previous_full_body_controlled)
+
+    @property
+    def _base_supports_the_arm(self) -> bool:
+        """
+        :return: Whether the base drives along to help the arm reach.
+        """
+        return True
 
     def _perform_plan(self) -> None:
         """
@@ -90,7 +98,7 @@ class FullBodyControlledAction(ActionDescription, ABC):
         """
         self.add_subplan(self.action_plan).perform()
 
-    def _enable_full_body_control(self) -> Optional[bool]:
+    def _take_over_the_base(self) -> Optional[bool]:
         """
         :return: The previous full-body-control state, or None if the robot has no
             mobile base.
@@ -98,10 +106,10 @@ class FullBodyControlledAction(ActionDescription, ABC):
         if not isinstance(self.robot, HasMobileBase):
             return None
         previous = self.robot.mobile_base.full_body_controlled
-        self.robot.mobile_base.full_body_controlled = True
+        self.robot.mobile_base.full_body_controlled = self._base_supports_the_arm
         return previous
 
-    def _restore_full_body_control(self, previous: Optional[bool]) -> None:
+    def _give_the_base_back(self, previous: Optional[bool]) -> None:
         """
         :param previous: The full-body-control state to restore, or None if the robot
             has no mobile base.
@@ -138,24 +146,6 @@ class ToolMotionAction(
     Keep every Nth sampled waypoint for execution.
     """
 
-    standing_pose: Optional[Pose] = None
-    """
-    Where the robot will stand while this motion runs, for :attr:`skip_unreachable`.
-
-    ``None`` measures from where the robot stands when the path is sampled, which is
-    only the same place once it has arrived: a plan may lay its steps out before it
-    drives, and a base does not land exactly on the pose it was given.
-    """
-
-    skip_unreachable: bool = False
-    """
-    Drop the waypoints the arm cannot reach from where the robot stands, so a path that
-    starts out of reach still covers what it can.
-
-    .. note:: The bound is purely kinematic, so a kept waypoint may still be blocked or
-        need a posture the arm cannot hold.
-    """
-
     press: Optional[Press] = None
     """
     How hard the tool is held against the target while it moves.
@@ -163,6 +153,17 @@ class ToolMotionAction(
     ``None`` follows the tool path as generated, which keeps the tool just clear of the
     surface.
     """
+
+    @property
+    def _base_supports_the_arm(self) -> bool:
+        """
+        A tool held against a surface is held there by the arm.
+
+        A base driving under it carries the tool across the surface, so the press would
+        have to chase a set point moving for reasons of its own, and what the arm
+        reaches from where the robot stands is what the path has to fit into instead.
+        """
+        return self.press is None
 
     @abstractmethod
     def _build_tool_path(self) -> ToolPath:
@@ -194,53 +195,13 @@ class ToolMotionAction(
             points = (
                 points + path_frame.to_np()[:3, 2] * self.tool.contact_face_distance
             )
-        stride = max(1, int(self.pointer_stride))
-        if self.skip_unreachable:
-            points = points[self._longest_reachable_stretch(points)]
         waypoints = [
             Point3(x=point[0], y=point[1], z=point[2], reference_frame=self.world.root)
             for point in points
-        ][::stride]
+        ][:: max(1, int(self.pointer_stride))]
         if not waypoints:
             raise MissingWaypoints(self)
         return waypoints
-
-    def _longest_reachable_stretch(self, points: np.ndarray) -> slice:
-        """
-        :param points: Sampled path points in the world frame.
-        :return: The longest run of them the arm can reach without interruption.
-
-        .. warning:: Taking every reachable point instead would carve holes out of the
-            middle of a path that leaves the arm's reach and comes back, as a raster or
-            a spiral does in every lane, and the tool would be commanded to jump the
-            gaps: it leaves the surface and lands on it again at every hole.
-        """
-        reachable = self._within_reach(points)
-        best_start, best_length, start = 0, 0, None
-        for index, within in enumerate(np.append(reachable, False)):
-            if within and start is None:
-                start = index
-            elif not within and start is not None:
-                if index - start > best_length:
-                    best_start, best_length = start, index - start
-                start = None
-        return slice(best_start, best_start + best_length)
-
-    def _within_reach(self, points: np.ndarray) -> np.ndarray:
-        """
-        :param points: Sampled path points in the world frame.
-        :return: Which of them the arm can reach from where the robot stands, measured
-            horizontally, as the arm's own reach is.
-
-        """
-        if self.standing_pose is not None:
-            standing = self.standing_pose.to_np()[:2, 3]
-        else:
-            standing = self.world.compute_forward_kinematics_np(
-                self.world.root, self.robot.root
-            )[:2, 3]
-        distances = np.linalg.norm(points[:, :2] - standing, axis=1)
-        return distances <= self.arm.maximum_reach()
 
     @property
     def _alignment_pairs(self) -> List[AlignmentPair]:
@@ -426,7 +387,10 @@ class WipingAction(ToolMotionAction):
             # hard; the default clearance would keep the tool just above it instead.
             clearance = {} if self.press is None else {"approach_clearance": 0.0}
             return build_surface_path(
-                self.surface, technique=self.technique, **clearance
+                self.surface,
+                lane_spacing=self._tool_span,
+                technique=self.technique,
+                **clearance,
             )
         if self.technique is WipingTechnique.SPREAD:
             return self._lane_path(self._tool_span)

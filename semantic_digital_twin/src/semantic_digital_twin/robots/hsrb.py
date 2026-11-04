@@ -8,6 +8,7 @@ from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
 from typing import Self, List
+from typing_extensions import Dict
 
 from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.adapters.sensors.lidar import Lidar, LidarSource
@@ -51,7 +52,13 @@ from semantic_digital_twin.robots.robot_parts import (
     EndEffector,
 )
 from semantic_digital_twin.spatial_types import Vector3
+from semantic_digital_twin.world_description.connection_properties import (
+    JointDynamics,
+    JointServo,
+    ServoGains,
+)
 from semantic_digital_twin.world_description.connections import (
+    ActiveConnection1DOF,
     OmniDrive,
 )
 from semantic_digital_twin.world_description.world_entity import (
@@ -139,6 +146,57 @@ class HSRBJoint(StrEnum):
     HAND_RIGHT_PROXIMAL = "hand_r_proximal_joint"
 
 
+@dataclass(frozen=True)
+class HSRBJointDrive:
+    """
+    What drives one joint of an HSRB in a physical simulation.
+
+    The robot description is a URDF, which carries each joint's effort limit but nothing
+    about what drives it, and there is no MuJoCo description of this robot in this
+    repository to read that from either. The torque limits are therefore the
+    description's own, and the gains are raised empirically, as
+    :class:`~semantic_digital_twin.robots.robotiq_85_gripper.Robotiq85Gripper`'s are.
+
+    .. note:: A servoed part carries its own weight, so the gains only have to hold the
+        joint against what the robot works on, not against gravity.
+    """
+
+    stiffness: float
+    """
+    How hard the servo pulls towards its commanded position.
+    """
+
+    damping: float
+    """
+    How hard the servo resists the joint's velocity.
+    """
+
+    torque_limit: float
+    """
+    The largest torque, or force, the servo may exert, as the description limits it.
+    """
+
+    armature: float = 0.1
+    """
+    The rotor inertia reflected through the gearbox, which is also what keeps a stiff
+    servo from chattering.
+    """
+
+    @property
+    def servo(self) -> JointServo:
+        """
+        The servo these values describe.
+        """
+        return JointServo(
+            gains=ServoGains(
+                stiffness=self.stiffness,
+                damping=self.damping,
+                torque_limit=self.torque_limit,
+            ),
+            dynamics=JointDynamics(armature=self.armature),
+        )
+
+
 @dataclass(eq=False)
 class HSRBLeftFinger(Finger):
 
@@ -190,6 +248,20 @@ class HSRBGripper(EndEffector, HasTwoFingers[HSRBLeftFinger, HSRBRightFinger]):
 
     def setup_hardware_interfaces(self):
         return
+
+    def _setup_servos(self) -> None:
+        """
+        Drive every joint of the hand with the one servo the motor joint's effort limit
+        describes; the spring and distal joints of the linkage follow it.
+        """
+        drive = HSRBJointDrive(
+            stiffness=100.0, damping=5.0, torque_limit=10.0, armature=0.05
+        )
+        for connection in self.active_connections:
+            if not isinstance(connection, ActiveConnection1DOF):
+                continue
+            self._declare_servo(connection, drive.servo)
+        self._compensate_gravity()
 
     def setup_joint_states(self) -> List[JointState]:
         world = self._world
@@ -311,6 +383,33 @@ class HSRBArm(Arm[HSRBGripper], HasSensors[HSRBHandCamera, HSRBWristForceTorqueS
         for joint_name in controlled_joints:
             connection = self._world.get_connection_by_name(joint_name)
             connection.has_hardware_interface = True
+
+    @property
+    def drives_by_joint(self) -> Dict[str, HSRBJointDrive]:
+        """
+        What drives each of this arm's joints.
+
+        The flex and roll joints carry the wrist and the hand out at arm's length and
+        need the stiffer servo to hold a tool against a surface; the two wrist joints
+        carry only the hand.
+        """
+        shoulder = HSRBJointDrive(stiffness=2000.0, damping=100.0, torque_limit=100.0)
+        wrist = HSRBJointDrive(stiffness=500.0, damping=25.0, torque_limit=100.0)
+        return {
+            HSRBJoint.ARM_FLEX: shoulder,
+            HSRBJoint.ARM_ROLL: shoulder,
+            HSRBJoint.WRIST_FLEX: wrist,
+            HSRBJoint.WRIST_ROLL: wrist,
+        }
+
+    def _setup_servos(self) -> None:
+        for connection in self.active_connections:
+            if not isinstance(connection, ActiveConnection1DOF):
+                continue
+            self._declare_servo(
+                connection, self.drives_by_joint[connection.name.name].servo
+            )
+        self._compensate_gravity()
 
     def setup_joint_states(self) -> List[JointState]:
         arm_park = JointState.from_mapping(
@@ -466,6 +565,21 @@ class HSRBNeck(
             connection = self._world.get_connection_by_name(joint_name)
             connection.has_hardware_interface = True
 
+    def _setup_servos(self) -> None:
+        """
+        Drive the head's two joints, which carry only the head itself, with the softest
+        of the robot's servos.
+
+        The pan joint turns this neck's own root, so it lies above the chain rather than
+        inside it, and is driven here with the joints that are.
+        """
+        drive = HSRBJointDrive(stiffness=100.0, damping=10.0, torque_limit=100.0)
+        for connection in [self.root.parent_connection] + self.active_connections:
+            if not isinstance(connection, ActiveConnection1DOF):
+                continue
+            self._declare_servo(connection, drive.servo)
+        self._compensate_gravity()
+
     def setup_joint_states(self) -> List[JointState]:
         return []
 
@@ -488,6 +602,20 @@ class HSRBTorso(Torso, HasOneArm[HSRBArm], HasNeck[HSRBNeck]):
 
     def setup_hardware_interfaces(self):
         return
+
+    def _setup_servos(self) -> None:
+        """
+        Drive the lift the whole arm hangs from, which is the one joint that carries the
+        press straight down its own axis and so is the stiffest of the robot's servos.
+        """
+        drive = HSRBJointDrive(
+            stiffness=20000.0, damping=1000.0, torque_limit=300.0, armature=1.0
+        )
+        for connection in self.active_connections:
+            if not isinstance(connection, ActiveConnection1DOF):
+                continue
+            self._declare_servo(connection, drive.servo)
+        self._compensate_gravity()
 
     def setup_joint_states(self) -> List[JointState]:
         torso_joint = self.active_connections

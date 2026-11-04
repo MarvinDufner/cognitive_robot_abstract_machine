@@ -4,9 +4,14 @@ force/torque sensor.
 
 The wipe itself is coraplex's :class:`~coraplex.robot_plans.actions.composite.tool_based.
 WipingAction`; giving it a ``press`` is what turns its geometric tool path into a
-compliant one. The table is wider than the arm reaches, so the plan simply drives to each
-side in turn and wipes again -- each wipe covers what it can and stops when it can get no
-further.
+compliant one. The base stands still while the tool presses, so one placement covers only
+the patch the arm reaches from it and the plan drives along the table to wipe the next.
+
+.. warning:: A physically simulated run is faithful only where the robot is localized: a
+    wheeled drive is no joint MuJoCo knows, so neither the drive nor
+    :class:`~coraplex.robot_plans.actions.core.navigation.NavigateAction` moves the base
+    there, and every placement after the first is wiped somewhere the simulation has the
+    robot standing a stride away from.
 
 ``ExecutionType.REAL`` drives the real robot and takes the world from the running
 controller, which must already be up (see
@@ -27,8 +32,6 @@ from datetime import timedelta
 import numpy as np
 from typing_extensions import ClassVar, List, Optional, Tuple
 
-from krrood.ormatic.utils import classproperty
-
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import ExecutionType, WipingTechnique
 from coraplex.demonstrations import RobotDemonstration
@@ -36,10 +39,7 @@ from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
-from coraplex.robot_plans.actions.core.robot_body import (
-    MoveManipulatorAction,
-    ParkArmsAction,
-)
+from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
 from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
 from coraplex.robot_plans.mixins import Press
 from semantic_digital_twin.adapters.sensors.force_torque import (
@@ -119,6 +119,28 @@ class TableSideStanding:
         return self.across, float(
             np.linalg.norm(self.pose.to_np()[:2, 3] - robot_position)
         )
+
+
+@dataclass(frozen=True)
+class WipedPatch:
+    """
+    One part of a surface, covered in a single wiping motion.
+    """
+
+    centre: Pose
+    """
+    The middle of the patch, on the surface, with the lanes along its own x axis.
+    """
+
+    length: float
+    """
+    Length of the patch along the lanes, in m.
+    """
+
+    width: float
+    """
+    Width of the patch across the lanes, in m.
+    """
 
 
 # %% simulated contact
@@ -289,7 +311,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
     A demonstration that wipes a surface with a sponge held in one hand.
     """
 
-    technique: WipingTechnique = WipingTechnique.SHEAR
+    technique: WipingTechnique = WipingTechnique.SPREAD
     """
     How the tool covers the surface: lanes, a spiral or a shear.
     """
@@ -315,14 +337,34 @@ class WipingDemonstration(RobotDemonstration, ABC):
     press: Press = field(
         default_factory=lambda: Press(
             force=Vector3(z=15.0),
+            # Light, because the mass over the damping is phase lag the loop does not
+            # need: 10 kg costs a third of the contact.
+            mass=Vector3(x=2.0, y=2.0, z=2.0),
+            # The press chases the surface at the force asked for divided by this, so
+            # 5 cm/s here. What the touchdown arrives at, and the only one of these
+            # numbers that measurably decides how hard: an HSRB pressing 15 N on a
+            # table peaks at 32 N with the task's own 100, 20 N with 150, 17 N with
+            # this, and 18 N again with 500.
+            damping=Vector3(x=300.0, y=300.0, z=300.0),
             # Only along the surface normal: the tool feels friction while it travels,
             # and a press free to yield to that drifts against its own direction of
             # travel until it stalls.
             travel=Vector3(x=0.0, y=0.0, z=0.02),
+            # About half of the 50 ms the arm takes to reach a commanded height.
+            lead_time=0.03,
         )
     )
     """
     How hard the tool is held against the surface, and how it may yield to get there.
+    """
+
+    wipe_speed: float = 0.045
+    """
+    How fast the tool travels while wiping, in m/s.
+
+    The tendency to be thrown off a crest grows with the square of the speed, so this is
+    the speed at which the press keeps contact over an uneven surface as well as on a
+    flat one.
     """
 
     simulated_control_period: float = 1 / 50
@@ -331,20 +373,26 @@ class WipingDemonstration(RobotDemonstration, ABC):
     simulates at.
     """
 
-    @classproperty
-    def sponge_contact(cls) -> ContactParameters:
-        """
-        What the sponge's surface does when it is pressed onto something: soft over a
-        centimetre of squash and only moderately grippy, as a damp sponge is.
+    sponge_resolution_time: timedelta = timedelta(milliseconds=500)
+    """
+    How long the simulation takes to resolve a contact with the sponge's pad, which is
+    how soft the pad is.
 
-        .. warning:: The resolution time leaves the pad about as stiff as
-            :attr:`SimulatedContactWrench.stiffness`. A tenth of it makes the pad a
-            rigid block the press can only chase: half the wipe out of contact,
-            touching down at 132 N instead of 12 N.
+    .. warning:: This leaves the pad about as stiff as
+        :attr:`SimulatedContactWrench.stiffness`. A tenth of it makes the pad a rigid
+        block the press can only chase: half the wipe out of contact, touching down at
+        132 N instead of 12 N.
+    """
+
+    @property
+    def sponge_contact(self) -> ContactParameters:
+        """
+        :return: What the sponge's surface does when it is pressed onto something: soft
+            over a centimetre of squash and only moderately grippy, as a damp sponge is.
         """
         return ContactParameters(
             friction=ContactFriction(sliding=0.4),
-            stiffness=ContactStiffness(time_constant=timedelta(milliseconds=500)),
+            stiffness=ContactStiffness(time_constant=self.sponge_resolution_time),
             impedance=ContactImpedance(minimum=0.4, maximum=0.7, width=0.01),
         )
 
@@ -469,6 +517,13 @@ class WipingDemonstration(RobotDemonstration, ABC):
         :param world: World the demonstration acts on.
         :return: Where on the surface the tool is set down before it starts wiping, in
             the world frame.
+        """
+
+    @abstractmethod
+    def wiped_surface(self, world: World) -> Body:
+        """
+        :param world: World the demonstration acts on.
+        :return: The body whose top the tool is held against.
         """
 
     def build_approach(
@@ -613,12 +668,18 @@ class RidgedSurface(WipingDemonstration, ABC):
 
     ridge_length: float = 0.6
     """
-    Length of each ridge across the surface, in m: wider than the wiped patch.
+    Length of each ridge, in m, across the lanes it is laid under: wider than the patch
+    they cover, and no wider than the surface carrying it.
     """
 
     ridged_span: float = 0.3
     """
-    How far the ridges reach along the sweep, in m: the wiped patch, or wider.
+    How far the crests reach along the lanes, in m: the length of the wiped patch, or
+    further.
+
+    .. warning:: Crests beyond the surface stand unsupported in mid air, and a mobile
+        base drives into them, so a span wider than the surface is only safe where
+        nothing has to pass beside it.
     """
 
     def populate_scene(self, world: World) -> None:
@@ -627,23 +688,35 @@ class RidgedSurface(WipingDemonstration, ABC):
         the wiped patch.
         """
         super().populate_scene(world)
-        patch = self.touchdown_pose(world).to_np()[:3, 3]
-        crests = int(0.5 * self.ridged_span / self.wave_length) + 2
+        # Laid out in the frame the lanes are: a crest has to lie across them, or the
+        # tool runs along one instead of riding over it.
+        world_T_patch = self.touchdown_pose(world).to_np()
+        # Rounded up, so the crests cover the span rather than stopping short of it.
+        crests = math.ceil(0.5 * self.ridged_span / self.wave_length)
+        # Bolted to the surface rather than to the world root: a ridge is a bump on
+        # that surface, so it travels with it and whatever ignores the surface, such as
+        # a base looking for room to stand, ignores the ridges with it.
+        surface = self.wiped_surface(world)
+        surface_T_world = np.linalg.inv(
+            world.compute_forward_kinematics_np(world.root, surface)
+        )
         with world.modify_world():
             for index in range(-crests, crests + 1):
+                patch_T_ridge = HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=index * self.wave_length,
+                    y=0.0,
+                    # Sunk into the surface, so only the crest stands out of it and the
+                    # tool rides a wave rather than a step.
+                    z=self.wave_amplitude - self.wave_radius,
+                    roll=np.pi / 2.0,
+                )
                 world.add_connection(
                     FixedConnection(
-                        parent=world.root,
+                        parent=surface,
                         child=self.ridge(f"ridge_{index + crests}"),
-                        parent_T_connection_expression=(
-                            HomogeneousTransformationMatrix.from_xyz_rpy(
-                                x=patch[0] + index * self.wave_length,
-                                y=patch[1],
-                                # Sunk into the surface, so only the crest stands out
-                                # of it and the tool rides a wave rather than a step.
-                                z=patch[2] + self.wave_amplitude - self.wave_radius,
-                                roll=np.pi / 2.0,
-                            )
+                        parent_T_connection_expression=HomogeneousTransformationMatrix(
+                            surface_T_world @ world_T_patch @ patch_T_ridge.to_np(),
+                            reference_frame=surface,
                         ),
                     )
                 )
@@ -675,12 +748,12 @@ class WipeTableDemonstration(WipingDemonstration):
 
     ros_node_name: ClassVar[str] = "wipe_table_demo_node"
 
-    sides: Optional[int] = None
+    placements: Optional[int] = None
     """
-    How many of the usable sides to wipe from, or ``None`` for all of them.
+    How many of the places the base can stand to wipe from, or ``None`` for all of them.
 
-    One placement reaches under half of this table, so covering it means driving round
-    it. Set this to shorten a demonstration.
+    One placement covers only what the arm reaches from it, so covering the table means
+    driving along it. Set this to shorten a demonstration.
     """
 
     turning_height: float = 0.15
@@ -702,7 +775,7 @@ class WipeTableDemonstration(WipingDemonstration):
         )
     )
     """
-    Where the robot is put down in the kitchen, facing the dining table.
+    Where the robot is localized in the kitchen, facing the dining table.
 
     .. warning:: Clear of the cooking counter along the far side of the table, which
         the base used to be put down inside of. A kinematic run tolerates that; a
@@ -714,26 +787,40 @@ class WipeTableDemonstration(WipingDemonstration):
     Gap left between the base and the table edge when standing at a side, in m.
     """
 
-    waypoint_stride: int = 10
+    flat_reach: float = 0.49
     """
-    Keep every Nth point of the generated tool path.
+    How far from its base the arm can hold the pad flat on a table of this height, in m.
 
-    The path is sampled at 0.4 mm, far finer than a wipe needs, and the trajectory
-    advances at most a couple of waypoints per control cycle, so the raw density alone
-    decides how long the motion takes. Thinning it costs no coverage.
+    .. note:: Measured by sweeping the arm with the lift solved for the table's height:
+        :meth:`~semantic_digital_twin.robots.robot_parts.Arm.maximum_reach` bounds the
+        tool frame's distance in any posture at all and reads 0.69 m, while holding the
+        pad within eight degrees of flat up there costs a third of that.
+    """
+
+    simulation_time_limit: timedelta = timedelta(minutes=5)
+    """
+    Long enough for this plan, which drives to every place it can wipe from and lays
+    down the lanes of a patch at each: minutes of travel rather than the seconds a
+    single reaching motion takes.
     """
 
     def build_simulated_world(self) -> World:
         """
-        Put the robot on its drive in an otherwise empty world; the kitchen is added by
+        Localize the robot in an otherwise empty world; the kitchen is added by
         :meth:`populate_scene`, which a real run skips.
+
+        .. warning:: The pose goes on the odometry frame rather than on the drive. A
+            drive is not a joint a physics engine knows, so where it holds the robot
+            never reaches one: the robot would be built at the world origin and stay
+            there, metres from everything the plan is about, while the controller worked
+            from a world that has it at the table.
         """
         return WorldSpecification(
             world_parser=None,
             robots=[
                 RobotSpecification(
                     semantic_annotation_type=self.used_robot,
-                    odom_T_robot_start=self.approach_pose,
+                    world_T_odom=self.approach_pose,
                 )
             ],
         ).to_domain_object()
@@ -768,59 +855,115 @@ class WipeTableDemonstration(WipingDemonstration):
         sponge = world.get_semantic_annotations_by_type(Sponge)[0]
 
         steps = []
-        for standing_pose in self.standing_poses(world, table)[: self.sides]:
+        for standing_pose in self.standing_poses(world, table)[: self.placements]:
+            patch = self.reachable_patch(world, standing_pose)
             steps.append(NavigateAction(standing_pose))
             # No pose-based approach: the descent aligns the tool from the tool's own
             # alignment pairs, while a commanded pose would have to state an
             # orientation convention, and the one Tracy uses is not the HSRB's.
-            steps.append(self.build_touchdown(context, self.touchdown_pose(world)))
+            steps.append(self.build_touchdown(context, patch.centre))
             steps.append(
                 WipingAction(
                     arm=self.wiping_arm(world),
                     tool=sponge,
-                    surface=table.root,
+                    target_pose=patch.centre,
+                    length=patch.length,
+                    width=patch.width,
                     technique=self.technique,
-                    pointer_stride=self.waypoint_stride,
-                    skip_unreachable=True,
-                    standing_pose=standing_pose,
                     press=self.press,
+                    max_linear_velocity=self.wipe_speed,
                 )
             )
         return sequential(steps, context=context)
 
+    def reachable_patch(self, world: World, standing: Pose) -> WipedPatch:
+        """
+        :param world: World holding the table.
+        :param standing: Where the base stands while the tool presses.
+        :return: The largest part of the table top the arm can hold the pad flat on from
+            there, with the lanes running along the edge the robot stands at.
+
+        The base stays where it stands while the tool presses, so the arm sweeps a disc
+        of :attr:`flat_reach` around it and the deepest rectangle that fits inside that
+        disc is the one whose far corners sit on its rim.
+        """
+        footprint = (
+            self.wiped_surface(world)
+            .collision.as_bounding_box_collection_in_frame(world.root)
+            .bounding_box()
+        )
+        base = standing.to_np()[:2, 3]
+        heading = math.atan2(standing.to_np()[1, 0], standing.to_np()[0, 0])
+        inwards = np.array([math.cos(heading), math.sin(heading)])
+        along = np.array([-inwards[1], inwards[0]])
+        corners = np.array(
+            [
+                [footprint.min_x, footprint.min_y],
+                [footprint.min_x, footprint.max_y],
+                [footprint.max_x, footprint.min_y],
+                [footprint.max_x, footprint.max_y],
+            ]
+        )
+        inward_reach = (corners - base) @ inwards
+        lateral_reach = (corners - base) @ along
+        near_edge = float(inward_reach.min())
+        # The far corners of the rectangle sit on the rim of the reach, which is where
+        # the area it encloses is largest.
+        farthest = float(
+            np.clip(
+                (near_edge + math.sqrt(near_edge**2 + 8.0 * self.flat_reach**2)) / 4.0,
+                near_edge,
+                self.flat_reach,
+            )
+        )
+        depth = min(farthest - near_edge, float(inward_reach.max()) - near_edge)
+        half_width = min(
+            math.sqrt(max(0.0, self.flat_reach**2 - farthest**2)),
+            float(lateral_reach.max()),
+            -float(lateral_reach.min()),
+        )
+        centre = base + inwards * (near_edge + 0.5 * depth)
+        return WipedPatch(
+            centre=Pose.from_xyz_rpy(
+                x=float(centre[0]),
+                y=float(centre[1]),
+                z=self.contact_model(world).surface_height,
+                # The lanes run along the edge, which is the long way across the patch.
+                yaw=heading + 0.5 * math.pi,
+                reference_frame=world.root,
+            ),
+            length=2.0 * half_width,
+            width=depth,
+        )
+
     def touchdown_pose(self, world: World) -> Pose:
         """
         :param world: World holding the table and the robot.
-        :return: Where the tool is set down: the point of the table top nearest the
-            robot, held a sponge's width clear of the edge.
-
-        The middle of the table is what the wipe is laid out around, but the arm has to
-        hold the tool out there, and the near edge is what it can reach while the base
-        stands clear of the table.
+        :return: The middle of the patch wiped from the first place the robot stands, so
+            the tool is set down where it starts wiping rather than somewhere it then
+            has to travel from.
         """
         table = world.get_semantic_annotations_by_type(DiningTable)[0]
-        footprint = table.root.collision.as_bounding_box_collection_in_frame(
-            world.root
-        ).bounding_box()
-        robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
-        standing = world.compute_forward_kinematics_np(world.root, robot.root)[:2, 3]
-        inset = 0.5 * max(self.sponge_scale.x, self.sponge_scale.y)
-        return Pose.from_xyz_rpy(
-            x=float(
-                np.clip(standing[0], footprint.min_x + inset, footprint.max_x - inset)
-            ),
-            y=float(
-                np.clip(standing[1], footprint.min_y + inset, footprint.max_y - inset)
-            ),
-            z=self.contact_model(world).surface_height,
-            reference_frame=world.root,
+        return self.reachable_patch(world, self.standing_poses(world, table)[0]).centre
+
+    def surface_yaw(self, world: World) -> float:
+        """
+        :param world: World holding the table.
+        :return: Which way the table's own x axis points in the world, in rad.
+        """
+        world_T_surface = world.compute_forward_kinematics_np(
+            world.root, self.wiped_surface(world)
         )
+        return math.atan2(world_T_surface[1, 0], world_T_surface[0, 0])
+
+    def wiped_surface(self, world: World) -> Body:
+        return world.get_semantic_annotations_by_type(DiningTable)[0].root
 
     def contact_model(self, world: World) -> SimulatedContactWrench:
         return SimulatedContactWrench(
             world=world,
             tool=world.get_body_by_name(self.sponge_name),
-            surface=world.get_semantic_annotations_by_type(DiningTable)[0].root,
+            surface=self.wiped_surface(world),
             control_period=self.simulated_control_period,
         )
 
@@ -828,21 +971,57 @@ class WipeTableDemonstration(WipingDemonstration):
         """
         :param world: World holding the table and the robot.
         :param table: The table being wiped.
-        :return: Where the base can stand to wipe, one pose per usable side, just clear
-            of the edge and facing the table, nearest side first.
+        :return: Where the base can stand to wipe, spaced along every usable side so
+            that the patches reached from them meet, just clear of the edge and facing
+            the table, nearest side first.
         """
         usable = [
             side
             for side in self.sides_of(world, table)
             if self.has_room_for_the_base(world, table, side.pose)
-            and self.arm_reaches_the_middle(world, table, side.pose)
         ]
         robot_position = world.compute_forward_kinematics_np(
             world.root, self.wiping_arm(world)._robot.root
         )[:2, 3]
         return [
-            side.pose
+            pose
             for side in sorted(usable, key=lambda side: side.preference(robot_position))
+            for pose in self.stops_along(world, table, side)
+        ]
+
+    def stops_along(
+        self, world: World, table: DiningTable, side: TableSideStanding
+    ) -> List[Pose]:
+        """
+        :param world: World holding the table.
+        :param table: The table being wiped.
+        :param side: The side of the table the base stands at.
+        :return: Where to stand along that side, from the middle outwards, so that the
+            patches reached from them cover its length without leaving a strip between.
+        """
+        body = table.root
+        extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
+        edge_length = extent.width if side.across == extent.depth else extent.depth
+        covered = self.reachable_patch(world, side.pose).length
+        stops = max(1, math.ceil(edge_length / covered))
+        middle = side.pose.to_np()
+        heading = math.atan2(middle[1, 0], middle[0, 0])
+        along = np.array([-math.sin(heading), math.cos(heading)])
+        spaced = [
+            Pose.from_xyz_rpy(
+                x=float(middle[0, 3] + along[0] * offset),
+                y=float(middle[1, 3] + along[1] * offset),
+                z=0.0,
+                yaw=heading,
+                reference_frame=world.root,
+            )
+            for offset in (
+                (index - 0.5 * (stops - 1)) * edge_length / stops
+                for index in range(stops)
+            )
+        ]
+        return [
+            stop for stop in spaced if self.has_room_for_the_base(world, table, stop)
         ]
 
     def sides_of(self, world: World, table: DiningTable) -> List[TableSideStanding]:
@@ -854,7 +1033,7 @@ class WipeTableDemonstration(WipingDemonstration):
         body = table.root
         extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
         world_T_table = world.compute_forward_kinematics_np(world.root, body)
-        table_yaw = math.atan2(world_T_table[1, 0], world_T_table[0, 0])
+        table_yaw = self.surface_yaw(world)
         robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
         standoff = robot.mobile_base.base_radius + self.standing_clearance
 
@@ -882,25 +1061,6 @@ class WipeTableDemonstration(WipingDemonstration):
                 )
             )
         return standings
-
-    def arm_reaches_the_middle(
-        self, world: World, table: DiningTable, pose: Pose
-    ) -> bool:
-        """
-        :param world: World holding the table and the robot.
-        :param table: The table being wiped.
-        :param pose: Where the base would stand.
-        :return: Whether the arm reaches the middle of the table top from there.
-
-        The wipe is laid out around the middle of the surface, so a side the arm cannot
-        reach the middle from covers none of it.
-        """
-        body = table.root
-        middle = world.compute_forward_kinematics_np(world.root, body)[:2, 3]
-        standing = pose.to_np()[:2, 3]
-        return bool(
-            np.linalg.norm(middle - standing) <= self.wiping_arm(world).maximum_reach()
-        )
 
     def has_room_for_the_base(
         self, world: World, table: DiningTable, pose: Pose
@@ -941,27 +1101,24 @@ class WipeTableDemonstration(WipingDemonstration):
         return True
 
 
-def main(execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED) -> None:
+def main(
+    execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED,
+    technique: WipingTechnique = WipeTableDemonstration.technique,
+) -> None:
     """
     Run the demonstration.
 
     :param execution_type: Whether to drive the real robot or simulate it.
+    :param technique: How the tool covers the table.
     """
-    WipeTableDemonstration(used_robot=HSRB, execution_type=execution_type).run()
+    WipeTableDemonstration(
+        used_robot=HSRB, execution_type=execution_type, technique=technique
+    ).run()
 
 
 if __name__ == "__main__":
     # Only what the command line names, so the default lives once, in main.
-    main(*(ExecutionType[name] for name in sys.argv[1:2]))
-
-
-@dataclass
-class WipeWavyTableDemonstration(RidgedSurface, WipeTableDemonstration):
-    """
-    The HSRB wipes a dining table with ridges laid across it.
-
-    The plan is the flat demonstration's, so how well contact is kept over the crests
-    is what this run measures.
-    """
-
-    ros_node_name: ClassVar[str] = "wipe_wavy_table_demo_node"
+    main(
+        *(ExecutionType[name] for name in sys.argv[1:2]),
+        *(WipingTechnique[name] for name in sys.argv[2:3]),
+    )

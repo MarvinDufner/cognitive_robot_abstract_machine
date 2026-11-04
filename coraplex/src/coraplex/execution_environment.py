@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from typing_extensions import Optional, TYPE_CHECKING
 
@@ -38,6 +39,12 @@ class ExecutionEnvironment:
     motion state chart created within this environment.
     """
 
+    simulation_time_limit: timedelta = timedelta(minutes=2)
+    """
+    The simulated time after which a simulated motion performed within this environment
+    is given up on, however it is progressing.
+    """
+
     previous_type: ExecutionType = field(init=False, default=None)
     """
     Type of the execution environment before setting it, used for nested environments.
@@ -49,6 +56,11 @@ class ExecutionEnvironment:
     environments.
     """
 
+    previous_simulation_time_limit: timedelta = field(init=False, default=timedelta())
+    """
+    Time limit before entering this environment, used for nested environments.
+    """
+
     def __enter__(self):
         """
         Entering function for 'with' scope, saves the previously set
@@ -58,8 +70,10 @@ class ExecutionEnvironment:
         """
         self.previous_type = GiskardExecutable.execution_type
         self.previous_collision_avoidance = GiskardExecutable.collision_avoidance
+        self.previous_simulation_time_limit = GiskardExecutable.simulation_time_limit
         GiskardExecutable.execution_type = self.execution_type
         GiskardExecutable.collision_avoidance = self.collision_avoidance
+        GiskardExecutable.simulation_time_limit = self.simulation_time_limit
 
     def __exit__(self, _type, value, traceback):
         """
@@ -70,6 +84,7 @@ class ExecutionEnvironment:
         """
         GiskardExecutable.execution_type = self.previous_type
         GiskardExecutable.collision_avoidance = self.previous_collision_avoidance
+        GiskardExecutable.simulation_time_limit = self.previous_simulation_time_limit
 
     def __call__(self, collision_avoidance: bool = False):
         """

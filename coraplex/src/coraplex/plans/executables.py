@@ -41,7 +41,6 @@ from giskardpy.qp.qp_controller_config import QPControllerConfig
 from semantic_digital_twin.input_synchronization import WorldStateInputs
 from giskardpy.ros_executor import Ros2Executor
 from krrood.entity_query_language.factories import evaluate_condition
-from krrood.ormatic.utils import classproperty
 from krrood.symbolic_math.symbolic_math import Scalar, trinary_logic_not
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -242,6 +241,21 @@ class GiskardExecutable(Executable):
     """
 
     collision_avoidance: ClassVar[bool] = False
+    """
+    Whether collision avoidance is added to every motion state chart, managed the way
+    :attr:`execution_type` is.
+    """
+
+    simulation_time_limit: ClassVar[timedelta] = timedelta(minutes=2)
+    """
+    The simulated time after which a simulated motion is given up on, however it is
+    progressing.
+
+    A backstop behind the chart's own stall monitor, which is what decides that a motion
+    is hopeless; this only bounds one that keeps converging for longer than anything the
+    plan is expected to ask for. Managed the way :attr:`execution_type` is, since a plan
+    that is meant to take longer has to say so.
+    """
 
     simulation: ClassVar[Optional[MujocoSim]] = None
     """
@@ -262,14 +276,6 @@ class GiskardExecutable(Executable):
     :class:`~giskardpy.motion_statechart.goals.collision_avoidance.SelfCollisionAvoidance`
     to the motion state chart.
     """
-
-    @classproperty
-    def simulation_time_limit(self) -> timedelta:
-        """
-        :return: The simulated time after which a simulated motion is given up on, however it is
-        progressing.
-        """
-        return timedelta(minutes=2)
 
     @property
     def giskard_executables(self) -> List[GiskardExecutable]:
