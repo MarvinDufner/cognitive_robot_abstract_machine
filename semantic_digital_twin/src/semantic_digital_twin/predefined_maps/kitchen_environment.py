@@ -9,7 +9,6 @@ from typing_extensions import cast
 
 import trimesh
 
-from krrood.ormatic.utils import classproperty
 from krrood.patterns.path_enumeration import PathEnumeration
 
 import numpy as np
@@ -808,14 +807,6 @@ class KitchenEnvironment(WorldSource):
     """
     Observed kitchen geometry with the existing flush-back construction constraint.
     """
-
-    @classproperty
-    def world_T_washing_machine(cls) -> HomogeneousTransformationMatrix:
-        """
-        Where the washing machine stands: the centre of its footprint on the floor, its
-        front facing the counter.
-        """
-        return HomogeneousTransformationMatrix.from_xyz_rpy(x=2.8, y=-0.8)
 
     def create_world(self) -> World:
         world = World.create_with_root_body("root")
@@ -2510,7 +2501,9 @@ class KitchenEnvironment(WorldSource):
             FixedConnection(
                 parent=world.root,
                 child=washing_machine_world.root,
-                parent_T_connection_expression=self.world_T_washing_machine,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=2.8, y=-0.8
+                ),
             ),
         )
         with world.modify_world():

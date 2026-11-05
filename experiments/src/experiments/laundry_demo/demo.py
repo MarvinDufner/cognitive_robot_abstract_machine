@@ -8,13 +8,12 @@ Run it as a script::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.plans.context_extensions import RobotAccess
 from coraplex.plans.executors import PhysicallySimulatedPlanExecutor, PlanExecutor
 from coraplex.robot_plans.actions.core.container import OpenAction
-from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
 from cramph.composites import Sequence
 from cramph.context import ContextExtension, StatechartContext
@@ -23,7 +22,6 @@ from krrood_spatial_math.spatial_types import (
     Pose,
     RotationMatrix,
     Vector3,
-    HomogeneousTransformationMatrix,
 )
 from semantic_digital_twin.datastructures.definitions import StaticJointState
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
@@ -58,26 +56,31 @@ class LaundryDemonstration(RobotDemonstration):
     standing_distance: float = 0.9
     """
     How far in front of the centre of the washing machine's footprint the robot's base
-    stands, facing the machine, in meters.
+    starts, facing the machine, in meters.
     """
 
     def scene_specification(self) -> WorldSpecification:
         return WorldSpecification(world_source=KitchenEnvironment())
 
     def robot_specification(self) -> RobotSpecification:
-        return RobotSpecification(
-            self.used_robot,
-            world_T_odom=KitchenEnvironment.world_T_washing_machine
-            @ HomogeneousTransformationMatrix.from_xyz_rpy(x=-self.standing_distance),
-        )
+        return RobotSpecification(self.used_robot)
 
     def build_simulated_world(self) -> World:
         """
-        :meth:`RobotDemonstration.build_simulated_world`, with the robot's arms parked,
-        so the robot does not start with an outstretched arm inside the furniture.
+        :meth:`RobotDemonstration.build_simulated_world`, with the robot starting
+        :attr:`standing_distance` in front of the washing machine, facing it, and its
+        arms parked, so the robot does not start with an outstretched arm inside the
+        furniture.
         """
-        world = super().build_simulated_world()
-        [robot] = world.get_semantic_annotations_by_type(self.used_robot)
+        world = self.build_scene()
+        standing_pose = Pose.from_xyz_rpy(
+            x=-self.standing_distance,
+            reference_frame=self._washing_machine(world).root,
+        )
+        robot = replace(
+            self.robot_specification(),
+            world_T_odom=world.transform(standing_pose, world.root).homogeneous_matrix,
+        ).spawn(world)
         # Tiago starts in a T pose otherwise
         for arm in robot.all_arms:
             arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(world)
@@ -98,10 +101,9 @@ class LaundryDemonstration(RobotDemonstration):
 
     def build_statechart(self, context: StatechartContext) -> Statechart:
         """
-        Park the arms, drive up to the door and open it with the arm whose wrist is
-        closest to the door handle, by reaching over the rim of the door ring at its
-        grip recess, the fingers closing across the ring so one of them ends up behind
-        the door.
+        Park the arms and open the door with the arm whose wrist is closest to the door
+        handle, by reaching over the rim of the door ring at its grip recess, the
+        fingers closing across the ring so one of them ends up behind the door.
         """
         world = context.world
         robot = context.require_extension(RobotAccess).robot
@@ -130,12 +132,6 @@ class LaundryDemonstration(RobotDemonstration):
             Sequence(
                 nodes=[
                     ParkArmsAction(arms=robot.all_arms),
-                    NavigateAction(
-                        target_location=Pose.from_xyz_rpy(
-                            x=-self.standing_distance,
-                            reference_frame=washing_machine.root,
-                        )
-                    ),
                     OpenAction(grasp=grasp, arm=arm),
                     ParkArmsAction(arms=robot.all_arms),
                 ]
@@ -160,7 +156,9 @@ def main() -> None:
     """
     Run the demonstration.
     """
-    LaundryDemonstration(used_robot=HSRB, executor_type=PhysicallySimulatedPlanExecutor).run()
+    LaundryDemonstration(
+        used_robot=HSRB, executor_type=PhysicallySimulatedPlanExecutor
+    ).run()
 
 
 if __name__ == "__main__":
