@@ -1,16 +1,9 @@
 """
-The HSR opens the door of the washing machine in the kitchen environment, simulated in
+A robot opens the door of the washing machine in the kitchen environment, simulated in
 MuJoCo.
 
-The door starts cracked open. The HSR reaches into the crack at the grip recess under
-the upper left of the door ring, one finger in front of the ring and one behind it, and
-opens the door along its hinge. Holding on to the door while the hinge is driven to its
-upper limit makes the gripper follow the hinge as it is modelled, so the run shows
-whether the modelled hinge matches the door's mesh.
-
 Run it as a script::
-
-    python3 -m experiments.hsr_laundry_demo.demo
+    python3 -m experiments.laundry_demo.demo
 """
 
 from __future__ import annotations
@@ -26,14 +19,19 @@ from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
 from cramph.composites import Sequence
 from cramph.context import ContextExtension, StatechartContext
 from cramph.statechart import Statechart
-from krrood_spatial_math.spatial_types import Pose, RotationMatrix, Vector3, HomogeneousTransformationMatrix
+from krrood_spatial_math.spatial_types import (
+    Pose,
+    RotationMatrix,
+    Vector3,
+    HomogeneousTransformationMatrix,
+)
+from semantic_digital_twin.datastructures.definitions import StaticJointState
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.predefined_maps.kitchen_environment import (
     KitchenEnvironment,
 )
 from semantic_digital_twin.robots.hsrb import HSRB
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
-from semantic_digital_twin.robots.tiago import Tiago
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     WashingMachine,
 )
@@ -45,16 +43,10 @@ from semantic_digital_twin.world import World
 
 
 @dataclass
-class HSRLaundryDemonstration(RobotDemonstration):
+class LaundryDemonstration(RobotDemonstration):
     """
-    The HSR opens the cracked open door of the washing machine by reaching behind it.
+    The robot opens the cracked open door of the washing machine by reaching behind it.
     """
-
-    used_robot: type[AbstractRobot] = HSRB
-
-    ros_node_name: str = "hsr_laundry_demo_node"
-
-    executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor
 
     door_crack_angle: float = 0.2
     """
@@ -73,7 +65,23 @@ class HSRLaundryDemonstration(RobotDemonstration):
         return WorldSpecification(world_source=KitchenEnvironment())
 
     def robot_specification(self) -> RobotSpecification:
-        return RobotSpecification(self.used_robot)
+        return RobotSpecification(
+            self.used_robot,
+            world_T_odom=KitchenEnvironment.world_T_washing_machine
+            @ HomogeneousTransformationMatrix.from_xyz_rpy(x=-self.standing_distance),
+        )
+
+    def build_simulated_world(self) -> World:
+        """
+        :meth:`RobotDemonstration.build_simulated_world`, with the robot's arms parked,
+        so the robot does not start with an outstretched arm inside the furniture.
+        """
+        world = super().build_simulated_world()
+        [robot] = world.get_semantic_annotations_by_type(self.used_robot)
+        # Tiago starts in a T pose otherwise
+        for arm in robot.all_arms:
+            arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(world)
+        return world
 
     def is_scene_populated(self, world: World) -> bool:
         return bool(world.get_semantic_annotations_by_type(WashingMachine))
@@ -90,16 +98,23 @@ class HSRLaundryDemonstration(RobotDemonstration):
 
     def build_statechart(self, context: StatechartContext) -> Statechart:
         """
-        Park the arm, drive up to the door and open it by reaching over the rim of the
-        door ring at its grip recess, the fingers closing across the ring so one of them
-        ends up behind the door.
+        Park the arms, drive up to the door and open it with the arm whose wrist is
+        closest to the door handle, by reaching over the rim of the door ring at its
+        grip recess, the fingers closing across the ring so one of them ends up behind
+        the door.
         """
         world = context.world
-        hsrb = context.require_extension(RobotAccess).robot
-        [arm] = hsrb.all_arms
+        robot = context.require_extension(RobotAccess).robot
         washing_machine = self._washing_machine(world)
         [door] = washing_machine.doors
         handle = door.handle.root
+        world_P_handle = handle.global_pose.position
+        arm = min(
+            robot.all_arms,
+            key=lambda arm: float(
+                arm.tip.global_pose.position.euclidean_distance(world_P_handle)
+            ),
+        )
         grasp = GraspCandidate(
             door.handle,
             Pose(
@@ -114,7 +129,7 @@ class HSRLaundryDemonstration(RobotDemonstration):
         statechart.add_node(
             Sequence(
                 nodes=[
-                    ParkArmsAction(arms=hsrb.all_arms),
+                    ParkArmsAction(arms=robot.all_arms),
                     NavigateAction(
                         target_location=Pose.from_xyz_rpy(
                             x=-self.standing_distance,
@@ -122,7 +137,7 @@ class HSRLaundryDemonstration(RobotDemonstration):
                         )
                     ),
                     OpenAction(grasp=grasp, arm=arm),
-                    ParkArmsAction(arms=hsrb.all_arms),
+                    ParkArmsAction(arms=robot.all_arms),
                 ]
             )
         )
@@ -145,7 +160,7 @@ def main() -> None:
     """
     Run the demonstration.
     """
-    HSRLaundryDemonstration().run()
+    LaundryDemonstration(used_robot=HSRB, executor_type=PhysicallySimulatedPlanExecutor).run()
 
 
 if __name__ == "__main__":
