@@ -50,7 +50,7 @@ class HSRLaundryDemonstration(RobotDemonstration):
     The HSR opens the cracked open door of the washing machine by reaching behind it.
     """
 
-    used_robot: type[AbstractRobot] = Tiago
+    used_robot: type[AbstractRobot] = HSRB
 
     ros_node_name: str = "hsr_laundry_demo_node"
 
