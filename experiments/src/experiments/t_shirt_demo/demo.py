@@ -236,10 +236,7 @@ class TShirtSwingDemonstration(RobotDemonstration):
         return RobotSpecification(self.used_robot)
 
     def is_scene_populated(self, world: World) -> bool:
-        return any(
-            isinstance(simulator_property, ClothSheet)
-            for simulator_property in world.simulator_additional_properties
-        )
+        return bool(world.get_simulator_properties_of_type(ClothSheet))
 
     def populate_scene(self, world: World) -> None:
         """
@@ -348,7 +345,7 @@ class TShirtSwingDemonstration(RobotDemonstration):
                         arm,
                     ),
                     MoveFingersToWidthAction(
-                        gripper=gripper, width=self._t_shirt(world).thickness
+                        gripper=gripper, width=self.t_shirt_thickness
                     ),
                     CountSimulationTimeSeconds(seconds=self.closing_duration),
                     FunctionCall(
@@ -382,14 +379,12 @@ class TShirtSwingDemonstration(RobotDemonstration):
         :return: Where the vertex of the T-shirt closest to the middle of its shoulder on
             the robot's left lies at the start.
         """
-        world_P_shoulder = (
-            self._world_T_t_shirt.to_np() @ self.t_shirt_P_left_shoulder.to_np()
-        )[:3]
-        vertices = self._t_shirt(world).surface.vertices
-        closest = vertices[
-            numpy.argmin(numpy.linalg.norm(vertices - world_P_shoulder, axis=1))
-        ]
-        return Pose.from_xyz_rpy(*closest, reference_frame=world.root)
+        world_P_shoulder = self._world_T_t_shirt @ self.t_shirt_P_left_shoulder
+        [t_shirt] = world.get_simulator_properties_of_type(ClothSheet)
+        _, [closest] = t_shirt.surface.nearest.vertex([world_P_shoulder.to_np()[:3]])
+        return Pose.from_xyz_rpy(
+            *t_shirt.surface.vertices[closest], reference_frame=world.root
+        )
 
     @staticmethod
     def _gripper_pose_in(
@@ -462,19 +457,6 @@ class TShirtSwingDemonstration(RobotDemonstration):
                 holding_body_name=tool_frame.name.name,
                 reason=result.info,
             )
-
-    @staticmethod
-    def _t_shirt(world: World) -> ClothSheet:
-        """
-        :param world: The world holding the T-shirt.
-        :return: The T-shirt.
-        """
-        [t_shirt] = [
-            simulator_property
-            for simulator_property in world.simulator_additional_properties
-            if isinstance(simulator_property, ClothSheet)
-        ]
-        return t_shirt
 
 
 # %% running it

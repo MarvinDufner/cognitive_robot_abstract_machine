@@ -2674,7 +2674,7 @@ class MujocoBuilder(MultiSimBuilder):
         self._build_contact_exclusions()
         self._build_equalities()
         self._build_tendons()
-        for cloth in self._cloth_sheets:
+        for cloth in self.world.get_simulator_properties_of_type(ClothSheet):
             self._build_cloth_sheet(cloth)
         self.spec.compile()
         self.spec.to_file(file_path)
@@ -2717,7 +2717,7 @@ class MujocoBuilder(MultiSimBuilder):
             qpos += MujocoConnectionJoints.of(
                 body.parent_connection, self.world, self.element_names
             ).home_joint_positions()
-        for cloth in self._cloth_sheets:
+        for cloth in self.world.get_simulator_properties_of_type(ClothSheet):
             # a vertex starts where its body was built, so its slide joints start at zero
             qpos += [0.0] * cloth.surface.vertices.size
         key_element.set("qpos", " ".join(map(str, qpos)))
@@ -3300,17 +3300,6 @@ class MujocoBuilder(MultiSimBuilder):
                 for joint_name, joint_coef in mujoco_tendon.joints.items():
                     tendon.wrap_joint(joint_name, joint_coef)
 
-    @property
-    def _cloth_sheets(self) -> list[ClothSheet]:
-        """
-        :return: The cloth sheets of the world being built.
-        """
-        return [
-            simulator_property
-            for simulator_property in self.world.simulator_additional_properties
-            if isinstance(simulator_property, ClothSheet)
-        ]
-
     def _build_cloth_sheet(self, cloth: ClothSheet) -> None:
         """
         Builds a cloth sheet as a flex whose edges keep their length and whose vertices
@@ -3331,16 +3320,17 @@ class MujocoBuilder(MultiSimBuilder):
                 mass=vertex_mass,
                 ipos=[0.0, 0.0, 0.0],
             )
-            for axis in numpy.eye(3):
+            for axis in [Vector3.X(), Vector3.Y(), Vector3.Z()]:
                 vertex_body.add_joint(
-                    type=mujoco.mjtJoint.mjJNT_SLIDE, axis=axis.tolist()
+                    type=mujoco.mjtJoint.mjJNT_SLIDE, axis=axis.to_np().tolist()[:3]
                 )
             vertex_body_names.append(vertex_body.name)
         flex = self.spec.add_flex()
         flex.name = cloth.name
         flex.dim = 2
         flex.vertbody = vertex_body_names
-        flex.vert = numpy.zeros(cloth.surface.vertices.size).tolist()
+        # every vertex lies at the origin of its body
+        flex.vert = [0.0] * cloth.surface.vertices.size
         flex.elem = cloth.surface.faces.flatten().tolist()
         flex.radius = cloth.thickness / 2
         flex.thickness = cloth.thickness

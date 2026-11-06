@@ -101,9 +101,10 @@ class GarmentFile(PathEnumeration):
         / "t_shirt.obj"
     )
     """
-    A short-sleeved T-shirt of two layers, open at the hem, the neck and the cuffs, with
-    its neckline at the origin, its hem along the x-axis and its sleeves along the
-    y-axis. It is RGBench's green T-shirt, see ``t_shirt_ATTRIBUTION.md`` next to it.
+    A short-sleeved T-shirt of two layers and 300 vertices, open at the hem, the neck
+    and the cuffs, with its neckline at the origin, its hem along the x-axis and its
+    sleeves along the y-axis. It is RGBench's green T-shirt, remeshed, see
+    ``t_shirt_ATTRIBUTION.md`` next to it.
     """
 
     def create_surface(
@@ -111,11 +112,9 @@ class GarmentFile(PathEnumeration):
     ) -> trimesh.Trimesh:
         """
         :param world_T_garment: Where the garment lies.
-        :return: The garment's panels sewn into one sheet of triangles, with its
-            vertices in the world frame.
+        :return: The garment as one sheet of triangles, with its vertices in the world
+            frame.
         """
-        surface = trimesh.load(str(self), force="mesh", process=False)
-        # a vertex on a seam is read once for each panel, since each panel has its own
-        # texture coordinates there
-        surface.merge_vertices(merge_tex=True, merge_norm=True)
-        return surface.apply_transform(world_T_garment.to_np())
+        return trimesh.load(str(self), force="mesh", process=False).apply_transform(
+            world_T_garment.to_np()
+        )

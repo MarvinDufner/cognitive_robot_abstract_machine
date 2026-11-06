@@ -415,6 +415,14 @@ class MujocoSimulator(BaseSimulator):
             result=joints,
         )
 
+    def _flex_vertices(self, flex_id: int) -> slice:
+        """
+        :param flex_id: The id of a flex.
+        :return: Where the flex's vertices lie among the vertices of every flex.
+        """
+        first_vertex = self._mj_model.flex_vertadr[flex_id]
+        return slice(first_vertex, first_vertex + self._mj_model.flex_vertnum[flex_id])
+
     @BaseSimulator.simulator_callback
     def get_flex_vertex_positions(self, flex_name: str) -> SimulatorCallbackResult:
         """
@@ -432,14 +440,10 @@ class MujocoSimulator(BaseSimulator):
                 type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                 info=f"Flex {flex_name} not found",
             )
-        first_vertex = self._mj_model.flex_vertadr[flex_id]
-        vertex_count = self._mj_model.flex_vertnum[flex_id]
         return SimulatorCallbackResult(
             type=SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION,
             info=f"Getting flex {flex_name} vertex positions",
-            result=self._mj_data.flexvert_xpos[
-                first_vertex : first_vertex + vertex_count
-            ].copy(),
+            result=self._mj_data.flexvert_xpos[self._flex_vertices(flex_id)].copy(),
         )
 
     @BaseSimulator.simulator_callback
@@ -474,17 +478,16 @@ class MujocoSimulator(BaseSimulator):
                 type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                 info=f"Flex {flex_name} or body {body_name} not found",
             )
-        first_vertex = self._mj_model.flex_vertadr[flex_id]
-        vertex_count = self._mj_model.flex_vertnum[flex_id]
-        vertex_body_ids = self._mj_model.flex_vertbodyid[
-            first_vertex : first_vertex + vertex_count
-        ]
-        body_position = self._mj_data.xpos[body_id]
-        world_R_body = self._mj_data.xmat[body_id].reshape(3, 3)
-        world_P_centre = body_position + world_R_body @ body_P_centre
+        vertices = self._flex_vertices(flex_id)
+        world_P_body = self._mj_data.xpos[body_id]
+        world_quaternion_body = self._mj_data.xquat[body_id]
+        world_P_centre = numpy.zeros(3)
+        mujoco.mju_trnVecPose(
+            world_P_centre, world_P_body, world_quaternion_body, body_P_centre
+        )
         pinned = numpy.flatnonzero(
             numpy.linalg.norm(
-                self._mj_data.xpos[vertex_body_ids] - world_P_centre, axis=1
+                self._mj_data.flexvert_xpos[vertices] - world_P_centre, axis=1
             )
             <= radius
         )
@@ -493,16 +496,22 @@ class MujocoSimulator(BaseSimulator):
                 type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                 info=f"No vertex of flex {flex_name} within {radius} of the centre",
             )
-        for vertex_body_id in vertex_body_ids[pinned]:
-            body_R_vertex_body = world_R_body.T @ self._mj_data.xmat[
-                vertex_body_id
-            ].reshape(3, 3)
-            body_quaternion_vertex_body = numpy.zeros(4)
-            mujoco.mju_mat2Quat(
-                body_quaternion_vertex_body, body_R_vertex_body.flatten()
+        body_P_world, body_quaternion_world = numpy.zeros(3), numpy.zeros(4)
+        mujoco.mju_negPose(
+            body_P_world, body_quaternion_world, world_P_body, world_quaternion_body
+        )
+        for vertex_body_id in self._mj_model.flex_vertbodyid[vertices][pinned]:
+            body_P_vertex_body, body_quaternion_vertex_body = (
+                numpy.zeros(3),
+                numpy.zeros(4),
             )
-            body_P_vertex_body = world_R_body.T @ (
-                self._mj_data.xpos[vertex_body_id] - body_position
+            mujoco.mju_mulPose(
+                body_P_vertex_body,
+                body_quaternion_vertex_body,
+                body_P_world,
+                body_quaternion_world,
+                self._mj_data.xpos[vertex_body_id],
+                self._mj_data.xquat[vertex_body_id],
             )
             # a weld whose torque scale is zero holds the position alone; MuJoCo reads
             # its data as the anchor, the relative pose and the torque scale
@@ -512,7 +521,9 @@ class MujocoSimulator(BaseSimulator):
                 name1=body_name,
                 name2=self._mj_model.body(vertex_body_id).name,
                 data=[
-                    *numpy.zeros(3),
+                    0.0,
+                    0.0,
+                    0.0,
                     *body_P_vertex_body,
                     *body_quaternion_vertex_body,
                     0.0,

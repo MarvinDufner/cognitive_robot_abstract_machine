@@ -11,6 +11,7 @@ import pytest
 
 from experiments.t_shirt_demo.demo import SceneEntity, TShirtSwingDemonstration
 from semantic_digital_twin.robots.tiago import TiagoMujoco
+from semantic_digital_twin.world_description.cloth import ClothSheet
 
 from ...pytest_environment import runs_in_continuous_integration
 
@@ -29,7 +30,8 @@ def test_the_t_shirt_lies_spread_out_on_the_table() -> None:
     demonstration = TShirtSwingDemonstration(headless=True)
     world = demonstration.build_simulated_world()
 
-    vertices = demonstration._t_shirt(world).surface.vertices
+    [t_shirt] = world.get_simulator_properties_of_type(ClothSheet)
+    vertices = t_shirt.surface.vertices
 
     table = demonstration.table_scale
     assert vertices[:, 0].min() >= demonstration.table_distance
