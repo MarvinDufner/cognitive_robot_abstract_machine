@@ -14,14 +14,14 @@ source of this file.
 
 ## Changes
 
-The original's 4,867 vertices were reduced to 300, keeping the shape, the two layers and the
+The original's 4,867 vertices were reduced to 500, keeping the shape, the two layers and the
 four openings:
 
 1. The vertices the panels share at the seams were merged, dropping texture coordinates and
    normals (`trimesh.Trimesh.merge_vertices(merge_tex=True, merge_norm=True)`).
 2. The surface was remeshed with MeshLab's isotropic explicit remeshing (`pymeshlab`,
    `meshing_isotropic_explicit_remeshing` with 10 iterations, a target edge length of
-   0.103 m, a feature angle of 60°, and a maximum distance from the surface of 0.005 m),
-   which left 301 vertices.
-3. One edge was collapsed with MeshLab's quadric edge collapse decimation, keeping the
+   0.0582 m, a feature angle of 60°, and a maximum distance from the surface of 0.005 m),
+   which left 504 vertices.
+3. Four edges were collapsed with MeshLab's quadric edge collapse decimation, keeping the
    boundary and the topology.

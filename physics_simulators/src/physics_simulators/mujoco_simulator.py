@@ -520,6 +520,9 @@ class MujocoSimulator(BaseSimulator):
                 objtype=mujoco.mjtObj.mjOBJ_BODY,
                 name1=body_name,
                 name2=self._mj_model.body(vertex_body_id).name,
+                # MuJoCo keeps a constraint stable only if it responds no faster than in
+                # two time steps
+                solref=[2 * self._mj_model.opt.timestep, 1.0],
                 data=[
                     0.0,
                     0.0,

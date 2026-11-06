@@ -3332,13 +3332,13 @@ class MujocoBuilder(MultiSimBuilder):
         # every vertex lies at the origin of its body
         flex.vert = [0.0] * cloth.surface.vertices.size
         flex.elem = cloth.surface.faces.flatten().tolist()
-        flex.radius = cloth.thickness / 2
+        flex.radius = cloth.collision_radius
         flex.thickness = cloth.thickness
         flex.young = cloth.elasticity.young_modulus
         flex.poisson = cloth.elasticity.poisson_ratio
         # the edge equality keeps the sheet from stretching, so elasticity resists bending
         flex.elastic2d = MujocoFlexElasticity.BENDING
-        flex.selfcollide = mujoco.mjtFlexSelf.mjFLEXSELF_AUTO
+        flex.selfcollide = mujoco.mjtFlexSelf.mjFLEXSELF_NONE
         flex.rgba = list(cloth.color.to_rgba())
         flex.edgedamping = cloth.edge_damping
         edges = self.spec.add_equality()

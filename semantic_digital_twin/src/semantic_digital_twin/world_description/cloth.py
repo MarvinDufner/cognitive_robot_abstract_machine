@@ -43,7 +43,7 @@ class ClothElasticity:
 class ClothSheet(SimulatorAdditionalProperty):
     """
     A piece of cloth a physical simulation deforms: a sheet of triangles whose edges keep
-    their length, which bends elastically and collides as a shell of its thickness.
+    their length, which bends elastically and collides with everything but itself.
     """
 
     name: str
@@ -64,8 +64,12 @@ class ClothSheet(SimulatorAdditionalProperty):
 
     thickness: float = 8e-3
     """
-    Thickness of the cloth, in metres: it collides as a shell this thick, and its bending
-    stiffness grows with it.
+    Thickness of the cloth, in metres, which its bending stiffness grows with.
+    """
+
+    collision_radius: float = 5e-4
+    """
+    How far from its surface the cloth touches what it collides with, in metres.
     """
 
     elasticity: ClothElasticity = field(default_factory=ClothElasticity)
@@ -101,7 +105,7 @@ class GarmentFile(PathEnumeration):
         / "t_shirt.obj"
     )
     """
-    A short-sleeved T-shirt of two layers and 300 vertices, open at the hem, the neck
+    A short-sleeved T-shirt of two layers and 500 vertices, open at the hem, the neck
     and the cuffs, with its neckline at the origin, its hem along the x-axis and its
     sleeves along the y-axis. It is RGBench's green T-shirt, remeshed, see
     ``t_shirt_ATTRIBUTION.md`` next to it.
