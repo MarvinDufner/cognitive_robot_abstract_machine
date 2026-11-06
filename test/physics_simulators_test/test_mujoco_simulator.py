@@ -771,6 +771,31 @@ class TestClothSimulation:
         assert numpy.allclose(end[within_reach], start[within_reach], atol=5e-3)
         assert numpy.all(end[~within_reach, 2] < start[~within_reach, 2])
 
+    def test_a_pin_holds_as_stiffly_as_the_time_step_allows(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        A pin responds within two time steps, the fastest a constraint stays stable at.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        hook = simulator._mj_data.body("hook")
+        vertices = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        hook_P_first_vertex = hook.xmat.reshape(3, 3).T @ (vertices[0] - hook.xpos)
+
+        simulator.callbacks["pin_flex_vertices"](
+            flex_name="cloth",
+            body_name="hook",
+            body_P_centre=hook_P_first_vertex,
+            radius=0.01,
+        )
+
+        model = simulator._mj_model
+        pin = model.neq - 1
+        assert model.eq_solref[pin, 0] == pytest.approx(2 * model.opt.timestep)
+
     @pytest.mark.parametrize(
         "flex_name, body_name, radius",
         [
