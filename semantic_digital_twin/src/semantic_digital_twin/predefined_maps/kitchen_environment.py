@@ -2483,8 +2483,9 @@ class KitchenEnvironment(WorldSource):
 
     def _build_washing_machine(self, world: World) -> None:
         """
-        Stand the washing machine in the kitchen, its front facing the counter, and
-        annotate its door, detergent drawer and their handles.
+        Stand the washing machine in the living room between the desk and the doorway,
+        its back to the south wall, and annotate its door, detergent drawer and their
+        handles.
         """
         washing_machine_world = URDFParser.from_file(
             str(KitchenEnvironmentResource.WASHING_MACHINE),
@@ -2502,7 +2503,7 @@ class KitchenEnvironment(WorldSource):
                 parent=world.root,
                 child=washing_machine_world.root,
                 parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    x=2.8, y=-0.8
+                    x=0.10367, y=2.5814, yaw=np.pi
                 ),
             ),
         )
