@@ -75,6 +75,7 @@ from semantic_digital_twin.world_description.geometry import (
     MeshFileFormat,
     Color,
 )
+from semantic_digital_twin.world_description.cloth import ClothSheet
 from semantic_digital_twin.world_description.contact import ContactParameters
 from semantic_digital_twin.world_description.world_entity import (
     Region,
@@ -203,6 +204,33 @@ class GeomVisibilityAndCollisionType(IntEnum):
     UNDEFINED_2 = 5
     """
     Undefined geometry type (variant 2).
+    """
+
+
+class MujocoFlexElasticity(IntEnum):
+    """
+    Which deformations of a two-dimensional flex MuJoCo resists with elastic forces: the
+    values of a flex's ``elastic2d`` attribute.
+    """
+
+    NONE = 0
+    """
+    No deformation.
+    """
+
+    BENDING = 1
+    """
+    Bending out of the flex's plane.
+    """
+
+    STRETCHING = 2
+    """
+    Stretching within the flex's plane.
+    """
+
+    BENDING_AND_STRETCHING = 3
+    """
+    Both bending and stretching.
     """
 
 
@@ -2646,6 +2674,8 @@ class MujocoBuilder(MultiSimBuilder):
         self._build_contact_exclusions()
         self._build_equalities()
         self._build_tendons()
+        for cloth in self._cloth_sheets:
+            self._build_cloth_sheet(cloth)
         self.spec.compile()
         self.spec.to_file(file_path)
         import xml.etree.ElementTree as ET
@@ -2685,6 +2715,9 @@ class MujocoBuilder(MultiSimBuilder):
             qpos += MujocoConnectionJoints.of(
                 body.parent_connection, self.world, self.element_names
             ).home_joint_positions()
+        for cloth in self._cloth_sheets:
+            # a vertex starts where its body was built, so its slide joints start at zero
+            qpos += [0.0] * cloth.surface.vertices.size
         key_element.set("qpos", " ".join(map(str, qpos)))
         tree.write(file_path, encoding="utf-8", xml_declaration=True)
 
@@ -3264,6 +3297,60 @@ class MujocoBuilder(MultiSimBuilder):
                 tendon.width = mujoco_tendon.width
                 for joint_name, joint_coef in mujoco_tendon.joints.items():
                     tendon.wrap_joint(joint_name, joint_coef)
+
+    @property
+    def _cloth_sheets(self) -> list[ClothSheet]:
+        """
+        :return: The cloth sheets of the world being built.
+        """
+        return [
+            simulator_property
+            for simulator_property in self.world.simulator_additional_properties
+            if isinstance(simulator_property, ClothSheet)
+        ]
+
+    def _build_cloth_sheet(self, cloth: ClothSheet) -> None:
+        """
+        Builds a cloth sheet as a flex whose edges keep their length and whose vertices
+        are bodies of their own, each sliding freely along all three axes. They are the
+        last children of the world body, so their joints come last in the joint positions.
+
+        .. note:: Every vertex weighs at least :attr:`minimum_mass`, so a cloth with many
+            vertices weighs more than its :attr:`ClothSheet.mass`.
+
+        :param cloth: The cloth sheet to build.
+        """
+        vertex_mass = cloth.mass / len(cloth.surface.vertices)
+        vertex_body_names = []
+        for index, position in enumerate(cloth.surface.vertices):
+            vertex_body = self.spec.worldbody.add_body(
+                name=f"{cloth.name}_vertex_{index}",
+                pos=position.tolist(),
+                mass=vertex_mass,
+                ipos=[0.0, 0.0, 0.0],
+            )
+            for axis in numpy.eye(3):
+                vertex_body.add_joint(
+                    type=mujoco.mjtJoint.mjJNT_SLIDE, axis=axis.tolist()
+                )
+            vertex_body_names.append(vertex_body.name)
+        flex = self.spec.add_flex()
+        flex.name = cloth.name
+        flex.dim = 2
+        flex.vertbody = vertex_body_names
+        flex.vert = numpy.zeros(cloth.surface.vertices.size).tolist()
+        flex.elem = cloth.surface.faces.flatten().tolist()
+        flex.radius = cloth.thickness / 2
+        flex.thickness = cloth.thickness
+        flex.young = cloth.elasticity.young_modulus
+        flex.poisson = cloth.elasticity.poisson_ratio
+        # the edge equality keeps the sheet from stretching, so elasticity resists bending
+        flex.elastic2d = MujocoFlexElasticity.BENDING
+        flex.selfcollide = mujoco.mjtFlexSelf.mjFLEXSELF_AUTO
+        flex.rgba = list(cloth.color.to_rgba())
+        edges = self.spec.add_equality()
+        edges.type = mujoco.mjtEq.mjEQ_FLEX
+        edges.name1 = cloth.name
 
     def body_spec_of(self, entity: KinematicStructureEntity) -> mujoco.MjsBody:
         """

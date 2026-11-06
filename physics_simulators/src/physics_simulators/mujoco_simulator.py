@@ -107,6 +107,10 @@ class MujocoSimulator(BaseSimulator):
     """
 
     def __post_init__(self, file_path: str = ""):
+        """
+        Read the model from ``file_path``, with the simulation options :attr:`config`
+        sets.
+        """
         super().__post_init__()
         self._file_path = file_path
         root = ET.parse(file_path).getroot()
@@ -118,6 +122,9 @@ class MujocoSimulator(BaseSimulator):
         )
         self._mj_spec.option.integrator = self.config.get(
             "integrator", mujoco.mjtIntegrator.mjINT_RK4
+        )
+        self._mj_spec.option.solver = self.config.get(
+            "solver", mujoco.mjtSolver.mjSOL_NEWTON
         )
         self._mj_spec.option.noslip_iterations = int(
             self.config.get("noslip_iterations", 0)
@@ -219,6 +226,20 @@ class MujocoSimulator(BaseSimulator):
                         key.delete()
                     else:
                         self._mj_spec.delete(key)
+            self._mj_model, self._mj_data = self._mj_spec.recompile(
+                self._mj_model, self._mj_data
+            )
+            if not self.headless:
+                self._renderer._sim().load(self._mj_model, self._mj_data, "")
+                if self.simulation_thread is None:
+                    mujoco.mj_step1(self._mj_model, self._mj_data)
+
+    def _recompile(self) -> None:
+        """
+        Compile the model anew from :attr:`_mj_spec`, keeping the state of the
+        simulation, and show the new model in the viewer.
+        """
+        with self._model_lock:
             self._mj_model, self._mj_data = self._mj_spec.recompile(
                 self._mj_model, self._mj_data
             )
@@ -392,6 +413,116 @@ class MujocoSimulator(BaseSimulator):
             type=SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION,
             info=f"Getting body {body_name} joints",
             result=joints,
+        )
+
+    @BaseSimulator.simulator_callback
+    def get_flex_vertex_positions(self, flex_name: str) -> SimulatorCallbackResult:
+        """
+        Get the positions of a flex's vertices, such as those of a cloth, by its name.
+
+        :param flex_name: The name of the flex
+        :return: A SimulatorCallbackResult with a numpy array of shape (n, 3) holding
+            the world position of each of the flex's n vertices as the result
+        """
+        flex_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_FLEX, name=flex_name
+        )
+        if flex_id == -1:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"Flex {flex_name} not found",
+            )
+        first_vertex = self._mj_model.flex_vertadr[flex_id]
+        vertex_count = self._mj_model.flex_vertnum[flex_id]
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION,
+            info=f"Getting flex {flex_name} vertex positions",
+            result=self._mj_data.flexvert_xpos[
+                first_vertex : first_vertex + vertex_count
+            ].copy(),
+        )
+
+    @BaseSimulator.simulator_callback
+    def pin_flex_vertices(
+        self,
+        flex_name: str,
+        body_name: str,
+        body_P_centre: numpy.ndarray,
+        radius: float,
+    ) -> SimulatorCallbackResult:
+        """
+        Pin every vertex of a flex within a radius of a point fixed to a body to that
+        body, so the vertices follow the body where they are, as if held by it, but keep
+        their freedom to turn.
+
+        :param flex_name: The name of the flex
+        :param body_name: The name of the body
+        :param body_P_centre: The point the vertices are pinned around, in the body's
+            frame
+        :param radius: How far from that point a vertex may lie to be pinned, in metres
+        :return: A SimulatorCallbackResult with the indices, within the flex, of the
+            pinned vertices as the result
+        """
+        flex_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_FLEX, name=flex_name
+        )
+        body_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_BODY, name=body_name
+        )
+        if flex_id == -1 or body_id == -1:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"Flex {flex_name} or body {body_name} not found",
+            )
+        first_vertex = self._mj_model.flex_vertadr[flex_id]
+        vertex_count = self._mj_model.flex_vertnum[flex_id]
+        vertex_body_ids = self._mj_model.flex_vertbodyid[
+            first_vertex : first_vertex + vertex_count
+        ]
+        body_position = self._mj_data.xpos[body_id]
+        world_R_body = self._mj_data.xmat[body_id].reshape(3, 3)
+        world_P_centre = body_position + world_R_body @ body_P_centre
+        pinned = numpy.flatnonzero(
+            numpy.linalg.norm(
+                self._mj_data.xpos[vertex_body_ids] - world_P_centre, axis=1
+            )
+            <= radius
+        )
+        if pinned.size == 0:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"No vertex of flex {flex_name} within {radius} of the centre",
+            )
+        for vertex_body_id in vertex_body_ids[pinned]:
+            body_R_vertex_body = world_R_body.T @ self._mj_data.xmat[
+                vertex_body_id
+            ].reshape(3, 3)
+            body_quaternion_vertex_body = numpy.zeros(4)
+            mujoco.mju_mat2Quat(
+                body_quaternion_vertex_body, body_R_vertex_body.flatten()
+            )
+            body_P_vertex_body = world_R_body.T @ (
+                self._mj_data.xpos[vertex_body_id] - body_position
+            )
+            # a weld whose torque scale is zero holds the position alone; MuJoCo reads
+            # its data as the anchor, the relative pose and the torque scale
+            self._mj_spec.add_equality(
+                type=mujoco.mjtEq.mjEQ_WELD,
+                objtype=mujoco.mjtObj.mjOBJ_BODY,
+                name1=body_name,
+                name2=self._mj_model.body(vertex_body_id).name,
+                data=[
+                    *numpy.zeros(3),
+                    *body_P_vertex_body,
+                    *body_quaternion_vertex_body,
+                    0.0,
+                ],
+            )
+        self._recompile()
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_MODEL,
+            info=f"Pinned {pinned.size} vertices of flex {flex_name} to {body_name}",
+            result=pinned,
         )
 
     @BaseSimulator.simulator_callback
@@ -1505,14 +1636,7 @@ class MujocoSimulator(BaseSimulator):
                     ctrl=self._mj_data.ctrl,
                     time=self.current_simulation_time,
                 )
-                with self._model_lock:
-                    self._mj_model, self._mj_data = self._mj_spec.recompile(
-                        self._mj_model, self._mj_data
-                    )
-                    if not self.headless:
-                        self._renderer._sim().load(self._mj_model, self._mj_data, "")
-                        if self.simulation_thread is None:
-                            mujoco.mj_step1(self._mj_model, self._mj_data)
+                self._recompile()
                 key_id = mujoco.mj_name2id(
                     m=self._mj_model, type=mujoco.mjtObj.mjOBJ_KEY, name=key_name
                 )
@@ -1554,14 +1678,7 @@ class MujocoSimulator(BaseSimulator):
                     type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                     info=f"File {file_path} not found",
                 )
-            with self._model_lock:
-                self._mj_model, self._mj_data = self._mj_spec.recompile(
-                    self._mj_model, self._mj_data
-                )
-                if not self.headless:
-                    self._renderer._sim().load(self._mj_model, self._mj_data, "")
-                    if self.simulation_thread is None:
-                        mujoco.mj_step1(self._mj_model, self._mj_data)
+            self._recompile()
             if key_id >= self._mj_model.nkey:
                 return SimulatorCallbackResult(
                     type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
