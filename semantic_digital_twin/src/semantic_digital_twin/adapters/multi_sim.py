@@ -2688,8 +2688,10 @@ class MujocoBuilder(MultiSimBuilder):
             compiler_element.set("balanceinertia", "true")
             compiler_element.set("boundmass", str(self.minimum_mass))
             compiler_element.set("boundinertia", str(self.minimum_inertia))
+        # the spec builds its list of bodies anew on every read
+        body_specs = self.spec.bodies
         for body_id, body_element in enumerate(root.findall(".//body")):
-            body_spec = self.spec.bodies[body_id + 1]
+            body_spec = body_specs[body_id + 1]
             if numpy.isclose(body_spec.mass, 0.0):
                 continue
             inertial_element = ET.SubElement(body_element, "inertial")
@@ -3348,6 +3350,7 @@ class MujocoBuilder(MultiSimBuilder):
         flex.elastic2d = MujocoFlexElasticity.BENDING
         flex.selfcollide = mujoco.mjtFlexSelf.mjFLEXSELF_AUTO
         flex.rgba = list(cloth.color.to_rgba())
+        flex.edgedamping = cloth.edge_damping
         edges = self.spec.add_equality()
         edges.type = mujoco.mjtEq.mjEQ_FLEX
         edges.name1 = cloth.name

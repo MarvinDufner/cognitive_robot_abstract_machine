@@ -1,5 +1,5 @@
 """
-Tests for the flat patterns cloth is cut from.
+Tests for the garments cloth is made into.
 """
 
 from __future__ import annotations
@@ -8,60 +8,45 @@ import numpy
 import pytest
 
 from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix
-from semantic_digital_twin.world_description.cloth import TShirtPattern
+from semantic_digital_twin.world_description.cloth import GarmentFile
 
-# %% T-shirt pattern
+# %% the T-shirt
 
 
-@pytest.fixture
-def pattern() -> TShirtPattern:
+@pytest.fixture(scope="module")
+def t_shirt() -> GarmentFile:
     """
-    :return: A T-shirt pattern of the default size.
+    :return: The T-shirt, as its file lays it out.
     """
-    return TShirtPattern()
+    return GarmentFile.T_SHIRT
 
 
-def test_a_t_shirt_pattern_covers_its_body_and_sleeves_less_the_neck(
-    pattern: TShirtPattern,
+def test_a_t_shirt_is_sewn_into_one_piece_open_at_the_hem_the_neck_and_the_cuffs(
+    t_shirt: GarmentFile,
 ) -> None:
     """
-    The surface covers the body and both sleeves, without the neck opening.
+    The panels are joined at every seam, so the surface is one piece whose only edges
+    are the four openings: the hem, the neck and the two cuffs.
     """
-    surface = pattern.create_surface(HomogeneousTransformationMatrix())
+    surface = t_shirt.create_surface(HomogeneousTransformationMatrix())
 
-    body = pattern.body_width * pattern.body_length
-    sleeves = 2 * pattern.sleeve_length * pattern.sleeve_width
-    neck = pattern.neck_width * pattern.neck_depth
-    assert surface.area == pytest.approx(body + sleeves - neck)
+    assert len(surface.split(only_watertight=False)) == 1
+    assert len(surface.outline().entities) == 4
 
 
-def test_a_t_shirt_pattern_spans_its_sleeves_across_and_its_body_lengthwise(
-    pattern: TShirtPattern,
-) -> None:
+def test_a_t_shirt_lies_where_it_is_placed(t_shirt: GarmentFile) -> None:
     """
-    The surface is flat, spans cuff to cuff along x and hem to shoulders along y.
+    A garment placed at a pose is its file's layout moved and turned by that pose.
     """
-    surface = pattern.create_surface(HomogeneousTransformationMatrix())
-
-    across, lengthwise, normal = surface.extents
-    assert across == pytest.approx(pattern.body_width + 2 * pattern.sleeve_length)
-    assert lengthwise == pytest.approx(pattern.body_length)
-    assert normal == pytest.approx(0.0)
-
-
-def test_a_t_shirt_pattern_lies_centred_where_it_is_placed_with_its_sleeves_along_x(
-    pattern: TShirtPattern,
-) -> None:
-    """
-    A pattern placed at a pose is centred on it, its sleeves along the pose's x-axis.
-    """
-    centre = numpy.array([1.0, -2.0, 0.8])
-    world_T_pattern = HomogeneousTransformationMatrix.from_xyz_rpy(
-        *centre, yaw=numpy.pi / 2
+    as_laid_out = t_shirt.create_surface(HomogeneousTransformationMatrix())
+    world_T_t_shirt = HomogeneousTransformationMatrix.from_xyz_rpy(
+        1.0, -2.0, 0.8, yaw=numpy.pi / 2
     )
 
-    surface = pattern.create_surface(world_T_pattern)
+    placed = t_shirt.create_surface(world_T_t_shirt)
 
-    across = pattern.body_width + 2 * pattern.sleeve_length
-    assert numpy.allclose(surface.bounds.mean(axis=0), centre)
-    assert numpy.allclose(surface.extents, [pattern.body_length, across, 0.0])
+    assert numpy.allclose(
+        placed.vertices,
+        as_laid_out.vertices @ world_T_t_shirt.to_np()[:3, :3].T
+        + world_T_t_shirt.to_np()[:3, 3],
+    )

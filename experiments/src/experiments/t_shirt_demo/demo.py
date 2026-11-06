@@ -33,7 +33,11 @@ from cramph.monitors import CountSimulationTimeSeconds
 from cramph.statechart import Statechart
 from cramph.threaded_nodes import FunctionCall
 from experiments.t_shirt_demo.exceptions import TShirtNotPinned
-from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix, Pose
+from krrood_spatial_math.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Point3,
+    Pose,
+)
 from physics_simulators.base_simulator import SimulatorCallbackResult
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.datastructures.definitions import GripperState
@@ -49,7 +53,7 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.cloth import (
     ClothElasticity,
     ClothSheet,
-    TShirtPattern,
+    GarmentFile,
 )
 from semantic_digital_twin.world_description.geometry import Color, Scale
 from semantic_digital_twin.world_description.world_entity import (
@@ -101,27 +105,39 @@ class TShirtSwingDemonstration(RobotDemonstration):
     How far in front of the robot's base the near edge of the table stands, in metres.
     """
 
-    table_scale: Scale = field(default_factory=lambda: Scale(0.8, 1.4, 0.72))
+    table_scale: Scale = field(default_factory=lambda: Scale(0.9, 1.4, 0.72))
     """
     The depth, width and height of the table.
     """
 
-    t_shirt_pattern: TShirtPattern = field(default_factory=TShirtPattern)
+    t_shirt_P_left_shoulder: Point3 = field(
+        default_factory=lambda: Point3(0.024, 0.176, 0.015)
+    )
     """
-    The pattern of the T-shirt.
+    The middle of the seam of the T-shirt's left shoulder, as
+    :attr:`GarmentFile.T_SHIRT` lays it out.
     """
 
-    t_shirt_mass: float = 0.15
+    t_shirt_mass: float = 0.255
     """
-    The mass of the T-shirt, in kilograms.
+    The mass of the T-shirt, in kilograms, as RGBench states it.
+    """
+
+    t_shirt_thickness: float = 3e-3
+    """
+    The thickness of the T-shirt's fabric, in metres, as RGBench states it.
     """
 
     t_shirt_elasticity: ClothElasticity = field(
-        default_factory=lambda: ClothElasticity(young_modulus=1e4)
+        default_factory=lambda: ClothElasticity(young_modulus=2.3e5, poisson_ratio=0.35)
     )
     """
-    How stiffly the T-shirt resists bending: softer than a :class:`ClothElasticity` by
-    default, so it folds and drapes as a knit does.
+    How stiffly the T-shirt resists bending, as RGBench states it.
+    """
+
+    t_shirt_edge_damping: float = 0.1
+    """
+    How strongly the T-shirt's edges damp their stretching, as RGBench states it.
     """
 
     t_shirt_color: Color = field(
@@ -230,21 +246,27 @@ class TShirtSwingDemonstration(RobotDemonstration):
         Lay the T-shirt spread out on the table, its neckline towards the robot and its
         sleeves to the sides.
         """
-        world_T_t_shirt = HomogeneousTransformationMatrix.from_xyz_rpy(
-            x=self.table_distance
-            + self.t_shirt_margin
-            + self.t_shirt_pattern.body_length / 2,
-            z=self.table_scale.z + self.t_shirt_drop_height,
-            yaw=numpy.pi / 2,
-        )
         world.add_simulator_property(
             ClothSheet(
                 name=SceneEntity.T_SHIRT,
-                surface=self.t_shirt_pattern.create_surface(world_T_t_shirt),
+                surface=GarmentFile.T_SHIRT.create_surface(self._world_T_t_shirt),
                 mass=self.t_shirt_mass,
+                thickness=self.t_shirt_thickness,
                 elasticity=self.t_shirt_elasticity,
+                edge_damping=self.t_shirt_edge_damping,
                 color=self.t_shirt_color,
             )
+        )
+
+    @property
+    def _world_T_t_shirt(self) -> HomogeneousTransformationMatrix:
+        """
+        Where the T-shirt lies on the table: :attr:`GarmentFile.T_SHIRT` lays it out
+        with its neckline at its origin and its hem along its x-axis.
+        """
+        return HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=self.table_distance + self.t_shirt_margin,
+            z=self.table_scale.z + self.t_shirt_drop_height,
         )
 
     def build_context_extensions(self, world: World) -> list[ContextExtension]:
@@ -360,16 +382,10 @@ class TShirtSwingDemonstration(RobotDemonstration):
         :return: Where the vertex of the T-shirt closest to the middle of its shoulder on
             the robot's left lies at the start.
         """
-        t_shirt = self._t_shirt(world)
-        pattern = self.t_shirt_pattern
-        shoulder_across = (pattern.neck_width + pattern.body_width) / 4
-        # the neckline lies towards the robot
-        world_P_shoulder = t_shirt.surface.bounds.mean(axis=0) + [
-            -pattern.body_length / 2,
-            shoulder_across,
-            0.0,
-        ]
-        vertices = t_shirt.surface.vertices
+        world_P_shoulder = (
+            self._world_T_t_shirt.to_np() @ self.t_shirt_P_left_shoulder.to_np()
+        )[:3]
+        vertices = self._t_shirt(world).surface.vertices
         closest = vertices[
             numpy.argmin(numpy.linalg.norm(vertices - world_P_shoulder, axis=1))
         ]
