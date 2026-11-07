@@ -17,6 +17,7 @@ from typing_extensions import Iterator
 from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.adapters.multi_sim import MujocoBuilder, MujocoSim
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.semantic_annotations.garments import TShirt
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.cloth import ClothSheet, GarmentFile
 from semantic_digital_twin.world_description.connections import FixedConnection
@@ -252,6 +253,39 @@ def test_a_cloth_sheet_does_not_collide_with_itself(
 
     flex_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_FLEX, cloth.name)
     assert model.flex_selfcollide[flex_id] == mujoco.mjtFlexSelf.mjFLEXSELF_NONE
+
+
+def test_a_t_shirt_and_the_cloth_standing_for_it_build_under_one_name(
+    tmp_path: Path,
+) -> None:
+    """
+    A T-shirt's root body and the cloth sheet simulating it may share the T-shirt's
+    name: the body and the flex are both built, the flex with every vertex.
+    """
+    world = World()
+    with world.modify_world():
+        world.add_body(Body(name=PrefixedName("root")))
+    t_shirt = TShirt.create_with_new_body_in_world("t_shirt", world)
+    cloth = ClothSheet(
+        name="t_shirt",
+        surface=GarmentFile.T_SHIRT.create_surface(HomogeneousTransformationMatrix()),
+        mass=0.255,
+        semantic_annotation=t_shirt,
+    )
+    world.add_simulator_property(cloth)
+
+    builder = MujocoBuilder()
+    builder.build_world(world=world, file_path=str(tmp_path / "scene.xml"))
+    model = mujoco.MjModel.from_xml_path(str(tmp_path / "scene.xml"))
+
+    flex_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_FLEX, cloth.name)
+    assert model.flex_vertnum[flex_id] == len(cloth.surface.vertices)
+    assert (
+        mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, builder.element_names.of(t_shirt.root)
+        )
+        != -1
+    )
 
 
 # %% simulating

@@ -17,6 +17,7 @@ from krrood.patterns.path_enumeration import PathEnumeration
 from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.mixin import SimulatorAdditionalProperty
 from semantic_digital_twin.world_description.geometry import Color
+from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
 # %% cloth sheets
 
@@ -85,6 +86,12 @@ class ClothSheet(SimulatorAdditionalProperty):
     color: Color = field(default_factory=Color)
     """
     The color the cloth is drawn in.
+    """
+
+    semantic_annotation: SemanticAnnotation | None = None
+    """
+    What the cloth is in the world, such as the T-shirt it was made into; ``None`` for
+    cloth nothing in the world stands for.
     """
 
 

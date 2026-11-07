@@ -11,6 +11,7 @@ import pytest
 
 from experiments.t_shirt_demo.demo import SceneEntity, TShirtSwingDemonstration
 from semantic_digital_twin.robots.tiago import TiagoMujoco
+from semantic_digital_twin.semantic_annotations.garments import TShirt
 from semantic_digital_twin.world_description.cloth import ClothSheet
 
 from ...pytest_environment import runs_in_continuous_integration
@@ -38,6 +39,18 @@ def test_the_t_shirt_lies_spread_out_on_the_table() -> None:
     assert vertices[:, 0].max() <= demonstration.table_distance + table.x
     assert numpy.abs(vertices[:, 1]).max() <= table.y / 2
     assert vertices[:, 2].min() > table.z
+
+
+def test_the_t_shirt_on_the_table_is_simulated_as_its_cloth_sheet() -> None:
+    """
+    The scene holds one T-shirt annotation, and the cloth sheet simulating the T-shirt
+    stands for it.
+    """
+    world = TShirtSwingDemonstration(headless=True).build_simulated_world()
+
+    [t_shirt] = world.get_semantic_annotations_by_type(TShirt)
+    [cloth] = world.get_simulator_properties_of_type(ClothSheet)
+    assert cloth.semantic_annotation is t_shirt
 
 
 # %% swinging it

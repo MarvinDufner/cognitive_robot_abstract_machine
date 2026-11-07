@@ -44,6 +44,7 @@ from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.robots.robot_part_mixins import HasTwoFingers
 from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
 from semantic_digital_twin.robots.tiago import TiagoMujoco
+from semantic_digital_twin.semantic_annotations.garments import TShirt
 from semantic_digital_twin.specifications.kinematic_structure_entities import (
     BodySpecification,
 )
@@ -241,8 +242,11 @@ class TShirtSwingDemonstration(RobotDemonstration):
     def populate_scene(self, world: World) -> None:
         """
         Lay the T-shirt spread out on the table, its neckline towards the robot and its
-        sleeves to the sides.
+        sleeves to the sides, as the cloth simulating the T-shirt's annotation.
         """
+        t_shirt = TShirt.create_with_new_body_in_world(
+            SceneEntity.T_SHIRT, world, self._world_T_t_shirt
+        )
         world.add_simulator_property(
             ClothSheet(
                 name=SceneEntity.T_SHIRT,
@@ -252,6 +256,7 @@ class TShirtSwingDemonstration(RobotDemonstration):
                 elasticity=self.t_shirt_elasticity,
                 edge_damping=self.t_shirt_edge_damping,
                 color=self.t_shirt_color,
+                semantic_annotation=t_shirt,
             )
         )
 
