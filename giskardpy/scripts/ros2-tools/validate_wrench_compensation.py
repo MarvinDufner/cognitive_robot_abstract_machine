@@ -27,7 +27,7 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from typing_extensions import Dict, List, Tuple, Type
 
-from giskardpy.middleware.ros2.exceptions import NoTransformChainInBagError
+from giskardpy.ros2_tools.exceptions import NoTransformChainInBagError
 from giskardpy.ros2_tools.wrench_compensation_node import WrenchGravityCompensator
 from semantic_digital_twin.robots.hsrb import HSRBWristForceTorqueSensor
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor

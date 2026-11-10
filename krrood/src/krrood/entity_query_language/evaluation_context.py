@@ -16,17 +16,13 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from ordered_set import OrderedSet
-from typing_extensions import (
-    Any,
-    Callable,
-    Dict,
-    Iterator,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TYPE_CHECKING,
+from typing_extensions import Any, Callable, Iterator, TYPE_CHECKING, TypeVar
+
+from krrood.entity_query_language.ground_term import (
+    GroundTerm,
+    LiveTermReader,
+    TermReader,
+    TermValue,
 )
 
 if TYPE_CHECKING:
@@ -35,12 +31,14 @@ if TYPE_CHECKING:
         SymbolicExpression,
     )
 
-_evaluation_context_var: ContextVar[Optional[EvaluationContext]] = ContextVar(
+_evaluation_context_var: ContextVar[EvaluationContext | None] = ContextVar(
     "_evaluation_context", default=None
 )
 
+ResultType = TypeVar("ResultType")
 
-def get_evaluation_context() -> Optional[EvaluationContext]:
+
+def get_evaluation_context() -> EvaluationContext | None:
     """
     :return: The current :class:`EvaluationContext`, or ``None`` if called outside an active evaluation.
     """
@@ -48,7 +46,7 @@ def get_evaluation_context() -> Optional[EvaluationContext]:
 
 
 def set_evaluation_context(
-    evaluation_context: Optional[EvaluationContext],
+    evaluation_context: EvaluationContext | None,
 ):
     """
     Set or clear the current evaluation context and return the reset token.
@@ -66,7 +64,7 @@ class EvaluationObserver(ABC):
     """
 
     def on_evaluate_enter(
-        self, expression: SymbolicExpression, sources: Optional[OperationResult] = None
+        self, expression: SymbolicExpression, sources: OperationResult | None = None
     ) -> None:
         """
         Called when entering an expression's _evaluate_ method.
@@ -103,7 +101,7 @@ class ActiveConditionsRoot:
     nested evaluations within the same pass never reassign it.
     """
 
-    _root_id: Optional[uuid.UUID] = field(default=None, init=False)
+    _root_id: uuid.UUID | None = field(default=None, init=False)
     """
     Identifier of the active root, or ``None`` before one has been set this pass.
     """
@@ -152,7 +150,7 @@ class TruthValueOperatorChildren:
     the node's primary ``_parent_`` avoids that ambiguity.
     """
 
-    _ids: Set[uuid.UUID] = field(default_factory=set, init=False)
+    _ids: set[uuid.UUID] = field(default_factory=set, init=False)
     """
     Identifiers of the nodes evaluated as a direct child of a ``TruthValueOperator`` so
     far this pass.
@@ -183,7 +181,7 @@ class EvaluatedExpressionIds:
     The expression ids recorded as evaluated so far this pass.
     """
 
-    _snapshot: Optional[Tuple[int, OrderedSet]] = field(default=None, init=False)
+    _snapshot: tuple[int, OrderedSet] | None = field(default=None, init=False)
     """
     Cached ``(length, snapshot)`` pair.
 
@@ -228,7 +226,7 @@ class OutermostQuery:
     inside it.
     """
 
-    node: Optional[SymbolicExpression] = field(default=None, init=False)
+    node: SymbolicExpression | None = field(default=None, init=False)
     """
     The compiled query node holding the outermost role, or ``None`` before any node
     takes it.
@@ -258,7 +256,7 @@ class SubqueryResultCache:
     replayed to each of them, instead of recomputing it on every outer row.
     """
 
-    _streams: Dict[uuid.UUID, Any] = field(default_factory=dict, init=False)
+    _streams: dict[uuid.UUID, Any] = field(default_factory=dict, init=False)
     """
     Cached result stream keyed by the compiled query node's identifier.
     """
@@ -284,13 +282,13 @@ class EvaluationContext:
     Carries observer state through the evaluation pipeline.
     """
 
-    observers: List[EvaluationObserver] = field(default_factory=list)
+    observers: list[EvaluationObserver] = field(default_factory=list)
     """
     List of observers to notify of evaluation events.
     """
 
-    subtree_containment_cache: Dict[
-        Tuple[uuid.UUID, Type[SymbolicExpression]], bool
+    subtree_containment_cache: dict[
+        tuple[uuid.UUID, type[SymbolicExpression]], bool
     ] = field(default_factory=dict)
     """
     Memoizes, per ``(node id, expression type)``, whether a node's subtree contains a
@@ -299,7 +297,7 @@ class EvaluationContext:
     every step.
     """
 
-    expression_index_cache: Dict[
+    expression_index_cache: dict[
         uuid.UUID, weakref.WeakValueDictionary[uuid.UUID, SymbolicExpression]
     ] = field(default_factory=dict)
     """
@@ -333,7 +331,7 @@ class EvaluationContext:
     Tracks every expression id evaluated so far during the current evaluation pass.
     """
 
-    satisfied_condition_ids: Optional[OrderedSet] = field(default=None)
+    satisfied_condition_ids: OrderedSet | None = field(default=None)
     """
     The satisfied condition-expression ids for the current evaluation iteration, or
     ``None`` if unset.
@@ -350,6 +348,18 @@ class EvaluationContext:
     )
     """
     Caches each nested subquery's result stream for the current evaluation pass.
+    """
+
+    term_reader: TermReader = field(default_factory=LiveTermReader)
+    """
+    Reads the value of every attribute, index, call and symbolic function application
+    the evaluation reaches.
+    """
+
+    has_running_evaluation: bool = field(default=False, init=False)
+    """
+    Whether an evaluation is running in this context, from its first result until it is
+    exhausted or closed.
     """
 
     def is_child_of_truth_value_operator(self, expression: SymbolicExpression) -> bool:
@@ -372,9 +382,34 @@ class EvaluationContext:
         finally:
             _evaluation_context_var.reset(context_token)
 
-    def iterate_as_current(
-        self, results: Iterator[OperationResult]
-    ) -> Iterator[OperationResult]:
+    @classmethod
+    def current_value_of_term(cls, term: GroundTerm) -> TermValue | None:
+        """
+        :param term: The ground term to read.
+        :return: The value of *term* as the current evaluation context's
+            :attr:`term_reader` reads it, or its live value outside an evaluation.
+        """
+        evaluation_context = get_evaluation_context()
+        if evaluation_context is None:
+            return term.live_term_value()
+        return evaluation_context.term_reader.value_of_term(term)
+
+    @classmethod
+    def iterate_reading_from(
+        cls, term_reader: TermReader | None, results: Iterator[ResultType]
+    ) -> Iterator[ResultType]:
+        """
+        :param term_reader: What the evaluation producing *results* reads ground terms
+            with, or ``None`` to read them as the current evaluation context does.
+        :param results: The results of an evaluation that has not started yet.
+        :return: The same results. The evaluation, and every evaluation it starts, reads
+            ground terms with *term_reader*.
+        """
+        if term_reader is None:
+            return results
+        return cls(term_reader=term_reader).iterate_as_current(results)
+
+    def iterate_as_current(self, results: Iterator[ResultType]) -> Iterator[ResultType]:
         """
         Iterate the given results with this context as the current evaluation context
         while each of them is produced, and while they are closed.
@@ -387,6 +422,7 @@ class EvaluationContext:
         :return: The same results.
         """
         results_exhausted = object()
+        self.has_running_evaluation = True
         try:
             while True:
                 with self.as_current():
@@ -397,12 +433,13 @@ class EvaluationContext:
         finally:
             with self.as_current():
                 results.close()
+            self.has_running_evaluation = False
 
     def on_evaluate_enter(
         self,
         *,
         expression: SymbolicExpression,
-        sources: Optional[OperationResult] = None,
+        sources: OperationResult | None = None,
     ) -> None:
         """
         Notify all observers that evaluation of *expression* is about to begin.

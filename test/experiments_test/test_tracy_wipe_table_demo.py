@@ -3,14 +3,17 @@ import pytest
 
 from ..pytest_environment import runs_in_continuous_integration
 
-from coraplex.datastructures.enums import ExecutionType
-from coraplex.robot_plans.actions.composite.tool_based import WipingAction
+from coraplex.plans.executors import (
+    KinematicallySimulatedPlanExecutor,
+    PhysicallySimulatedPlanExecutor,
+    RealRobotPlanExecutor,
+)
+from coraplex.robot_plans.actions.composite.tool_based import (
+    LowerUntilContactAction,
+    WipingAction,
+)
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
-from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
-from coraplex.plans.plan_node import MotionNode
-from giskardpy.executor import Executor
-from giskardpy.motion_statechart.context import MotionStatechartContext
-from giskardpy.motion_statechart.motion_statechart import MotionStatechart
+from cramph.context import StatechartContext
 from experiments.tracy_wipe_table_demo.demo import TracyWipeTableDemonstration
 from experiments.wipe_table_demo.demo import SimulatedContactWrench
 from semantic_digital_twin.adapters.sensors.force_torque import (
@@ -19,13 +22,12 @@ from semantic_digital_twin.adapters.sensors.force_torque import (
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import Tracy, TracyLeftForceTorqueSensor
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge
+from semantic_digital_twin.world import World
 
 
 def populated_demonstration(**arguments):
     demonstration = TracyWipeTableDemonstration(used_robot=Tracy, **arguments)
-    world = demonstration.build_simulated_world()
-    demonstration.populate_scene(world)
-    return demonstration, world
+    return demonstration, demonstration.build_simulated_world()
 
 
 # %% scene
@@ -33,7 +35,8 @@ def populated_demonstration(**arguments):
 
 def test_the_scene_counts_as_populated_once_the_sponge_is_attached():
     demonstration = TracyWipeTableDemonstration(used_robot=Tracy)
-    world = demonstration.build_simulated_world()
+    world = World.create_with_root_body(root_body_name=demonstration.floor_name)
+    demonstration.robot_specification().spawn(world)
 
     assert not demonstration.is_scene_populated(world)
     demonstration.populate_scene(world)
@@ -201,15 +204,17 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
 
 
 def test_the_real_robot_reads_its_own_sensor():
-    demonstration, world = populated_demonstration(execution_type=ExecutionType.REAL)
+    demonstration, world = populated_demonstration(
+        executor_type=RealRobotPlanExecutor
+    )
 
-    assert demonstration.world_inputs(world) == []
+    assert demonstration.wrench_inputs(world).synchronizers == []
 
 
 def test_a_simulated_run_feels_the_bench_it_wipes():
     demonstration, world = populated_demonstration()
 
-    inputs = demonstration.world_inputs(world)
+    inputs = demonstration.wrench_inputs(world).synchronizers
 
     assert [type(reading) for reading in inputs] == [SimulatedContactWrench]
     assert inputs[0].surface is world.get_body_by_name(demonstration.bench_name)
@@ -251,11 +256,11 @@ def plan_steps(demonstration, world):
     """
     :return: The plan's steps in the order they run.
     """
-    plan = demonstration.build_plan(demonstration.build_context(world))
-    return [
-        node.designator if hasattr(node, "designator") else node
-        for node in plan.children
-    ]
+    context = StatechartContext.with_extensions(
+        world, demonstration.build_context_extensions(world)
+    )
+    statechart = demonstration.build_statechart(context)
+    return statechart.nodes[0].nodes
 
 
 def index_of(steps, step_type) -> int:
@@ -283,16 +288,16 @@ def test_the_tool_is_lowered_onto_the_bench_before_it_is_wiped():
     steps = plan_steps(demonstration, world)
 
     assert steps.index(approach_steps(steps)[-1]) < index_of(
-        steps, LowerUntilContactMotion
+        steps, LowerUntilContactAction
     )
-    assert index_of(steps, LowerUntilContactMotion) < index_of(steps, WipingAction)
+    assert index_of(steps, LowerUntilContactAction) < index_of(steps, WipingAction)
 
 
 def test_the_descent_aims_past_the_bench_so_only_contact_ends_it():
     demonstration, world = populated_demonstration()
 
     steps = plan_steps(demonstration, world)
-    descent = steps[index_of(steps, LowerUntilContactMotion)]
+    descent = steps[index_of(steps, LowerUntilContactAction)]
 
     goal_height = descent.goal_point.to_np().flatten()[2]
     assert goal_height < demonstration.bench_height(world)
@@ -308,7 +313,7 @@ def test_the_descent_is_capped_to_the_speed_it_is_asked_to_lower_at():
     demonstration, world = populated_demonstration()
 
     steps = plan_steps(demonstration, world)
-    descent = steps[index_of(steps, LowerUntilContactMotion)]
+    descent = steps[index_of(steps, LowerUntilContactAction)]
 
     assert descent.max_linear_velocity == demonstration.descent_velocity
     assert descent.descent_velocity == demonstration.descent_velocity
@@ -362,40 +367,23 @@ def test_the_tool_turns_onto_the_bench_well_above_it_and_only_then_comes_down():
 # %% the charts the controller compiles
 
 
-def motions_of(plan_step) -> list:
+def test_the_whole_plan_compiles():
     """
-    :param plan_step: An action or a motion of the plan.
-    :return: The motions it expands into, which are what carry a chart.
-    """
-    if hasattr(plan_step, "_motion_chart"):
-        return [plan_step]
-    plan_step.expand()
-    return [
-        node.designator
-        for node in plan_step.plan.all_nodes
-        if isinstance(node, MotionNode) and hasattr(node.designator, "_motion_chart")
-    ]
-
-
-def test_every_motion_of_the_plan_compiles():
-    """
-    Building a chart is not enough: the controller compiles it before running it, and
-    wiring a node to one it does not share a chart with is only rejected there.
+    Building the statechart is not enough: the executor compiles it before running it,
+    and a node wired to one it does not share a chart with is only rejected there.
     """
     demonstration, world = populated_demonstration()
+    executor = KinematicallySimulatedPlanExecutor(
+        StatechartContext.with_extensions(
+            world, demonstration.build_context_extensions(world)
+        )
+    )
 
-    compiled = []
-    for step in plan_steps(demonstration, world):
-        for motion in motions_of(step):
-            chart = MotionStatechart()
-            chart.add_node(motion.motion_chart)
-            Executor(MotionStatechartContext(world=world)).compile(
-                motion_statechart=chart
-            )
-            compiled.append(type(motion).__name__)
+    executor.compile(demonstration.build_statechart(executor.context))
 
-    assert "MoveTCPWaypointsAlignedMotion" in compiled
-    assert "LowerUntilContactMotion" in compiled
+    compiled = {type(node).__name__ for node in executor.statechart.nodes}
+    assert "AdmittanceCartesianTrajectory" in compiled
+    assert "LowerUntilContactAction" in compiled
 
 
 # %% the physics a run is performed in
@@ -407,10 +395,13 @@ def test_a_kinematically_simulated_run_needs_no_physics():
     """
     demonstration, world = populated_demonstration()
 
-    assert demonstration.start_physics(world) is None
-    assert [type(reading) for reading in demonstration.world_inputs(world)] == [
-        SimulatedContactWrench
-    ]
+    demonstration.start_simulation(world)
+
+    assert demonstration.simulation is None
+    assert [
+        type(reading)
+        for reading in demonstration.wrench_inputs(world).synchronizers
+    ] == [SimulatedContactWrench]
 
 
 @pytest.mark.skipif(
@@ -423,12 +414,12 @@ def test_a_physically_simulated_run_feels_what_the_physics_resolves():
     bench.
     """
     demonstration, world = populated_demonstration(
-        execution_type=ExecutionType.PHYSICALLY_SIMULATED
+        executor_type=PhysicallySimulatedPlanExecutor
     )
 
-    demonstration.simulation = demonstration.start_physics(world)
+    demonstration.start_simulation(world)
     try:
-        inputs = demonstration.world_inputs(world)
+        inputs = demonstration.wrench_inputs(world).synchronizers
         assert [type(reading) for reading in inputs] == [
             PhysicallySimulatedContactWrench
         ]

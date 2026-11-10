@@ -46,7 +46,7 @@ from experiments.shelf_generation_experiments.shelf_schema import (
     RelationalCircuitExperimentShelf,
     RelationalCircuitExperimentShelfLayer,
 )
-from semantic_digital_twin.spatial_types import (
+from krrood_spatial_math.spatial_types import (
     HomogeneousTransformationMatrix,
     Point2,
     Pose,
@@ -141,7 +141,7 @@ def _object_2d(
     return RelationalCircuitExperimentObject2D(
         object_type=object_type,
         scale=Scale(x=0.1, y=0.1, z=0.1),
-        pose=Pose2D(x=x, y=y, yaw=0.0),
+        pose=Pose2D.from_xy_yaw(x=x, y=y, yaw=0.0),
         source_id=object_id,
         name=object_id,
     )

@@ -24,7 +24,7 @@ def test_structural_cache_never_strongly_references_expressions():
     captured_contexts = []
 
     @symbolic_function
-    def capture_context(value):
+    def capture_context(value: int) -> bool:
         captured_contexts.append(get_evaluation_context())
         return True
 
@@ -81,7 +81,7 @@ def test_resumed_evaluation_sees_its_own_context_on_every_result():
     captured_contexts = []
 
     @symbolic_function
-    def capture_context(value):
+    def capture_context(value: int) -> bool:
         captured_contexts.append(get_evaluation_context())
         return True
 
@@ -105,7 +105,7 @@ def test_interleaved_evaluations_of_one_query_each_keep_their_own_context():
     captured_contexts = []
 
     @symbolic_function
-    def capture_context(value):
+    def capture_context(value: int) -> bool:
         captured_contexts.append(get_evaluation_context())
         return True
 
@@ -135,7 +135,7 @@ def test_evaluation_started_while_another_is_suspended_gets_its_own_context():
     captured_contexts = []
 
     @symbolic_function
-    def capture_context(value):
+    def capture_context(value: int) -> bool:
         captured_contexts.append(get_evaluation_context())
         return True
 
@@ -151,6 +151,26 @@ def test_evaluation_started_while_another_is_suspended_gets_its_own_context():
 
     suspended_context, other_context = captured_contexts
     assert other_context is not suspended_context
+
+
+def test_evaluation_runs_in_the_context_set_before_it_starts():
+    """
+    A query evaluated while a context is current that no evaluation is running in
+    evaluates within that context.
+    """
+    captured_contexts = []
+
+    @symbolic_function
+    def capture_context(value: int) -> bool:
+        captured_contexts.append(get_evaluation_context())
+        return True
+
+    evaluation_context = EvaluationContext()
+    subject = variable(int, [1])
+    with evaluation_context.as_current():
+        an(entity(subject).where(capture_context(subject))).tolist()
+
+    assert captured_contexts == [evaluation_context]
 
 
 def test_closing_suspended_results_keeps_their_context_current_for_the_cleanup():

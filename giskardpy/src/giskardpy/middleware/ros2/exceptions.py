@@ -5,18 +5,14 @@ Exceptions raised while executing a trajectory on a robot.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Type
-
-from typing_extensions import TYPE_CHECKING
+from datetime import timedelta
 
 from giskardpy.data_types.exceptions import (
     GiskardException,
     SetupException,
 )
 from semantic_digital_twin.adapters.ros.messages import MetaData
-
-if TYPE_CHECKING:
-    from giskardpy.ros2_tools.wrench_compensation_node import RetareOutcome
+from semantic_digital_twin.world_description.connections import WheeledDrive
 
 
 @dataclass
@@ -30,7 +26,7 @@ class UnknownMinimumVelocityJointError(SetupException):
     The joint the override was written for.
     """
 
-    commanded_joint_names: List[str]
+    commanded_joint_names: list[str]
     """
     The joints the publisher actually commands.
     """
@@ -43,6 +39,100 @@ class UnknownMinimumVelocityJointError(SetupException):
 
     def suggest_correction(self) -> str:
         return f"Use one of {sorted(self.commanded_joint_names)}."
+
+
+@dataclass
+class ServiceUnavailableError(SetupException):
+    """
+    Raised when a service Giskard needs for its setup does not become available.
+    """
+
+    service_name: str
+    """
+    The service that was waited for.
+    """
+
+    def error_message(self) -> str:
+        return f'The service "{self.service_name}" is not available.'
+
+    def suggest_correction(self) -> str:
+        return "Make sure the node offering the service is running."
+
+
+@dataclass
+class ControllersNotLoadedError(SetupException):
+    """
+    Raised when controllers Giskard was told to use are not loaded by their controller
+    manager.
+    """
+
+    controller_manager_name: str
+    """
+    The controller manager that was asked.
+    """
+
+    missing_controllers: list[str]
+    """
+    The requested controllers the manager does not report.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f'The controller manager "{self.controller_manager_name}" has not loaded '
+            f"the controllers {self.missing_controllers}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Load the controllers or remove them from the whitelist."
+
+
+@dataclass
+class ControllersNotActiveError(SetupException):
+    """
+    Raised when controllers Giskard was told to use are loaded by their controller
+    manager but do not run.
+    """
+
+    controller_manager_name: str
+    """
+    The controller manager that was asked.
+    """
+
+    inactive_controllers: list[str]
+    """
+    The requested controllers the manager reports in another state than active.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The controllers {self.inactive_controllers} of the controller manager "
+            f'"{self.controller_manager_name}" are not active.'
+        )
+
+    def suggest_correction(self) -> str:
+        return "Activate the controllers or remove them from the whitelist."
+
+
+@dataclass
+class NoUniqueDriveError(SetupException):
+    """
+    Raised when Giskard is told to command the drive of a world without being told which
+    drive, and the world does not hold exactly one.
+    """
+
+    drives: list[WheeledDrive]
+    """
+    The drives the world holds.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Expected exactly one drive to command, but the world holds "
+            f"{[str(drive.name) for drive in self.drives]}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Name the drive to command."
 
 
 @dataclass
@@ -122,7 +212,7 @@ class NoWatchedClientError(GiskardException):
     Raised when a presence check is asked about a client while it watches none.
     """
 
-    check_type: Type
+    check_type: type
     """
     The check that was asked.
     """
@@ -214,15 +304,15 @@ class GiskardWorldUpdateNotReceivedError(ExecutionException):
     The position in Giskard's stream that was waited for.
     """
 
-    timeout: float
+    timeout: timedelta
     """
-    Seconds that were spent waiting.
+    The time that was spent waiting.
     """
 
     def error_message(self) -> str:
         return (
             f"Update #{self.awaited_sequence_number} of Giskard did not arrive within "
-            f"{self.timeout}s."
+            f"{self.timeout.total_seconds()}s."
         )
 
     def suggest_correction(self) -> str:
@@ -384,6 +474,79 @@ class FollowJointTrajectory_GOAL_TOLERANCE_VIOLATED(FollowJointTrajectoryError):
 
 
 @dataclass
+class StatechartOutOfStepError(ExecutionException):
+    """
+    Raised when a client sends a child for a statechart that holds other nodes than the
+    client's copy of it.
+    """
+
+    node_count: int
+    """
+    How many nodes the running statechart holds.
+    """
+
+    first_sent_node_index: int
+    """
+    The index the client gave the first node it sent.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The client sent nodes from index {self.first_sent_node_index} on, but the "
+            f"running statechart holds {self.node_count}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Send children only for the goal the client's statechart was sent as."
+
+
+@dataclass
+class StatechartNotEndedByResultError(ExecutionException):
+    """
+    Raised when the result of a goal that succeeded leaves the client's statechart in a
+    state that has not ended.
+    """
+
+    def error_message(self) -> str:
+        return "The result of the finished goal does not end the client's statechart."
+
+    def suggest_correction(self) -> str:
+        return (
+            "Check that the statechart Giskard ran holds the same nodes as the "
+            "client's copy of it."
+        )
+
+
+@dataclass
+class StateUpdateAheadOfStatechartError(ExecutionException):
+    """
+    Raised when Giskard reports the states of more nodes than the client's copy of the
+    statechart holds.
+    """
+
+    node_count: int
+    """
+    How many nodes the client's copy holds.
+    """
+
+    reported_node_count: int
+    """
+    How many nodes Giskard reported a state for.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"Giskard reported the states of {self.reported_node_count} nodes, but the "
+            f"client's statechart holds {self.node_count}."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Apply the states only to the statechart that was sent as the running goal."
+        )
+
+
+@dataclass
 class MotionServerThreadStillRunningError(GiskardException):
     """
     Raised when a motion server's background thread does not stop in time.
@@ -403,102 +566,3 @@ class MotionServerThreadStillRunningError(GiskardException):
 
     def suggest_correction(self) -> str:
         return "Check whether a goal is stuck or the idle loop is blocked."
-
-
-@dataclass
-class WrenchCompensationUnavailable(SetupException):
-    """
-    Raised when nothing offers the service that re-tares a force/torque sensor.
-    """
-
-    service: str
-    """
-    The service that went unanswered.
-    """
-
-    def error_message(self) -> str:
-        return f'No wrench compensation node offers "{self.service}".'
-
-    def suggest_correction(self) -> str:
-        return (
-            "Start a wrench compensation node for this sensor, reading the topic its "
-            "driver publishes."
-        )
-
-
-@dataclass
-class ForceTorqueSensorNotTared(ExecutionException):
-    """
-    Raised when a force/torque sensor could not be tared before it is used.
-
-    Pressing with an untared sensor drives the tool by whatever the reading holds
-    besides contact, which is mostly the weight of what hangs past the sensor.
-    """
-
-    service: str
-    """
-    The re-tare service that was asked.
-    """
-
-    outcome: RetareOutcome
-    """
-    What the compensation node settled on instead.
-    """
-
-    def error_message(self) -> str:
-        return f'Re-taring through "{self.service}" failed: {self.outcome}'
-
-    def suggest_correction(self) -> str:
-        return "Hold the sensor still and out of contact, then ask again."
-
-
-@dataclass
-class SensorNeedsNoCompensationError(SetupException):
-    """
-    Raised when a compensation node is started for a sensor that has nothing to
-    compensate, or whose output is the reading it would have to read.
-    """
-
-    sensor_type: type
-    """
-    The sensor the node was started for.
-    """
-
-    def error_message(self) -> str:
-        return (
-            f"{self.sensor_type.__name__} states no wrench compensation, or states one "
-            f"that publishes onto the very topic it reads."
-        )
-
-    def suggest_correction(self) -> str:
-        return (
-            "Read the sensor straight off its driver, or give its annotation a "
-            "compensation whose uncompensated topic differs from the one the sensor is "
-            "read from."
-        )
-
-
-@dataclass
-class NoTransformChainInBagError(SetupException):
-    """
-    Raised when a recording does not connect two frames a replay has to relate.
-    """
-
-    tip: str
-    """
-    The frame the chain was to start at.
-    """
-
-    root: str
-    """
-    The frame the chain was to end at.
-    """
-
-    def error_message(self) -> str:
-        return f"The recording holds no transform chain {self.tip} -> {self.root}."
-
-    def suggest_correction(self) -> str:
-        return (
-            "Record /tf and /tf_static alongside the wrench, over a stretch in which "
-            "both frames are published."
-        )

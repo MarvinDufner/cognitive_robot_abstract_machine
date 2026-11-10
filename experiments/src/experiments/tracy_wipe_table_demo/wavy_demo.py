@@ -22,7 +22,9 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 
-from coraplex.datastructures.enums import ExecutionType, WipingTechnique
+from coraplex.datastructures.enums import WipingTechnique
+from coraplex.plans.executors import PhysicallySimulatedPlanExecutor, PlanExecutor
+from experiments.wipe_table_demo.demo import EXECUTORS
 from experiments.tracy_wipe_table_demo.demo import TracyWipeTableDemonstration
 from experiments.wipe_table_demo.demo import RidgedSurface
 from semantic_digital_twin.robots.tracy import Tracy
@@ -43,23 +45,24 @@ class TracyWipeWavyBenchDemonstration(RidgedSurface, TracyWipeTableDemonstration
 
 
 def main(
-    execution_type: ExecutionType = ExecutionType.PHYSICALLY_SIMULATED,
+    executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor,
     technique: WipingTechnique = TracyWipeWavyBenchDemonstration.technique,
 ) -> None:
     """
     Run the demonstration.
 
-    :param execution_type: Whether to drive the real robot or simulate it.
+    :param executor_type: The executor running the plan, which decides whether it drives
+        the real robot or simulates it.
     :param technique: How the tool covers the patch.
     """
     TracyWipeWavyBenchDemonstration(
-        used_robot=Tracy, execution_type=execution_type, technique=technique
+        used_robot=Tracy, executor_type=executor_type, technique=technique
     ).run()
 
 
 if __name__ == "__main__":
     # Only what the command line names, so each default lives once, in main.
     main(
-        *(ExecutionType[name] for name in sys.argv[1:2]),
+        *(EXECUTORS[name] for name in sys.argv[1:2]),
         *(WipingTechnique[name] for name in sys.argv[2:3]),
     )

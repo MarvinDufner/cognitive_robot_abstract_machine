@@ -1,12 +1,13 @@
 import numpy as np
 import pytest
 
-from giskardpy.executor import Executor
-from giskardpy.motion_statechart.context import MotionStatechartContext
-from giskardpy.motion_statechart.data_types import ObservationStateValues
+from cramph.context import StatechartContext
+from cramph.data_types import ObservationStateValues
+from cramph.executor import StatechartExecutor
+from cramph.statechart import Statechart
+from giskardpy.motion_control import MotionControl
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.monitors.force_monitors import ContactForceReached
-from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world import World
 
@@ -21,7 +22,10 @@ def build_monitor(world, **arguments):
     """
     Compile a chart holding one contact monitor and return it with its context.
     """
-    chart = MotionStatechart()
+    executor = StatechartExecutor(
+        context=StatechartContext(world=world), extensions=[MotionControl()]
+    )
+    chart = Statechart(context=executor.context)
     chart.add_node(
         monitor := ContactForceReached(
             name="contact",
@@ -31,9 +35,8 @@ def build_monitor(world, **arguments):
         )
     )
     chart.add_node(EndMotion.when_true(monitor))
-    context = MotionStatechartContext(world=world)
-    Executor(context).compile(motion_statechart=chart)
-    return monitor, context
+    executor.compile(statechart=chart)
+    return monitor, executor.context
 
 
 def sensor_of(world) -> ForceTorqueSensor:
@@ -42,7 +45,7 @@ def sensor_of(world) -> ForceTorqueSensor:
 
 def push(
     monitor: ContactForceReached,
-    context: MotionStatechartContext,
+    context: StatechartContext,
     world: World,
     force: np.ndarray,
     readings: int,
@@ -54,7 +57,7 @@ def push(
     """
     for _ in range(readings):
         sensor_of(world).write_wrench(force, np.zeros(3))
-        observation = monitor.on_tick(context)
+        observation = monitor.on_tick()
     return observation
 
 
@@ -68,14 +71,14 @@ def test_an_unread_sensor_is_not_yet_out_of_contact(hsr_world_copy):
     """
     monitor, context = build_monitor(hsr_world_copy)
 
-    assert monitor.on_tick(context) is ObservationStateValues.UNKNOWN
+    assert monitor.on_tick() is ObservationStateValues.UNKNOWN
 
 
 def test_a_sensor_measuring_nothing_reports_no_contact(hsr_world_copy):
     monitor, context = build_monitor(hsr_world_copy)
     sensor_of(hsr_world_copy).write_wrench(np.zeros(3), np.zeros(3))
 
-    assert monitor.on_tick(context) is ObservationStateValues.FALSE
+    assert monitor.on_tick() is ObservationStateValues.FALSE
 
 
 @pytest.mark.parametrize("axis", range(3))
@@ -104,7 +107,7 @@ def test_a_touch_below_the_threshold_is_not_contact_yet(hsr_world_copy):
         np.array([0.0, 0.0, 0.5 * THRESHOLD]), np.zeros(3)
     )
 
-    assert monitor.on_tick(context) is ObservationStateValues.FALSE
+    assert monitor.on_tick() is ObservationStateValues.FALSE
 
 
 def test_the_torque_of_a_carried_tool_is_not_mistaken_for_contact(hsr_world_copy):
@@ -115,7 +118,7 @@ def test_the_torque_of_a_carried_tool_is_not_mistaken_for_contact(hsr_world_copy
 
     sensor_of(hsr_world_copy).write_wrench(np.zeros(3), np.ones(3) * 10.0)
 
-    assert monitor.on_tick(context) is ObservationStateValues.FALSE
+    assert monitor.on_tick() is ObservationStateValues.FALSE
 
 
 # %% contact, unlike a spike, stays
@@ -188,7 +191,7 @@ def test_a_reset_monitor_waits_for_the_whole_count_again(hsr_world_copy):
     touching = np.array([0.0, 0.0, -2.0 * THRESHOLD])
     push(monitor, context, hsr_world_copy, touching, monitor.confirming_readings - 1)
 
-    monitor.on_reset(context)
+    monitor.on_reset()
     observed = push(monitor, context, hsr_world_copy, touching, 1)
 
     assert observed is ObservationStateValues.FALSE
@@ -198,7 +201,7 @@ def test_a_reset_monitor_waits_for_the_whole_count_again(hsr_world_copy):
 
 
 def tick(
-    monitor: ContactForceReached, context: MotionStatechartContext, ticks: int
+    monitor: ContactForceReached, context: StatechartContext, ticks: int
 ) -> ObservationStateValues:
     """
     Run the monitor without the sensor publishing anything new.
@@ -206,7 +209,7 @@ def tick(
     :return: What it observed on the last tick.
     """
     for _ in range(ticks):
-        observation = monitor.on_tick(context)
+        observation = monitor.on_tick()
     return observation
 
 

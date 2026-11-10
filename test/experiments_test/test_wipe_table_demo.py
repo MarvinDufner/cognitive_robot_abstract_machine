@@ -4,9 +4,14 @@ from inspect import signature
 import numpy as np
 import pytest
 
-from coraplex.datastructures.enums import ExecutionType, WipingTechnique
-from coraplex.plans.plan_node import ActionNode
+from coraplex.datastructures.enums import WipingTechnique
+from coraplex.plans.context_extensions import RobotAccess
+from coraplex.plans.executors import (
+    KinematicallySimulatedPlanExecutor,
+    RealRobotPlanExecutor,
+)
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
+from cramph.context import StatechartContext
 from experiments.wipe_table_demo.demo import (
     SimulatedContactWrench,
     TableSide,
@@ -28,17 +33,16 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
 
 def populated_demonstration(**arguments):
     demonstration = WipeTableDemonstration(used_robot=HSRB, **arguments)
-    world = demonstration.build_simulated_world()
-    demonstration.populate_scene(world)
-    return demonstration, world
+    return demonstration, demonstration.build_simulated_world()
 
 
 def wiping_actions(demonstration, world) -> list[WipingAction]:
-    plan = demonstration.build_plan(demonstration.build_context(world))
+    context = StatechartContext.with_extensions(
+        world, demonstration.build_context_extensions(world)
+    )
+    statechart = demonstration.build_statechart(context)
     return [
-        node.designator
-        for node in plan.descendants
-        if isinstance(node, ActionNode) and isinstance(node.designator, WipingAction)
+        node for node in statechart.nodes if isinstance(node, WipingAction)
     ]
 
 
@@ -57,7 +61,8 @@ def wiped_points(demonstration, world) -> np.ndarray:
 
 def test_the_scene_counts_as_populated_once_the_sponge_is_attached():
     demonstration = WipeTableDemonstration(used_robot=HSRB)
-    world = demonstration.build_simulated_world()
+    world = demonstration.scene_specification().create_world()
+    demonstration.robot_specification().spawn(world)
 
     assert not demonstration.is_scene_populated(world)
     demonstration.populate_scene(world)
@@ -136,15 +141,15 @@ def test_no_place_the_base_does_not_fit_is_offered():
     demonstration, world = populated_demonstration()
     table = world.get_semantic_annotations_by_type(DiningTable)[0]
 
+    room = demonstration.room_for_the_base(world)
+
     poses = demonstration.standing_poses(world, table)
 
     assert poses
     for pose in poses:
-        assert demonstration.has_room_for_the_base(world, table, pose)
+        assert room.allows(pose)
     assert [
-        side
-        for side in demonstration.sides_of(world, table)
-        if not demonstration.has_room_for_the_base(world, table, side.pose)
+        side for side in demonstration.sides_of(world, table) if not room.allows(side.pose)
     ]
 
 
@@ -299,20 +304,22 @@ def test_the_patches_cover_the_sides_the_robot_can_stand_at():
             assert upper - lower <= covered + 1e-9
 
 
-def test_the_whole_wipe_fits_in_the_time_the_demonstration_allows():
+def test_every_wipe_fits_in_the_time_the_demonstration_allows_one_action():
     """
-    A simulated motion is given up on once it outlasts its limit, so the lanes the plan
-    lays down have to be travelled inside it however many bands they take.
+    A simulated action is given up on once it outlasts the budget the plan gives each of
+    them, so the lanes of one patch have to be travelled inside it however many they
+    take.
     """
     demonstration, world = populated_demonstration()
-    points = wiped_points(demonstration, world)
+    budget = demonstration.simulation_time_per_action.total_seconds()
 
-    travel = float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
+    for action in wiping_actions(demonstration, world):
+        points = np.array(
+            [point.to_np().flatten()[:3] for point in action._waypoints]
+        )
+        travel = float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
 
-    assert (
-        travel / demonstration.wipe_speed
-        < demonstration.simulation_time_limit.total_seconds()
-    )
+        assert travel / demonstration.wipe_speed < budget
 
 
 # %% the uneven table
@@ -320,9 +327,7 @@ def test_the_whole_wipe_fits_in_the_time_the_demonstration_allows():
 
 def ridged_demonstration():
     demonstration = WipeWavyTableDemonstration(used_robot=HSRB)
-    world = demonstration.build_simulated_world()
-    demonstration.populate_scene(world)
-    return demonstration, world
+    return demonstration, demonstration.build_simulated_world()
 
 
 def ridge_boxes(world):
@@ -397,17 +402,21 @@ def test_only_the_crest_of_each_ridge_stands_out_of_the_table():
 def test_the_real_robot_reads_its_own_sensor():
     """The simulated contact model stands in for the sensor, so a real run must not get
     one: the controller follows the sensor's own topic instead."""
-    demonstration, world = populated_demonstration(execution_type=ExecutionType.REAL)
+    demonstration, world = populated_demonstration(
+        executor_type=RealRobotPlanExecutor
+    )
 
-    assert demonstration.world_inputs(world) == []
+    assert demonstration.wrench_inputs(world).synchronizers == []
 
 
 def test_a_simulated_run_supplies_its_own_contact():
     demonstration, world = populated_demonstration()
 
-    inputs = demonstration.world_inputs(world)
+    inputs = demonstration.wrench_inputs(world)
 
-    assert [type(reading) for reading in inputs] == [SimulatedContactWrench]
+    assert [type(reading) for reading in inputs.synchronizers] == [
+        SimulatedContactWrench
+    ]
 
 
 def test_the_contact_reading_leaves_the_kinematic_state_alone():
@@ -417,7 +426,7 @@ def test_the_contact_reading_leaves_the_kinematic_state_alone():
     Reporting a write would recompute the forward kinematics once per reading.
     """
     demonstration, world = populated_demonstration()
-    contact = demonstration.world_inputs(world)[0]
+    contact = demonstration.wrench_inputs(world).synchronizers[0]
 
     assert contact.apply() is False
 
@@ -460,7 +469,7 @@ def test_the_surface_never_pushes_harder_than_it_says_it_does():
     arriving fast reports many times the force the model documents.
     """
     demonstration, world = populated_demonstration()
-    contact = demonstration.world_inputs(world)[0]
+    contact = demonstration.wrench_inputs(world).synchronizers[0]
     sponge = world.get_body_by_name(demonstration.sponge_name)
     sensor = ForceTorqueSensor.for_tip(world, sponge)
     # The tool's own body stands in for the surface, so every sampled point of its face
@@ -480,6 +489,6 @@ def test_the_demonstration_simulates_unless_it_is_told_otherwise():
     The module documents a simulated default, and one that drives the real robot unless
     told otherwise is the wrong way round.
     """
-    default = signature(main).parameters["execution_type"].default
+    default = signature(main).parameters["executor_type"].default
 
-    assert default is ExecutionType.KINEMATICALLY_SIMULATED
+    assert default is KinematicallySimulatedPlanExecutor

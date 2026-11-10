@@ -5,7 +5,7 @@ import pytest
 from std_srvs.srv import Trigger
 from typing_extensions import Any, Type
 
-from giskardpy.middleware.ros2.exceptions import (
+from giskardpy.ros2_tools.exceptions import (
     ForceTorqueSensorNotTared,
     WrenchCompensationUnavailable,
 )

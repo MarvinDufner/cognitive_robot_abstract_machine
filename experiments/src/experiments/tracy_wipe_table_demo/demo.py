@@ -26,30 +26,35 @@ import sys
 from dataclasses import dataclass, field
 
 import numpy as np
-from typing_extensions import ClassVar, List, Optional
+from typing_extensions import ClassVar
 
 from krrood.ormatic.utils import classproperty
 
-from coraplex.datastructures.dataclasses import Context
-from coraplex.datastructures.enums import ExecutionType, WipingTechnique
-from coraplex.plans.factories import sequential
-from coraplex.plans.plan_node import PlanNode
+from coraplex.datastructures.enums import WipingTechnique
+from coraplex.plans.context_extensions import RobotAccess
+from coraplex.plans.executors import (
+    KinematicallySimulatedPlanExecutor,
+    PlanExecutor,
+)
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from coraplex.robot_plans.actions.core.robot_body import (
     MoveManipulatorAction,
     ParkArmsAction,
 )
 from coraplex.robot_plans.mixins import Press
-from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
+from cramph.composites import Sequence
+from cramph.context import StatechartContext
+from cramph.statechart import Statechart
 from experiments.wipe_table_demo.demo import (
+    EXECUTORS,
     SimulatedContactWrench,
     WipingDemonstration,
 )
 from semantic_digital_twin.specifications.robots import RobotSpecification
+from semantic_digital_twin.specifications.worlds import WorldSpecification
 from semantic_digital_twin.robots.tracy import Tracy, TracyFrame
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Sponge
-from semantic_digital_twin.spatial_types import Point3, Vector3
-from semantic_digital_twin.spatial_types.spatial_types import Pose
+from krrood_spatial_math.spatial_types import Point3, Pose, Vector3
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -102,12 +107,24 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         """
         return TracyFrame.BENCH
 
+    def scene_specification(self) -> WorldSpecification:
+        """
+        A bare floor for Tracy to be bolted to; it brings its own bench.
+        """
+        return WorldSpecification()
+
+    def robot_specification(self) -> RobotSpecification:
+        return RobotSpecification(semantic_annotation_type=self.used_robot)
+
     def build_simulated_world(self) -> World:
         """
-        Put Tracy on a floor it is bolted to; it brings its own bench.
+        Spawns Tracy before the scene is populated, because the sponge is bolted into
+        its gripper, see
+        :meth:`~coraplex.demonstrations.RobotDemonstration.build_simulated_world`.
         """
         world = World.create_with_root_body(root_body_name=self.floor_name)
-        RobotSpecification(semantic_annotation_type=self.used_robot).spawn(world)
+        self.robot_specification().spawn(world)
+        self.populate_scene(world)
         return world
 
     def populate_scene(self, world: World) -> None:
@@ -118,14 +135,15 @@ class TracyWipeTableDemonstration(WipingDemonstration):
         """
         self.attach_sponge(world)
 
-    def build_plan(self, context: Context) -> PlanNode:
+    def build_statechart(self, context: StatechartContext) -> Statechart:
         """
         Reach over the patch, feel for the bench, then wipe the patch.
         """
         world = context.world
+        robot = context.require_extension(RobotAccess).robot
         sponge = world.get_semantic_annotations_by_type(Sponge)[0]
         patch = self.touchdown_pose(world)
-        steps = [ParkArmsAction(arms=context.robot.all_arms)]
+        steps = [ParkArmsAction(arms=robot.all_arms)]
         steps.extend(self.build_approach(context, patch))
         steps.append(self.build_touchdown(context, patch))
         steps.append(
@@ -140,7 +158,9 @@ class TracyWipeTableDemonstration(WipingDemonstration):
                 max_linear_velocity=self.wipe_speed,
             )
         )
-        return sequential(steps, context=context)
+        statechart = Statechart(context=context)
+        statechart.add_node(Sequence(nodes=steps))
+        return statechart
 
     def wiped_surface(self, world: World) -> Body:
         return world.get_body_by_name(self.bench_name)
@@ -185,23 +205,24 @@ class TracyWipeTableDemonstration(WipingDemonstration):
 
 
 def main(
-    execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED,
+    executor_type: type[PlanExecutor] = KinematicallySimulatedPlanExecutor,
     technique: WipingTechnique = TracyWipeTableDemonstration.technique,
 ) -> None:
     """
     Run the demonstration.
 
-    :param execution_type: Whether to drive the real robot or simulate it.
+    :param executor_type: The executor running the plan, which decides whether it drives
+        the real robot or simulates it.
     :param technique: How the tool covers the patch.
     """
     TracyWipeTableDemonstration(
-        used_robot=Tracy, execution_type=execution_type, technique=technique
+        used_robot=Tracy, executor_type=executor_type, technique=technique
     ).run()
 
 
 if __name__ == "__main__":
     # Only what the command line names, so each default lives once, in main.
     main(
-        *(ExecutionType[name] for name in sys.argv[1:2]),
+        *(EXECUTORS[name] for name in sys.argv[1:2]),
         *(WipingTechnique[name] for name in sys.argv[2:3]),
     )

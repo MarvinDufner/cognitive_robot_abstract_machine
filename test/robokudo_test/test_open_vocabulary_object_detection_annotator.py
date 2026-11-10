@@ -12,6 +12,7 @@ import torch
 from py_trees.common import Status
 from semantic_digital_twin.world_description.geometry import Color
 
+from robokudo.types.cv import ColorToDepthRatio
 from robokudo.annotators.open_vocabulary_object_detection_annotator import (
     DetectionResultField,
     OpenVocabularyObjectDetectionAnnotator,
@@ -144,10 +145,13 @@ def precision_mask_annotator(
     return annotator
 
 
-@pytest.mark.parametrize("color_to_depth_ratio", [None, (1, 1), (0.5, 0.5)])
+@pytest.mark.parametrize(
+    "color_to_depth_ratio",
+    [None, ColorToDepthRatio(), ColorToDepthRatio(horizontal=0.5, vertical=0.5)],
+)
 def test_precision_mask_preserves_color_coordinates(
     precision_mask_annotator: OpenVocabularyObjectDetectionAnnotator,
-    color_to_depth_ratio: tuple[float, float] | None,
+    color_to_depth_ratio: ColorToDepthRatio | None,
 ) -> None:
     """
     Crop Segment Anything's color-resolution mask independently of the color-to-depth
@@ -155,7 +159,7 @@ def test_precision_mask_preserves_color_coordinates(
     """
     annotator = precision_mask_annotator
     annotator.descriptor.parameters.global_with_depth = color_to_depth_ratio is not None
-    annotator.get_cas().set(CASViews.COLOR2DEPTH_RATIO, color_to_depth_ratio)
+    annotator.get_cas().set(CASViews.COLOR_TO_DEPTH_RATIO, color_to_depth_ratio)
     mask = annotator.segment_anything_model.predict.return_value[
         0
     ].masks.data.cpu.return_value.numpy.return_value[0]
@@ -180,7 +184,7 @@ def test_precision_mask_does_not_require_color_to_depth_ratio(
     """
     annotator = precision_mask_annotator
     annotator.descriptor.parameters.global_with_depth = True
-    annotator.get_cas().set(CASViews.COLOR2DEPTH_RATIO, None)
+    annotator.get_cas().set(CASViews.COLOR_TO_DEPTH_RATIO, None)
 
     assert annotator.compute() == Status.SUCCESS
 
@@ -194,7 +198,9 @@ def test_precision_bounding_box_uses_segment_anything_mask_color_coordinates(
     annotator = precision_mask_annotator
     annotator.descriptor.parameters.refine_bounding_boxes = True
     annotator.descriptor.parameters.global_with_depth = True
-    annotator.get_cas().set(CASViews.COLOR2DEPTH_RATIO, (0.5, 0.5))
+    annotator.get_cas().set(
+        CASViews.COLOR_TO_DEPTH_RATIO, ColorToDepthRatio(horizontal=0.5, vertical=0.5)
+    )
     mask = (
         annotator.segment_anything_model.predict.return_value[
             0

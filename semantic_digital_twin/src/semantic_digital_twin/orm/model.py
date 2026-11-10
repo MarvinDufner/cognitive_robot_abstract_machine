@@ -6,23 +6,23 @@ import numpy as np
 import trimesh
 import trimesh.exchange.stl
 from sqlalchemy import TypeDecorator, types
-from typing_extensions import List, Optional, Type
 
 from krrood.ormatic.data_access_objects.alternative_mappings import AlternativeMapping
 from semantic_digital_twin.mixin import HasSimulatorProperties
-from semantic_digital_twin.spatial_types import (
+from krrood_spatial_math.spatial_types import (
     RotationMatrix,
     Vector3,
     Point3,
     HomogeneousTransformationMatrix,
 )
-from semantic_digital_twin.spatial_types.spatial_types import (
+from krrood_spatial_math.spatial_types import (
     Quaternion,
     Pose,
     Point2,
     Pose2D,
     AxisAngle,
     SpatialType,
+    Twist,
 )
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import Connection
@@ -40,13 +40,13 @@ from semantic_digital_twin.world_description.world_state import WorldState
 
 @dataclass(eq=False)
 class WorldMapping(HasSimulatorProperties, AlternativeMapping[World]):
-    kinematic_structure_entities: List[KinematicStructureEntity]
-    connections: List[Connection]
-    semantic_annotations: List[SemanticAnnotation]
-    degrees_of_freedom: List[DegreeOfFreedom]
+    kinematic_structure_entities: list[KinematicStructureEntity]
+    connections: list[Connection]
+    semantic_annotations: list[SemanticAnnotation]
+    degrees_of_freedom: list[DegreeOfFreedom]
     state: WorldState
-    name: Optional[str]
-    modification_history: List[WorldModelModificationBlock]
+    name: str | None
+    modification_history: list[WorldModelModificationBlock]
 
     @classmethod
     def from_domain_object(cls, obj: World):
@@ -73,7 +73,7 @@ class WorldMapping(HasSimulatorProperties, AlternativeMapping[World]):
         return result
 
     @classmethod
-    def required_pre_build_classes(cls) -> List[Type]:
+    def required_pre_build_classes(cls) -> list[type]:
         return [WorldState, SpatialType, WorldEntity]
 
     __hash__ = AlternativeMapping.__hash__
@@ -81,8 +81,8 @@ class WorldMapping(HasSimulatorProperties, AlternativeMapping[World]):
 
 @dataclass(eq=False)
 class WorldStateMapping(AlternativeMapping[WorldState]):
-    data: List[float]
-    ids: List[UUID]
+    data: list[float]
+    ids: list[UUID]
 
     @classmethod
     def from_domain_object(cls, obj: WorldState):
@@ -105,7 +105,7 @@ class Vector3Mapping(AlternativeMapping[Vector3]):
     y: float
     z: float
 
-    reference_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: Vector3):
@@ -125,7 +125,7 @@ class Point3Mapping(AlternativeMapping[Point3]):
     y: float
     z: float
 
-    reference_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: Point3):
@@ -146,7 +146,7 @@ class QuaternionMapping(AlternativeMapping[Quaternion]):
     z: float
     w: float
 
-    reference_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: Quaternion):
@@ -168,7 +168,7 @@ class QuaternionMapping(AlternativeMapping[Quaternion]):
 class AxisAngleMapping(AlternativeMapping[AxisAngle]):
     axis: Vector3
     angle: float
-    reference_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: AxisAngle):
@@ -182,14 +182,40 @@ class AxisAngleMapping(AlternativeMapping[AxisAngle]):
         )
 
     @classmethod
-    def required_pre_build_classes(cls) -> List[Type]:
+    def required_pre_build_classes(cls) -> list[type]:
+        return [Vector3]
+
+
+@dataclass(eq=False)
+class TwistMapping(AlternativeMapping[Twist]):
+    translation: Vector3
+    rotation_vector: Vector3
+    reference_frame: KinematicStructureEntity | None
+
+    @classmethod
+    def from_domain_object(cls, obj: Twist):
+        return cls(
+            translation=obj.translation,
+            rotation_vector=obj.rotation_vector,
+            reference_frame=obj.reference_frame,
+        )
+
+    def to_domain_object(self) -> Twist:
+        return Twist(
+            translation=self.translation,
+            rotation_vector=self.rotation_vector,
+            reference_frame=self.reference_frame,
+        )
+
+    @classmethod
+    def required_pre_build_classes(cls) -> list[type]:
         return [Vector3]
 
 
 @dataclass(eq=False)
 class RotationMatrixMapping(AlternativeMapping[RotationMatrix]):
     axis_angle: AxisAngle
-    reference_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: RotationMatrix):
@@ -201,7 +227,7 @@ class RotationMatrixMapping(AlternativeMapping[RotationMatrix]):
         return rotation_matrix
 
     @classmethod
-    def required_pre_build_classes(cls) -> List[Type]:
+    def required_pre_build_classes(cls) -> list[type]:
         return [AxisAngle]
 
 
@@ -212,8 +238,8 @@ class HomogeneousTransformationMatrixMapping(
     position: Point3
     axis_angle: AxisAngle
 
-    reference_frame: Optional[KinematicStructureEntity]
-    child_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
+    child_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: HomogeneousTransformationMatrix):
@@ -233,7 +259,7 @@ class HomogeneousTransformationMatrixMapping(
         )
 
     @classmethod
-    def required_pre_build_classes(cls) -> List[Type]:
+    def required_pre_build_classes(cls) -> list[type]:
         return [Point3, AxisAngle]
 
 
@@ -241,9 +267,7 @@ class HomogeneousTransformationMatrixMapping(
 class PoseMapping(AlternativeMapping[Pose]):
     position: Point3
     axis_angle: AxisAngle
-    reference_frame: Optional[KinematicStructureEntity] = field(
-        default=None, kw_only=True
-    )
+    reference_frame: KinematicStructureEntity | None = field(default=None, kw_only=True)
 
     @classmethod
     def from_domain_object(cls, obj: Pose):
@@ -288,7 +312,7 @@ class PoseMapping(AlternativeMapping[Pose]):
         )
 
     @classmethod
-    def required_pre_build_classes(cls) -> List[Type]:
+    def required_pre_build_classes(cls) -> list[type]:
         return [Point3, AxisAngle]
 
 
@@ -297,7 +321,7 @@ class Point2Mapping(AlternativeMapping[Point2]):
     x: float
     y: float
 
-    reference_frame: Optional[KinematicStructureEntity]
+    reference_frame: KinematicStructureEntity | None
 
     @classmethod
     def from_domain_object(cls, obj: Point2):
@@ -314,9 +338,7 @@ class Point2Mapping(AlternativeMapping[Point2]):
 class Pose2DMapping(AlternativeMapping[Pose2D]):
     position: Point2
     yaw: float
-    reference_frame: Optional[KinematicStructureEntity] = field(
-        default=None, kw_only=True
-    )
+    reference_frame: KinematicStructureEntity | None = field(default=None, kw_only=True)
 
     @classmethod
     def from_domain_object(cls, obj: Pose2D):
@@ -325,14 +347,14 @@ class Pose2DMapping(AlternativeMapping[Pose2D]):
         return result
 
     def to_domain_object(self) -> Pose2D:
-        return Pose2D.from_position_and_yaw(
-            self.position,
+        return Pose2D(
+            position=self.position,
             yaw=self.yaw,
             reference_frame=self.reference_frame,
         )
 
     @classmethod
-    def required_pre_build_classes(cls) -> List[Type]:
+    def required_pre_build_classes(cls) -> list[type]:
         return [Point2]
 
 
@@ -349,7 +371,7 @@ class TrimeshType(TypeDecorator):
         # return binary version of trimesh
         return trimesh.exchange.stl.export_stl(value)
 
-    def process_result_value(self, value: impl, dialect) -> Optional[trimesh.Trimesh]:
+    def process_result_value(self, value: impl, dialect) -> trimesh.Trimesh | None:
         if value is None:
             return None
         mesh = trimesh.Trimesh(**trimesh.exchange.stl.load_stl_binary(BytesIO(value)))

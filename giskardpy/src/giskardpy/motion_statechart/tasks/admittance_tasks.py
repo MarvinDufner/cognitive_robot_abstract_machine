@@ -5,15 +5,16 @@ from datetime import timedelta
 from enum import IntEnum
 
 import numpy as np
-from typing_extensions import List, Optional
+from cramph.context import ContextExtension
+from cramph.data_types import ObservationStateValues
+from krrood.ormatic.utils import classproperty
 
-from giskardpy.motion_statechart.context import MotionStatechartContext
-from giskardpy.motion_statechart.data_types import ObservationStateValues
+from giskardpy.motion_statechart.context import MotionControlContext
 from giskardpy.motion_statechart.exceptions import (
     NonPositiveVirtualMassError,
     SilentForceTorqueSensorError,
 )
-from giskardpy.motion_statechart.graph_node import NodeArtifacts
+from giskardpy.motion_statechart.graph_node import MotionNodeArtifacts
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPositionTrajectory,
 )
@@ -25,8 +26,8 @@ from krrood.symbolic_math.symbolic_math import (
     limit,
     vstack,
 )
+from krrood_spatial_math.spatial_types import Point3, Vector3
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
-from semantic_digital_twin.spatial_types import Point3, Vector3
 
 
 class GoalFrameAxis(IntEnum):
@@ -112,7 +113,7 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     offset cannot travel far on a reading that stopped arriving.
     """
 
-    _admittance_position: Optional[Vector3] = field(init=False, default=None)
+    _admittance_position: Vector3 | None = field(init=False, default=None)
     """
     Symbolic offset added to the tracked point, registered as a float variable so the QP
     reads the value written each tick.
@@ -123,12 +124,12 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     Live offset and its rate: the input and the output of :attr:`_compiled_step`.
     """
 
-    _compiled_step: Optional[CompiledFunction] = field(init=False, default=None)
+    _compiled_step: CompiledFunction | None = field(init=False, default=None)
     """
     Wrench rotation and one integration step, compiled together.
     """
 
-    _force_torque_sensor: Optional[ForceTorqueSensor] = field(init=False, default=None)
+    _force_torque_sensor: ForceTorqueSensor | None = field(init=False, default=None)
     """
     Live sensor annotation, resolved from :attr:`tip_link`.
     """
@@ -158,21 +159,25 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     def offset_from_trajectory(self) -> np.ndarray:
         return self._state[:3] + self.lead_time * self._state[3:]
 
-    def build_artifacts(self, context: MotionStatechartContext) -> NodeArtifacts:
-        """
-        Compile the admittance before the trajectory constrains the tip to the offset
-        point.
-        """
-        self._force_torque_sensor = ForceTorqueSensor.for_tip(
-            context.world, self.tip_link
-        )
-        self._control_time_step = context.qp_controller_config.control_time_step
-        self._compile_step(context)
-        return super().build_artifacts(context)
+    @classproperty
+    def required_context_extensions(cls) -> tuple[type[ContextExtension], ...]:
+        return super().required_context_extensions + (MotionControlContext,)
 
-    def on_tick(
-        self, context: MotionStatechartContext
-    ) -> Optional[ObservationStateValues]:
+    def set_up(self) -> None:
+        """
+        Resolve the sensor and compile the admittance, before the trajectory constrains
+        the tip to the offset point.
+        """
+        super().set_up()
+        self._force_torque_sensor = ForceTorqueSensor.for_tip(
+            self.context.world, self.tip_link
+        )
+        self._control_time_step = self.context.require_extension(
+            MotionControlContext
+        ).qp_controller_config.control_time_step
+        self._compile_step()
+
+    def on_tick(self) -> ObservationStateValues | None:
         """
         :raises SilentForceTorqueSensorError: If no reading arrived for longer than
             :attr:`maximum_silence`.
@@ -180,15 +185,15 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
         if self._has_a_new_reading():
             # Copies, because the compiled function hands back its own output buffer.
             self._state[:] = self._compiled_step(
-                context.world.state.positions,
+                self.context.world.state.positions,
                 self._force_torque_sensor.wrench_data.data,
                 self._state,
             )
-            context.float_variable_data.set_value(
+            self.context.float_variable_data.set_value(
                 self._admittance_position,
                 self._state[:3] + self.lead_time * self._state[3:],
             )
-        return super().on_tick(context)
+        return super().on_tick()
 
     def _has_a_new_reading(self) -> bool:
         """
@@ -211,15 +216,15 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
             )
         return False
 
-    def on_reset(self, context: MotionStatechartContext) -> None:
+    def on_reset(self) -> None:
         self._state[:] = 0.0
         self._readings_integrated = self._force_torque_sensor.readings_received
         self._silent_ticks = 0
-        context.float_variable_data.set_value(
+        self.context.float_variable_data.set_value(
             self._admittance_position, self._state[:3]
         )
 
-    def _compile_step(self, context: MotionStatechartContext) -> None:
+    def _compile_step(self) -> None:
         """
         Compile the live wrench, rotated into the goal frame and integrated by one step
         of the virtual dynamics, into :attr:`_compiled_step`.
@@ -243,9 +248,9 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
         self._admittance_position = Vector3(
             *position_variables, reference_frame=self.goal_reference_frame
         )
-        context.float_variable_data.register_expression(self._admittance_position)
+        self.context.float_variable_data.register_expression(self._admittance_position)
 
-        goal_T_sensor = context.world.compose_forward_kinematics_expression(
+        goal_T_sensor = self.context.world.compose_forward_kinematics_expression(
             self.goal_reference_frame, self._force_torque_sensor.root
         )
         measured_force = goal_T_sensor.rotation_matrix @ self._force_torque_sensor.force
@@ -253,10 +258,10 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
             measured_force=measured_force,
             positions=position_variables,
             velocities=velocity_variables,
-            control_dt=context.qp_controller_config.control_time_step.total_seconds(),
+            control_dt=self._control_time_step.total_seconds(),
         ).compile(
             parameters=VariableParameters.from_lists(
-                context.world.state.position_float_variables,
+                self.context.world.state.position_float_variables,
                 self._force_torque_sensor.wrench_data.variables,
                 position_variables + velocity_variables,
             ),
@@ -266,8 +271,8 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     def _yielding_step(
         self,
         measured_force: Vector3,
-        positions: List[FloatVariable],
-        velocities: List[FloatVariable],
+        positions: list[FloatVariable],
+        velocities: list[FloatVariable],
         control_dt: float,
     ) -> sm.Vector:
         """

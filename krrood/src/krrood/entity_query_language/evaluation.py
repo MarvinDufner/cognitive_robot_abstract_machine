@@ -8,7 +8,7 @@ pipeline without polluting the core evaluation methods.
 from __future__ import annotations
 
 from ordered_set import OrderedSet
-from typing_extensions import Any, List, Optional
+from typing_extensions import Any
 
 from krrood.entity_query_language._monitoring import monitored
 from krrood.entity_query_language.core.base_expressions import (
@@ -38,7 +38,7 @@ from krrood.entity_query_language.query.query import Query
 
 def is_condition_participant(
     expression: SymbolicExpression,
-    parent: Optional[SymbolicExpression] = None,
+    parent: SymbolicExpression | None = None,
 ) -> bool:
     """
     Check whether the expression participates in condition evaluation.
@@ -199,7 +199,7 @@ class InferenceRecorder(EvaluationObserver):
         register_inference(result.bindings[expression._id_], expression, result)
 
 
-def evaluate_statements_of(condition: SymbolicExpression) -> List[OperationResult]:
+def evaluate_statements_of(condition: SymbolicExpression) -> list[OperationResult]:
     """
     Evaluate *condition* and collect the results of its statements: *condition* itself
     and every condition evaluated within it, except conjunctions, disjunctions and
@@ -245,12 +245,18 @@ def create_default_evaluation_context() -> EvaluationContext:
 
     :return: A new :class:`EvaluationContext` with :class:`EvaluationTracker`,
         :class:`SatisfiedConditionTracker`, and :class:`InferenceRecorder` observers
-        attached.
+        attached. It reads ground terms with the current context's
+        :attr:`~EvaluationContext.term_reader`, so an evaluation started from inside
+        another one reads the same values.
     """
-    return EvaluationContext(
+    evaluation_context = EvaluationContext(
         observers=[
             EvaluationTracker(),
             SatisfiedConditionTracker(),
             InferenceRecorder(),
         ]
     )
+    current_context = get_evaluation_context()
+    if current_context is not None:
+        evaluation_context.term_reader = current_context.term_reader
+    return evaluation_context

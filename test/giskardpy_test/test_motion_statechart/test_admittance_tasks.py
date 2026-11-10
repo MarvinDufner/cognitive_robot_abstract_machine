@@ -1,19 +1,21 @@
 import numpy as np
 import pytest
 
-from giskardpy.executor import Executor
-from giskardpy.motion_statechart.context import MotionStatechartContext
+from cramph.context import StatechartContext
+from cramph.executor import StatechartExecutor
+from cramph.statechart import Statechart
+from giskardpy.motion_control import MotionControl
+from giskardpy.motion_statechart.context import MotionControlContext
 from giskardpy.motion_statechart.exceptions import (
     NonPositiveVirtualMassError,
     SilentForceTorqueSensorError,
 )
 from giskardpy.motion_statechart.graph_node import EndMotion
-from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.motion_statechart.tasks.admittance_tasks import (
     AdmittanceCartesianTrajectory,
 )
+from krrood_spatial_math.spatial_types import Point3, Vector3
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
-from semantic_digital_twin.spatial_types import Point3, Vector3
 
 TOOL_FRAME = "hand_gripper_tool_frame"
 SETTLING_TICKS = 400
@@ -33,7 +35,10 @@ def build_admittance(world, waypoints=5, goal_points=None, **task_arguments):
     """
     Compile a chart holding one admittance trajectory and return it with its context.
     """
-    chart = MotionStatechart()
+    executor = StatechartExecutor(
+        context=StatechartContext(world=world), extensions=[MotionControl()]
+    )
+    chart = Statechart(context=executor.context)
     chart.add_node(
         task := AdmittanceCartesianTrajectory(
             name="admittance",
@@ -45,9 +50,8 @@ def build_admittance(world, waypoints=5, goal_points=None, **task_arguments):
         )
     )
     chart.add_node(EndMotion.when_true(task))
-    context = MotionStatechartContext(world=world)
-    Executor(context).compile(motion_statechart=chart)
-    return task, context, chart
+    executor.compile(statechart=chart)
+    return task, executor.context, chart
 
 
 def press(task, context, sensor, force, ticks=SETTLING_TICKS):
@@ -57,7 +61,7 @@ def press(task, context, sensor, force, ticks=SETTLING_TICKS):
     offsets = []
     for _ in range(ticks):
         sensor.write_wrench(force, np.zeros(3))
-        task.on_tick(context)
+        task.on_tick()
         offsets.append(task._state[:3].copy())
     return np.array(offsets)
 
@@ -96,7 +100,7 @@ def test_the_offset_survives_moving_to_the_next_waypoint(hsr_world_copy):
     # Advance along the stroke, as tracking the trajectory does.
     task.current_index += 1
     sensor.write_wrench(np.array([0.0, 0.0, -10.0]), np.zeros(3))
-    task.on_tick(context)
+    task.on_tick()
 
     assert np.linalg.norm(task._state[:3] - offset_before) < 0.01
 
@@ -119,7 +123,10 @@ def test_the_compiled_step_matches_the_dynamics_it_stands_for(hsr_world_copy):
         maximum_offset=maximum_offset,
     )
     sensor = sensor_of(hsr_world_copy)
-    control_dt = context.qp_controller_config.control_time_step.total_seconds()
+    control_dt = (
+        context.require_extension(MotionControlContext)
+        .qp_controller_config.control_time_step.total_seconds()
+    )
     m = mass.to_np()[:3].flatten()
     d = damping.to_np()[:3].flatten()
     k = stiffness.to_np()[:3].flatten()
@@ -234,7 +241,7 @@ def test_the_offset_is_forgotten_on_reset(hsr_world_copy):
     press(task, context, sensor, np.array([0.0, 0.0, -10.0]), ticks=20)
     assert np.any(task._state != 0.0)
 
-    task.on_reset(context)
+    task.on_reset()
 
     np.testing.assert_array_equal(task._state, np.zeros(6))
 
@@ -246,7 +253,7 @@ def test_an_unread_sensor_leaves_the_offset_alone(hsr_world_copy):
     """
     task, context, _ = build_admittance(hsr_world_copy)
 
-    task.on_tick(context)
+    task.on_tick()
 
     np.testing.assert_array_equal(task._state, np.zeros(6))
 
@@ -371,7 +378,10 @@ def silent_ticks_allowed(task, context) -> int:
     """
     :return: How many ticks in a row the task may see no new reading for.
     """
-    return int(task.maximum_silence / context.qp_controller_config.control_time_step)
+    control_time_step = context.require_extension(
+        MotionControlContext
+    ).qp_controller_config.control_time_step
+    return int(task.maximum_silence / control_time_step)
 
 
 def test_a_press_carries_on_between_readings(hsr_world_copy):
@@ -382,10 +392,10 @@ def test_a_press_carries_on_between_readings(hsr_world_copy):
     task, context, _ = build_admittance(hsr_world_copy)
     sensor = sensor_of(hsr_world_copy)
     sensor.write_wrench(np.array([0.0, 0.0, -5.0]), np.zeros(3))
-    task.on_tick(context)
+    task.on_tick()
 
     for _ in range(silent_ticks_allowed(task, context)):
-        task.on_tick(context)
+        task.on_tick()
 
     assert np.any(task._state[:3] != 0.0)
 
@@ -398,8 +408,8 @@ def test_a_press_stops_when_its_sensor_falls_silent(hsr_world_copy):
     task, context, _ = build_admittance(hsr_world_copy)
     sensor = sensor_of(hsr_world_copy)
     sensor.write_wrench(np.array([0.0, 0.0, -5.0]), np.zeros(3))
-    task.on_tick(context)
+    task.on_tick()
 
     with pytest.raises(SilentForceTorqueSensorError):
         for _ in range(silent_ticks_allowed(task, context) + 1):
-            task.on_tick(context)
+            task.on_tick()

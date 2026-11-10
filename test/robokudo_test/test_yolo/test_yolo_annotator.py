@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
 import pytest
 from py_trees.common import Status
 from ultralytics.utils.plotting import colors
@@ -20,13 +19,12 @@ from ultralytics.utils.plotting import colors
 import robokudo
 import robokudo.annotators.yolo_annotator
 from robokudo.annotators.yolo_annotator import YoloAnnotator
-from robokudo.cas import CASViews
 from robokudo.exceptions import DetectionModelNotConfigured
-from robokudo.pipeline import Pipeline
 from robokudo.types.annotation import Classification
 from robokudo.types.scene import HumanHypothesis, ObjectHypothesis
 from robokudo.utils.annotator_helper import draw_bounding_boxes_from_object_hypotheses
 from robokudo.utils.file_loader import FileLoader
+from ._black_wall_scene import BlackWallScene
 from ._yolo_mock import (
     NormalizedBox,
     MockDetection,
@@ -34,20 +32,13 @@ from ._yolo_mock import (
     MockModelLoader,
 )
 
-pytestmark = pytest.mark.usefixtures("annotator_output_buffer")
-
 # %% scene setup
 
 
 @dataclass
-class CupScene:
+class CupScene(BlackWallScene):
     """
-    A camera view of a cup at a constant distance, which the mock model detects.
-    """
-
-    models_directory: Path
-    """
-    Directory the annotators under test load pretrained models from.
+    The black wall scene, in which the mock model detects a cup.
     """
 
     class_names: dict[int, str] = field(
@@ -80,27 +71,6 @@ class CupScene:
     The pretrained model the annotators under test load.
     """
 
-    color_image_shape: tuple[int, int, int] = (40, 80, 3)
-    """
-    Shape of the color images in the CAS.
-    """
-
-    depth_in_millimeters: int = 1000
-    """
-    Distance every depth image pixel measures.
-    """
-
-    millimeters_per_meter: float = 1000.0
-    """
-    Scale between the depth image values and point coordinates.
-    """
-
-    def color_image(self) -> np.ndarray:
-        """
-        :return: A black color image of the scene's shape.
-        """
-        return np.zeros(self.color_image_shape, dtype=np.uint8)
-
     def cup_corners(self) -> list[int]:
         """
         :return: The corners (x1, y1, x2, y2) of the cup in color image pixels.
@@ -127,38 +97,7 @@ class CupScene:
         :return: An annotator whose CAS holds a color image and a matching depth image.
         """
         annotator = YoloAnnotator(descriptor=descriptor)
-        annotator.setup()
-        pipeline = Pipeline("Sequence")
-        pipeline.add_child(annotator)
-        pipeline.setup()
-
-        color_height, color_width = self.color_image_shape[:2]
-        depth_height = int(color_height * color_to_depth_ratio)
-        depth_width = int(color_width * color_to_depth_ratio)
-        cas = annotator.get_cas()
-        cas.set(CASViews.COLOR_IMAGE, self.color_image())
-        cas.set(
-            CASViews.DEPTH_IMAGE,
-            np.full(
-                (depth_height, depth_width),
-                self.depth_in_millimeters,
-                dtype=np.uint16,
-            ),
-        )
-        cas.set(
-            CASViews.COLOR2DEPTH_RATIO, (color_to_depth_ratio, color_to_depth_ratio)
-        )
-        cas.set(
-            CASViews.CAMERA_INTRINSIC,
-            o3d.camera.PinholeCameraIntrinsic(
-                color_width,
-                color_height,
-                100.0,
-                100.0,
-                color_width / 2.0,
-                color_height / 2.0,
-            ),
-        )
+        self.place_in_pipeline(annotator, color_to_depth_ratio)
         return annotator
 
     def cup_shaped_hypothesis(self) -> ObjectHypothesis:
@@ -494,9 +433,7 @@ def test_point_cloud_holds_depth_measured_inside_bounding_box(model_loader, scen
     x1, y1, x2, y2 = scene.cup_corners()
     points = np.asarray(_only_hypothesis(annotator).points.points)
     assert len(points) == (x2 - x1) * (y2 - y1)
-    np.testing.assert_allclose(
-        points[:, 2], scene.depth_in_millimeters / scene.millimeters_per_meter
-    )
+    np.testing.assert_allclose(points[:, 2], scene.wall_distance)
 
 
 def test_region_detected_on_smaller_depth_resolution_is_in_color_pixels(

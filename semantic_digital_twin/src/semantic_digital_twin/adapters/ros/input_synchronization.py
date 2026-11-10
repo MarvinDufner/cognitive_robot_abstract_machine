@@ -7,7 +7,7 @@ import numpy as np
 from geometry_msgs.msg import WrenchStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from typing_extensions import Dict, List, Tuple, Union
+from typing_extensions import Union
 
 from semantic_digital_twin.adapters.ros.latest_message_subscriber import (
     LatestMessageSubscriber,
@@ -25,7 +25,7 @@ from semantic_digital_twin.robots.input_source import (
     JointPositionSource,
     WrenchSource,
 )
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world_description.connections import (
     ActiveConnection1DOF,
@@ -143,7 +143,7 @@ class SubscribedJointPositionSource(
     whatever reads it.
     """
 
-    connections: List[ActiveConnection1DOF] = field(kw_only=True)
+    connections: list[ActiveConnection1DOF] = field(kw_only=True)
     """
     The connections of the part this source is attached to.
     """
@@ -268,7 +268,7 @@ class TfFrameSynchronizer(InputSynchronizer, HasROS2Node):
     Writes tf transforms into 6 degree of freedom connections.
     """
 
-    connection_to_frames: Dict[Connection6DoF, Tuple[str, str]] = field(
+    connection_to_frames: dict[Connection6DoF, tuple[str, str]] = field(
         init=False, default_factory=dict
     )
     """

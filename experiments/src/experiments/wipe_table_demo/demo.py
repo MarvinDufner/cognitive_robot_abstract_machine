@@ -4,16 +4,11 @@ force/torque sensor.
 
 The wipe itself is coraplex's :class:`~coraplex.robot_plans.actions.composite.tool_based.
 WipingAction`; giving it a ``press`` is what turns its geometric tool path into a
-compliant one. The base stands still while the tool presses, so one placement covers only
-the patch the arm reaches from it and the plan drives along the table to wipe the next.
+compliant one. The base drives along to help the arm reach, so a placement covers more
+than the arm alone reaches from it, and the plan drives along the table to wipe the next.
 
-.. warning:: A physically simulated run is faithful only where the robot is localized: a
-    wheeled drive is no joint MuJoCo knows, so neither the drive nor
-    :class:`~coraplex.robot_plans.actions.core.navigation.NavigateAction` moves the base
-    there, and every placement after the first is wiped somewhere the simulation has the
-    robot standing a stride away from.
-
-``ExecutionType.REAL`` drives the real robot and takes the world from the running
+A :class:`~coraplex.plans.executors.RealRobotPlanExecutor` drives the real robot and
+takes the world from the running
 controller, which must already be up (see
 ``giskardpy/middleware/ros2/scripts/iai_robots/hsr/iai_hsr_real_time.py``) together with
 the wrench compensation node, so the sensor reports contact force rather than the
@@ -24,29 +19,44 @@ from __future__ import annotations
 
 import math
 import sys
+from copy import deepcopy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import timedelta
 
 import numpy as np
-from typing_extensions import ClassVar, List, Optional, Tuple
+from typing_extensions import ClassVar
 
-from coraplex.datastructures.dataclasses import Context
-from coraplex.datastructures.enums import ExecutionType, WipingTechnique
+from coraplex.datastructures.enums import WipingTechnique
 from coraplex.demonstrations import RobotDemonstration
-from coraplex.plans.factories import sequential
-from coraplex.plans.plan_node import PlanNode
-from coraplex.robot_plans.actions.composite.tool_based import WipingAction
+from coraplex.locations.costmaps import Costmap, OccupancyCostmap
+from coraplex.plans.context_extensions import RobotAccess
+from coraplex.plans.executors import (
+    KinematicallySimulatedPlanExecutor,
+    PhysicallySimulatedPlanExecutor,
+    PlanExecutor,
+    RealRobotPlanExecutor,
+)
+from coraplex.robot_plans.actions.composite.tool_based import (
+    LowerUntilContactAction,
+    WipingAction,
+)
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
-from coraplex.robot_plans.motions.gripper import LowerUntilContactMotion
 from coraplex.robot_plans.mixins import Press
+from cramph.composites import Sequence
+from cramph.context import ContextExtension, StatechartContext
+from cramph.executor import ExecutorExtension
+from cramph.statechart import Statechart
+from giskardpy.motion_control import WorldStateInputSynchronization
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
     ToolContactWrench,
 )
-from semantic_digital_twin.input_synchronization import InputSynchronizer
+from semantic_digital_twin.input_synchronization import (
+    WorldStateInputs,
+)
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.specifications.worlds import WorldSpecification
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -60,12 +70,12 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     DiningTable,
     Sponge,
 )
-from semantic_digital_twin.spatial_types import (
+from krrood_spatial_math.spatial_types import (
     HomogeneousTransformationMatrix,
     Point3,
+    Pose,
     Vector3,
 )
-from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     FixedConnection,
@@ -109,7 +119,7 @@ class TableSideStanding:
     How far the arm has to reach across the table from there, in m.
     """
 
-    def preference(self, robot_position: np.ndarray) -> Tuple[float, float]:
+    def preference(self, robot_position: np.ndarray) -> tuple[float, float]:
         """
         :param robot_position: Where the robot stands now, in the world frame.
         :return: What orders this side against the others: shallow sides first, since
@@ -157,7 +167,7 @@ class SimulatedContactWrench(ToolContactWrench):
     contacts.
     """
 
-    surface_height: Optional[float] = field(default=None, kw_only=True)
+    surface_height: float | None = field(default=None, kw_only=True)
     """
     Height of the wiped surface in the world frame, in m.
 
@@ -259,7 +269,7 @@ class SimulatedContactWrench(ToolContactWrench):
 
     def contact_wrench(
         self, sensor: ForceTorqueSensor
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         world_T_tool = self.world.compute_forward_kinematics_np(
             self.world.root, self.tool
         )
@@ -527,8 +537,8 @@ class WipingDemonstration(RobotDemonstration, ABC):
         """
 
     def build_approach(
-        self, context: Context, patch: Pose
-    ) -> List[MoveManipulatorAction]:
+        self, context: StatechartContext, patch: Pose
+    ) -> list[MoveManipulatorAction]:
         """
         :param context: Plan context holding the robot.
         :param patch: Where the tool is set down, in the world frame.
@@ -552,7 +562,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
         ]
 
     @staticmethod
-    def pose_over_patch(context: Context, patch: Pose, height: float) -> Pose:
+    def pose_over_patch(context: StatechartContext, patch: Pose, height: float) -> Pose:
         """
         :param context: Plan context holding the world.
         :param patch: Where the tool is set down, in the world frame.
@@ -567,7 +577,9 @@ class WipingDemonstration(RobotDemonstration, ABC):
             reference_frame=context.world.root,
         )
 
-    def build_touchdown(self, context: Context, patch: Pose) -> LowerUntilContactMotion:
+    def build_touchdown(
+        self, context: StatechartContext, patch: Pose
+    ) -> LowerUntilContactAction:
         """
         :param context: Plan context holding the robot.
         :param patch: Where the tool is set down, in the world frame.
@@ -576,7 +588,7 @@ class WipingDemonstration(RobotDemonstration, ABC):
         """
         world = context.world
         tool = world.get_semantic_annotations_by_type(Sponge)[0]
-        return LowerUntilContactMotion(
+        return LowerUntilContactAction(
             goal_point=Point3(
                 x=patch.to_np()[0, 3],
                 y=patch.to_np()[1, 3],
@@ -592,22 +604,23 @@ class WipingDemonstration(RobotDemonstration, ABC):
             allow_gripper_collision=True,
         )
 
-    def build_context(self, world: World) -> Context:
+    def build_context_extensions(self, world: World) -> list[ContextExtension]:
         """
-        Build the plan context around the robot in ``world``.
-
-        .. note:: A real run needs the ROS node in the context to reach the controller.
+        Give the plan the robot in ``world``.
         """
-        return Context(
-            world=world,
-            robot=world.get_semantic_annotations_by_type(self.used_robot)[0],
-            ros_node=self.ros_node,
-            evaluate_conditions=False,
-            alternative_motion_mappings=self.alternative_motion_mappings,
-            world_inputs=self.world_inputs(world),
-        )
+        return [RobotAccess(world.get_semantic_annotations_by_type(self.used_robot)[0])]
 
-    def world_inputs(self, world: World) -> List[InputSynchronizer]:
+    def build_executor_extensions(self, world: World) -> list[ExecutorExtension]:
+        """
+        Write the force/torque reading into the world before every control cycle, for a
+        run whose readings nothing else publishes.
+        """
+        inputs = self.wrench_inputs(world)
+        if not inputs.synchronizers:
+            return []
+        return [WorldStateInputSynchronization(inputs=inputs)]
+
+    def wrench_inputs(self, world: World) -> WorldStateInputs:
         """
         :param world: World the demonstration acts on.
         :return: What writes the force/torque reading into the world while the plan
@@ -617,8 +630,9 @@ class WipingDemonstration(RobotDemonstration, ABC):
         The source is attached to the sensor it writes, so the sensor states where its
         readings come from rather than the loop alone knowing.
         """
-        if self.execution_type is ExecutionType.REAL:
-            return []
+        inputs = WorldStateInputs(world=world)
+        if issubclass(self.executor_type, RealRobotPlanExecutor):
+            return inputs
         tool = world.get_body_by_name(self.sponge_name)
         if self.simulation is None:
             pressed_with = self.contact_model(world)
@@ -628,7 +642,8 @@ class WipingDemonstration(RobotDemonstration, ABC):
             )
         sensor = ForceTorqueSensor.for_tip(world, tool)
         sensor.use_source(pressed_with)
-        return [sensor.source]
+        inputs.add_input(sensor.source)
+        return inputs
 
     @abstractmethod
     def contact_model(self, world: World) -> SimulatedContactWrench:
@@ -748,7 +763,7 @@ class WipeTableDemonstration(WipingDemonstration):
 
     ros_node_name: ClassVar[str] = "wipe_table_demo_node"
 
-    placements: Optional[int] = None
+    placements: int | None = None
     """
     How many of the places the base can stand to wipe from, or ``None`` for all of them.
 
@@ -782,6 +797,17 @@ class WipeTableDemonstration(WipingDemonstration):
         physics engine resolves it.
     """
 
+    standing_map_resolution: float = 0.02
+    """
+    Edge length of a cell of the map of where the base fits, in m.
+    """
+
+    standing_map_cells: int = 200
+    """
+    How many cells that map holds along each side, which at the resolution above
+    reaches 2 m around the table.
+    """
+
     standing_clearance: float = 0.05
     """
     Gap left between the base and the table edge when standing at a side, in m.
@@ -791,46 +817,54 @@ class WipeTableDemonstration(WipingDemonstration):
     """
     How far from its base the arm can hold the pad flat on a table of this height, in m.
 
-    .. note:: Measured by sweeping the arm with the lift solved for the table's height:
-        :meth:`~semantic_digital_twin.robots.robot_parts.Arm.maximum_reach` bounds the
-        tool frame's distance in any posture at all and reads 0.69 m, while holding the
-        pad within eight degrees of flat up there costs a third of that.
+    .. note:: Measured by sweeping the arm with the lift solved for the table's height.
+        A bound on the tool frame's distance in any posture at all reads 0.69 m; holding
+        the pad within eight degrees of flat up there costs a third of that.
     """
 
-    simulation_time_limit: timedelta = timedelta(minutes=5)
+    simulation_time_per_action: timedelta | None = timedelta(seconds=40)
     """
-    Long enough for this plan, which drives to every place it can wipe from and lays
-    down the lanes of a patch at each: minutes of travel rather than the seconds a
-    single reaching motion takes.
+    Long enough for one lap of lanes over a patch, which takes tens of seconds at the
+    speed the tool is wiped at rather than the seconds a single reaching motion takes.
     """
+
+    def scene_specification(self) -> WorldSpecification:
+        """
+        An empty map; the kitchen is added by :meth:`populate_scene`.
+        """
+        return WorldSpecification()
+
+    def robot_specification(self) -> RobotSpecification:
+        """
+        The robot, localized where it first wipes from.
+
+        .. note:: The pose goes on the odometry frame rather than on the drive, so that
+            a physics engine starts the robot where the plan has it: a drive's own pose
+            is a joint position, and a physics engine builds a body at the pose of its
+            parent frame.
+        """
+        return RobotSpecification(
+            semantic_annotation_type=self.used_robot,
+            world_T_odom=self.approach_pose,
+        )
 
     def build_simulated_world(self) -> World:
         """
-        Localize the robot in an otherwise empty world; the kitchen is added by
-        :meth:`populate_scene`, which a real run skips.
-
-        .. warning:: The pose goes on the odometry frame rather than on the drive. A
-            drive is not a joint a physics engine knows, so where it holds the robot
-            never reaches one: the robot would be built at the world origin and stay
-            there, metres from everything the plan is about, while the controller worked
-            from a world that has it at the table.
+        Spawns the robot before the scene is populated, because the sponge is bolted
+        into its gripper, see
+        :meth:`~coraplex.demonstrations.RobotDemonstration.build_simulated_world`.
         """
-        return WorldSpecification(
-            world_parser=None,
-            robots=[
-                RobotSpecification(
-                    semantic_annotation_type=self.used_robot,
-                    world_T_odom=self.approach_pose,
-                )
-            ],
-        ).to_domain_object()
+        world = self.scene_specification().create_world()
+        self.robot_specification().spawn(world)
+        self.populate_scene(world)
+        return world
 
     def populate_scene(self, world: World) -> None:
         """
         Add the kitchen and bolt the sponge into the gripper.
         """
         if not world.get_semantic_annotations_by_type(DiningTable):
-            kitchen = KitchenEnvironment().get_world()
+            kitchen = KitchenEnvironment().create_world()
             with world.modify_world():
                 # Bolted to the world root. Merging without a connection leaves the
                 # kitchen on six free degrees of freedom, which a physics engine reads
@@ -841,7 +875,7 @@ class WipeTableDemonstration(WipingDemonstration):
                 )
         self.attach_sponge(world)
 
-    def build_plan(self, context: Context) -> PlanNode:
+    def build_statechart(self, context: StatechartContext) -> Statechart:
         """
         Drive to each side of the table in turn and wipe from there.
         """
@@ -857,7 +891,7 @@ class WipeTableDemonstration(WipingDemonstration):
         steps = []
         for standing_pose in self.standing_poses(world, table)[: self.placements]:
             patch = self.reachable_patch(world, standing_pose)
-            steps.append(NavigateAction(standing_pose))
+            steps.append(NavigateAction(target_location=standing_pose))
             # No pose-based approach: the descent aligns the tool from the tool's own
             # alignment pairs, while a commanded pose would have to state an
             # orientation convention, and the one Tracy uses is not the HSRB's.
@@ -874,7 +908,9 @@ class WipeTableDemonstration(WipingDemonstration):
                     max_linear_velocity=self.wipe_speed,
                 )
             )
-        return sequential(steps, context=context)
+        statechart = Statechart(context=context)
+        statechart.add_node(Sequence(nodes=steps))
+        return statechart
 
     def reachable_patch(self, world: World, standing: Pose) -> WipedPatch:
         """
@@ -967,7 +1003,7 @@ class WipeTableDemonstration(WipingDemonstration):
             control_period=self.simulated_control_period,
         )
 
-    def standing_poses(self, world: World, table: DiningTable) -> List[Pose]:
+    def standing_poses(self, world: World, table: DiningTable) -> list[Pose]:
         """
         :param world: World holding the table and the robot.
         :param table: The table being wiped.
@@ -975,10 +1011,9 @@ class WipeTableDemonstration(WipingDemonstration):
             that the patches reached from them meet, just clear of the edge and facing
             the table, nearest side first.
         """
+        room = self.room_for_the_base(world)
         usable = [
-            side
-            for side in self.sides_of(world, table)
-            if self.has_room_for_the_base(world, table, side.pose)
+            side for side in self.sides_of(world, table) if room.allows(side.pose)
         ]
         robot_position = world.compute_forward_kinematics_np(
             world.root, self.wiping_arm(world)._robot.root
@@ -986,16 +1021,21 @@ class WipeTableDemonstration(WipingDemonstration):
         return [
             pose
             for side in sorted(usable, key=lambda side: side.preference(robot_position))
-            for pose in self.stops_along(world, table, side)
+            for pose in self.stops_along(world, table, side, room)
         ]
 
     def stops_along(
-        self, world: World, table: DiningTable, side: TableSideStanding
-    ) -> List[Pose]:
+        self,
+        world: World,
+        table: DiningTable,
+        side: TableSideStanding,
+        room: Costmap,
+    ) -> list[Pose]:
         """
         :param world: World holding the table.
         :param table: The table being wiped.
         :param side: The side of the table the base stands at.
+        :param room: Where the base fits, see :meth:`room_for_the_base`.
         :return: Where to stand along that side, from the middle outwards, so that the
             patches reached from them cover its length without leaving a strip between.
         """
@@ -1020,11 +1060,9 @@ class WipeTableDemonstration(WipingDemonstration):
                 for index in range(stops)
             )
         ]
-        return [
-            stop for stop in spaced if self.has_room_for_the_base(world, table, stop)
-        ]
+        return [stop for stop in spaced if room.allows(stop)]
 
-    def sides_of(self, world: World, table: DiningTable) -> List[TableSideStanding]:
+    def sides_of(self, world: World, table: DiningTable) -> list[TableSideStanding]:
         """
         :param world: World holding the table and the robot.
         :param table: The table being wiped.
@@ -1062,63 +1100,62 @@ class WipeTableDemonstration(WipingDemonstration):
             )
         return standings
 
-    def has_room_for_the_base(
-        self, world: World, table: DiningTable, pose: Pose
-    ) -> bool:
+    def room_for_the_base(self, world: World) -> Costmap:
         """
-        Whether the base fits where a side would be wiped from.
-
-        The table itself is ignored, since :attr:`standing_clearance` already holds the
-        base off its edge.
-
         :param world: World holding the table and whatever surrounds it.
-        :param table: The table being wiped.
-        :param pose: Where the base would stand.
-        :return: Whether that spot is clear.
+        :return: Where the base fits, as a map of the floor around the table that is
+            clear wherever an obstacle is further than the base's radius plus
+            :attr:`standing_clearance` away.
+
+        .. note:: The table counts as an obstacle like any other, so the map already
+            holds the base off the edge it wipes from.
         """
+        table = world.get_semantic_annotations_by_type(DiningTable)[0]
         robot = world.get_semantic_annotations_by_type(self.used_robot)[0]
-        base = robot.mobile_base
-        base_box = base.bounding_box
-        clearance = base.base_radius + self.standing_clearance
-        standing = pose.to_np()[:2, 3]
-        ignored = set(robot.bodies_with_collision) | set(
-            world.get_kinematic_structure_entities_of_branch(table.root)
+        standing_height = deepcopy(table.root.global_pose)
+        standing_height.z = 0.0
+        return OccupancyCostmap(
+            resolution=self.standing_map_resolution,
+            width=self.standing_map_cells,
+            height=self.standing_map_cells,
+            world=world,
+            distance_to_obstacle=(
+                robot.mobile_base.base_radius + self.standing_clearance
+            ),
+            robot_view=robot,
+            origin=standing_height,
         )
-        for body in world.bodies_with_collision:
-            if body in ignored:
-                continue
-            box = body.collision.as_bounding_box_collection_in_frame(
-                world.root
-            ).bounding_box()
-            # Only what stands where the base stands is in the way: the floor is below
-            # it and the table top is above it.
-            if box.max_z <= base_box.min_z or box.min_z >= base_box.max_z:
-                continue
-            gap_x = max(box.min_x - standing[0], 0.0, standing[0] - box.max_x)
-            gap_y = max(box.min_y - standing[1], 0.0, standing[1] - box.max_y)
-            if math.hypot(gap_x, gap_y) < clearance:
-                return False
-        return True
+
+
+EXECUTORS: dict[str, type[PlanExecutor]] = {
+    "KINEMATICALLY_SIMULATED": KinematicallySimulatedPlanExecutor,
+    "PHYSICALLY_SIMULATED": PhysicallySimulatedPlanExecutor,
+    "REAL": RealRobotPlanExecutor,
+}
+"""
+The executors this demonstration can be run with, by the name the command line gives.
+"""
 
 
 def main(
-    execution_type: ExecutionType = ExecutionType.KINEMATICALLY_SIMULATED,
+    executor_type: type[PlanExecutor] = KinematicallySimulatedPlanExecutor,
     technique: WipingTechnique = WipeTableDemonstration.technique,
 ) -> None:
     """
     Run the demonstration.
 
-    :param execution_type: Whether to drive the real robot or simulate it.
+    :param executor_type: The executor running the plan, which decides whether it drives
+        the real robot or simulates it.
     :param technique: How the tool covers the table.
     """
     WipeTableDemonstration(
-        used_robot=HSRB, execution_type=execution_type, technique=technique
+        used_robot=HSRB, executor_type=executor_type, technique=technique
     ).run()
 
 
 if __name__ == "__main__":
     # Only what the command line names, so the default lives once, in main.
     main(
-        *(ExecutionType[name] for name in sys.argv[1:2]),
+        *(EXECUTORS[name] for name in sys.argv[1:2]),
         *(WipingTechnique[name] for name in sys.argv[2:3]),
     )

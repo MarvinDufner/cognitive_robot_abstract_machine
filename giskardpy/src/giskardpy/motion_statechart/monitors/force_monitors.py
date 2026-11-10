@@ -4,33 +4,36 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 import numpy as np
-from typing_extensions import Optional
+from cramph.data_types import ObservationStateValues
 
-from giskardpy.motion_statechart.context import MotionStatechartContext
-from giskardpy.motion_statechart.data_types import ObservationStateValues
-from giskardpy.motion_statechart.graph_node import MotionStatechartNode, NodeArtifacts
+from cramph.node import SucceedsOnObservingTrue
+
+from giskardpy.motion_statechart.graph_node import (
+    MotionNodeArtifacts,
+    MotionStatechartNode,
+)
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world_description.world_entity import Body
 
 # %% watching a force against a threshold
 
 
-@dataclass(eq=False, repr=False)
-class ForceThresholdMonitor(MotionStatechartNode, ABC):
+@dataclass(eq=False, repr=False, kw_only=True)
+class ForceThresholdMonitor(SucceedsOnObservingTrue, MotionStatechartNode, ABC):
     """
     Observes ``True`` once the force it watches stays above :attr:`threshold`.
 
     Subclasses say where the readings come from.
     """
 
-    threshold: float = field(default=2.0, kw_only=True)
+    threshold: float = 2.0
     """
     Force magnitude that counts, in N.
 
     Above the noise of carrying the tool and below the force a press holds.
     """
 
-    confirming_readings: int = field(default=1, kw_only=True)
+    confirming_readings: int = 1
     """
     How many readings in a row have to be above :attr:`threshold`, so that an isolated
     spike in the sensor's data path cannot end a descent in mid-air.
@@ -49,15 +52,13 @@ class ForceThresholdMonitor(MotionStatechartNode, ABC):
     """
 
     @abstractmethod
-    def new_force(self) -> Optional[np.ndarray]:
+    def new_force(self) -> np.ndarray | None:
         """
         :return: The force of a reading this node has not observed yet, or ``None``
             while there is none.
         """
 
-    def on_tick(
-        self, context: MotionStatechartContext
-    ) -> Optional[ObservationStateValues]:
+    def on_tick(self) -> ObservationStateValues | None:
         """
         Counts readings rather than control cycles, which run faster than some sensors
         publish, so that one spike cannot confirm itself.
@@ -82,7 +83,7 @@ class ForceThresholdMonitor(MotionStatechartNode, ABC):
             return ObservationStateValues.TRUE
         return ObservationStateValues.FALSE
 
-    def on_reset(self, context: MotionStatechartContext) -> None:
+    def on_reset(self) -> None:
         self._readings_above_threshold = 0
         self._observation = ObservationStateValues.UNKNOWN
 
@@ -90,7 +91,7 @@ class ForceThresholdMonitor(MotionStatechartNode, ABC):
 # %% from the sensor that measures for a link
 
 
-@dataclass(eq=False, repr=False)
+@dataclass(eq=False, repr=False, kw_only=True)
 class ContactForceReached(ForceThresholdMonitor):
     """
     Watches the force/torque sensor measuring for a link.
@@ -99,14 +100,14 @@ class ContactForceReached(ForceThresholdMonitor):
     sensor and one a simulation writes.
     """
 
-    tip_link: Body = field(kw_only=True)
+    tip_link: Body
     """
     Link whose contact is watched, measured by the sensor closest to it on the chain.
     """
 
-    confirming_readings: int = field(default=3, kw_only=True)
+    confirming_readings: int = 3
 
-    _sensor: Optional[ForceTorqueSensor] = field(init=False, default=None, repr=False)
+    _sensor: ForceTorqueSensor | None = field(init=False, default=None, repr=False)
     """
     Sensor resolved from :attr:`tip_link`.
     """
@@ -116,22 +117,22 @@ class ContactForceReached(ForceThresholdMonitor):
     How many readings the sensor had written when this node last took one.
     """
 
-    def build_artifacts(self, context: MotionStatechartContext) -> NodeArtifacts:
+    def build_artifacts(self) -> MotionNodeArtifacts:
         """
         Resolve the sensor.
 
         The observation itself is written by :meth:`on_tick`, since the wrench lives
         with the sensor rather than in the controller's own data.
         """
-        self._sensor = ForceTorqueSensor.for_tip(context.world, self.tip_link)
-        return NodeArtifacts()
+        self._sensor = ForceTorqueSensor.for_tip(self.context.world, self.tip_link)
+        return MotionNodeArtifacts()
 
-    def new_force(self) -> Optional[np.ndarray]:
+    def new_force(self) -> np.ndarray | None:
         if self._sensor.readings_received == self._readings_counted:
             return None
         self._readings_counted = self._sensor.readings_received
         return self._sensor.measured_force
 
-    def on_reset(self, context: MotionStatechartContext) -> None:
-        super().on_reset(context)
+    def on_reset(self) -> None:
+        super().on_reset()
         self._readings_counted = self._sensor.readings_received

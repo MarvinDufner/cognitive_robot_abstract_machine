@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from enum import StrEnum
 
 import numpy as np
 from geometry_msgs.msg import WrenchStamped
@@ -25,26 +24,17 @@ from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 from typing_extensions import List, Optional, Tuple, Type
 
-from giskardpy.middleware.ros2.exceptions import (
+from giskardpy.ros2_tools.exceptions import (
     ForceTorqueSensorNotTared,
+    RetareOutcome,
     SensorNeedsNoCompensationError,
     WrenchCompensationUnavailable,
 )
+from krrood_spatial_math.spatial_types import Quaternion
 from semantic_digital_twin.robots.robot_parts import (
     ForceTorqueSensor,
     ForceTorqueSensorLoad,
 )
-from semantic_digital_twin.spatial_types import Quaternion
-
-
-class RetareOutcome(StrEnum):
-    """
-    What a re-tare request settled on.
-    """
-
-    TIMED_OUT = "re-tare timed out waiting for samples"
-    MOVED = "the sensor was not held still, so the bias is unchanged"
-    APPLIED = "bias applied"
 
 
 # %% compensation
