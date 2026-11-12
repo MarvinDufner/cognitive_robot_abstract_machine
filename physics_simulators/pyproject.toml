@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "physics_simulators"
 description = "A collection of physics simulators."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dynamic = ["version"]
 license = "LGPL-3.0-only"
 authors = [
@@ -16,7 +16,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "mujoco==3.11.0",
+    "mujoco==4.0.1",
 ]
 
 [project.urls]

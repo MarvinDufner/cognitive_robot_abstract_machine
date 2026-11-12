@@ -137,7 +137,13 @@ class MujocoSimulator(BaseSimulator):
         )
         self._mj_spec.option.impratio = float(self.config.get("impratio", 1))
         self._mj_spec.option.timestep = self.step_size
-        if self.config.get("multiccd", False):
+        # MuJoCo 3.8 made multi-point convex collision the default, to be disabled
+        if mujoco.mj_version() >= 3008000:
+            if not self.config.get("multiccd", False):
+                self._mj_spec.option.disableflags |= (
+                    mujoco.mjtDisableBit.mjDSBL_MULTICCD
+                )
+        elif self.config.get("multiccd", False):
             self._mj_spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
         if self.config.get("energy", True):
             self._mj_spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_ENERGY
@@ -513,9 +519,7 @@ class MujocoSimulator(BaseSimulator):
                 self._mj_data.xpos[vertex_body_id],
                 self._mj_data.xquat[vertex_body_id],
             )
-            # a weld whose torque scale is zero holds the position alone; MuJoCo reads
-            # its data as the anchor, the relative pose and the torque scale
-            self._mj_spec.add_equality(
+            weld = self._mj_spec.add_equality(
                 type=mujoco.mjtEq.mjEQ_WELD,
                 objtype=mujoco.mjtObj.mjOBJ_BODY,
                 name1=body_name,
@@ -523,15 +527,18 @@ class MujocoSimulator(BaseSimulator):
                 # MuJoCo keeps a constraint stable only if it responds no faster than in
                 # two time steps
                 solref=[2 * self._mj_model.opt.timestep, 1.0],
-                data=[
-                    0.0,
-                    0.0,
-                    0.0,
-                    *body_P_vertex_body,
-                    *body_quaternion_vertex_body,
-                    0.0,
-                ],
             )
+            # MuJoCo reads a weld's data as the anchor, the relative pose and the torque
+            # scale; a torque scale of zero holds the position alone. Newer versions
+            # append further entries, which keep their defaults.
+            weld.data[:10] = [
+                0.0,
+                0.0,
+                0.0,
+                *body_P_vertex_body,
+                *body_quaternion_vertex_body,
+            ]
+            weld.data[10] = 0.0
         self._recompile()
         return SimulatorCallbackResult(
             type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_MODEL,
@@ -738,7 +745,7 @@ class MujocoSimulator(BaseSimulator):
         result = [
             self._mj_model.joint(joint_id).name
             for joint_id in range(self._mj_model.njnt)
-            if self._mj_model.joint(joint_id).type in joint_types
+            if mujoco.mjtJoint(self._mj_model.jnt_type[joint_id]) in joint_types
         ]
         return SimulatorCallbackResult(
             type=SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION,
@@ -770,7 +777,7 @@ class MujocoSimulator(BaseSimulator):
                 type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                 info=f"Joint {joint_name} not found",
             )
-        if self._mj_model.joint(joint_id).type not in joint_types:
+        if mujoco.mjtJoint(self._mj_model.jnt_type[joint_id]) not in joint_types:
             return SimulatorCallbackResult(
                 type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                 info=f"Joint {joint_name} does not have allowed joint types {joint_types}",
@@ -1574,24 +1581,22 @@ class MujocoSimulator(BaseSimulator):
                 mujoco.mju_mulMatVec3(res=vec[i], mat=body.xmat, vec=vec[i])
         geom_id = numpy.zeros(N, numpy.int32)
         dist = numpy.zeros(N, numpy.float64)
-        if mujoco.mj_version() < 3005000:
-            mujoco.mj_multiRay(
-                m=self._mj_model,
-                d=self._mj_data,
-                pnt=pnt,
-                vec=vec.flatten(),
-                geomgroup=geomgroup,
-                flg_static=1,
-                bodyexclude=-1,
-                geomid=geom_id,
-                dist=dist,
-                nray=N,
-                cutoff=mujoco.mjMAXVAL,
-            )
-        else:
-            raise NotImplementedError(
-                "mj_multiRay implementation for mujoco version >= 3.5.0 is not implemented yet"
-            )
+        # MuJoCo 3.5 added the hit normals as an output, which these results leave out
+        normal = {} if mujoco.mj_version() < 3005000 else {"normal": None}
+        mujoco.mj_multiRay(
+            m=self._mj_model,
+            d=self._mj_data,
+            pnt=pnt,
+            vec=vec.flatten(),
+            geomgroup=geomgroup,
+            flg_static=1,
+            bodyexclude=-1,
+            geomid=geom_id,
+            dist=dist,
+            nray=N,
+            cutoff=mujoco.mjMAXVAL,
+            **normal,
+        )
         results = []
         for i in range(N):
             if geom_id[i] < 0:

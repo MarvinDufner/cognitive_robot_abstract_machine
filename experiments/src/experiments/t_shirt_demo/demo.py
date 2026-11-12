@@ -51,6 +51,7 @@ from semantic_digital_twin.specifications.kinematic_structure_entities import (
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.specifications.worlds import WorldSpecification
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.air import Air
 from semantic_digital_twin.world_description.cloth import (
     ClothElasticity,
     ClothSheet,
@@ -130,15 +131,14 @@ class TShirtSwingDemonstration(RobotDemonstration):
     """
 
     t_shirt_elasticity: ClothElasticity = field(
-        default_factory=lambda: ClothElasticity(young_modulus=2.3e5, poisson_ratio=0.35)
+        default_factory=lambda: ClothElasticity(
+            young_modulus=3 / 4 * (1 - 0.35) * 2.3e5, poisson_ratio=0.35
+        )
     )
     """
-    How stiffly the T-shirt resists bending, as RGBench states it.
-    """
-
-    t_shirt_edge_damping: float = 0.1
-    """
-    How strongly the T-shirt's edges damp their stretching, as RGBench states it.
+    How stiffly the T-shirt resists bending, as RGBench states it: its Young's modulus
+    of 2.3e5 Pa, given for MuJoCo before 4.0, converted as MuJoCo 4.0's changelog says a
+    flex that only bends keeps its stiffness.
     """
 
     t_shirt_color: Color = field(
@@ -242,8 +242,10 @@ class TShirtSwingDemonstration(RobotDemonstration):
     def populate_scene(self, world: World) -> None:
         """
         Lay the T-shirt spread out on the table, its neckline towards the robot and its
-        sleeves to the sides, as the cloth simulating the T-shirt's annotation.
+        sleeves to the sides, as the cloth simulating the T-shirt's annotation, and fill
+        the scene with air to drag on it.
         """
+        world.add_simulator_property(Air())
         t_shirt = TShirt.create_with_new_body_in_world(
             SceneEntity.T_SHIRT, world, self._world_T_t_shirt
         )
@@ -254,7 +256,6 @@ class TShirtSwingDemonstration(RobotDemonstration):
                 mass=self.t_shirt_mass,
                 thickness=self.t_shirt_thickness,
                 elasticity=self.t_shirt_elasticity,
-                edge_damping=self.t_shirt_edge_damping,
                 color=self.t_shirt_color,
                 semantic_annotation=t_shirt,
             )
@@ -276,14 +277,13 @@ class TShirtSwingDemonstration(RobotDemonstration):
 
     def build_simulation(self, world: World) -> MujocoSim:
         """
-        :meth:`RobotDemonstration.build_simulation`, integrated and solved the way cloth
-        simulates at an affordable cost.
+        :meth:`RobotDemonstration.build_simulation`, with the integrator MuJoCo
+        simulates elastic cloth with.
         """
         return MujocoSim(
             world=world,
             headless=self.headless,
-            integrator=mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
-            solver=mujoco.mjtSolver.mjSOL_CG,
+            integrator=mujoco.mjtIntegrator.mjINT_DISCRETE,
         )
 
     def build_statechart(self, context: StatechartContext) -> Statechart:

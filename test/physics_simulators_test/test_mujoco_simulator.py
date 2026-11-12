@@ -432,7 +432,7 @@ class TestMujocoSimulator:
                 assert isinstance(result.result, list)
                 assert len(result.result) == 4
 
-            if step == 500 and mujoco.mj_version() < 3005000:
+            if step == 500:
                 result = simulator.callbacks["ray_test"](
                     ray_from_position=[0.7, 0.0, 1.0],
                     ray_to_position=[0.7, 0.0, 0.0],
@@ -856,3 +856,38 @@ class TestOffscreenRenderingAvailability:
         monkeypatch.setenv(MujocoEnvironmentVariable.DISPLAY, ":1")
 
         assert MujocoSimulator.offscreen_rendering_available()
+
+
+class TestMultiPointConvexCollision:
+    """
+    MuJoCo collides two convex shapes at several points only if the simulator is
+    configured to, whichever the MuJoCo version defaults to.
+    """
+
+    file_path = os.path.join(resources_path, "mjx_single_cube_no_mesh.xml")
+
+    def test_convex_shapes_collide_at_one_point_by_default(self) -> None:
+        """
+        A simulator configured without ``multiccd`` compiles a model with multi-point
+        convex collision disabled.
+        """
+        simulator = MujocoSimulator(_headless=True, file_path=self.file_path)
+
+        assert (
+            simulator._mj_model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_MULTICCD
+        )
+
+    def test_convex_shapes_collide_at_several_points_when_configured_to(
+        self,
+    ) -> None:
+        """
+        A simulator configured with ``multiccd`` compiles a model with multi-point
+        convex collision enabled.
+        """
+        simulator = MujocoSimulator(
+            _headless=True, file_path=self.file_path, config={"multiccd": True}
+        )
+
+        assert not (
+            simulator._mj_model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_MULTICCD
+        )

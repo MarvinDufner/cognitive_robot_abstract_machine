@@ -5,6 +5,7 @@ import inspect
 import hashlib
 import os
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing_extensions import Generic, Any, ClassVar, Iterator, TypeVar
 
@@ -75,6 +76,7 @@ from semantic_digital_twin.world_description.geometry import (
     MeshFileFormat,
     Color,
 )
+from semantic_digital_twin.world_description.air import Air
 from semantic_digital_twin.world_description.cloth import ClothSheet
 from semantic_digital_twin.world_description.contact import ContactParameters
 from semantic_digital_twin.world_description.world_entity import (
@@ -711,9 +713,11 @@ class Connection1DOFConverter(ConnectionConverter, ABC):
             }
         )
         if dof.name.name != joint_props["name"] and dof.name.name != "dof":
+            # the coefficients of the polynomial that gives this joint's position from
+            # the one it mimics
             joint_props["equality_joint"] = {
                 "joint": dof.name.name,
-                "data": [entity.offset, entity.multiplier, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "data": [entity.offset, entity.multiplier, 0, 0, 0],
             }
         return joint_props
 
@@ -1865,7 +1869,8 @@ class MujocoSingleJoint(MujocoConnectionJoints[ConnectionType]):
             equality.objtype = mujoco.mjtObj.mjOBJ_JOINT
             equality.name1 = joint_name
             equality.name2 = self._mimicked_joint_name()
-            equality.data = equality_joint["data"]
+            # MuJoCo versions differ in how many entries the data has after them
+            equality.data[: len(equality_joint["data"])] = equality_joint["data"]
         mujoco_joint = self.connection.get_simulator_property_of_type(MujocoJoint)
         if mujoco_joint is not None:
             joint_props["stiffness"] = (
@@ -2625,8 +2630,8 @@ class MujocoBuilder(MultiSimBuilder):
 
     minimum_mass: float = 1e-3
     """
-    The mass, in kilograms, every body weighs at least, so that a frame without an
-    inertial or a shape can still move.
+    The mass, in kilograms, every body but a cloth's vertices weighs at least, so that a
+    frame without an inertial or a shape can still move.
     """
 
     minimum_inertia: float = 1e-6
@@ -2674,33 +2679,53 @@ class MujocoBuilder(MultiSimBuilder):
         self._build_contact_exclusions()
         self._build_equalities()
         self._build_tendons()
+        self._build_air()
         for cloth in self.world.get_simulator_properties_of_type(ClothSheet):
             self._build_cloth_sheet(cloth)
-        self.spec.compile()
+        model = self.spec.compile()
         self.spec.to_file(file_path)
-        import xml.etree.ElementTree as ET
-
         tree = ET.parse(file_path)
         root = tree.getroot()
+        # a cloth's vertices may weigh less than the minimum mass, so the file bounds
+        # only their mass; every other body the compilation raised gets its own inertial
+        lightest_mass = min(
+            [self.minimum_mass]
+            + [
+                cloth.vertex_mass
+                for cloth in self.world.get_simulator_properties_of_type(ClothSheet)
+            ]
+        )
         for compiler_element in root.iter("compiler"):
             # A body's own inertial wins; its geoms only stand in for one it lacks.
             compiler_element.set("inertiafromgeom", "auto")
             compiler_element.set("balanceinertia", "true")
-            compiler_element.set("boundmass", str(self.minimum_mass))
+            compiler_element.set("boundmass", str(lightest_mass))
             compiler_element.set("boundinertia", str(self.minimum_inertia))
+        vertex_body_ids = set(model.flex_vertbodyid.tolist())
         # the spec builds its list of bodies anew on every read
         body_specs = self.spec.bodies
-        for body_id, body_element in enumerate(root.findall(".//body")):
-            body_spec = body_specs[body_id + 1]
-            if numpy.isclose(body_spec.mass, 0.0):
-                continue
-            inertial_element = ET.SubElement(body_element, "inertial")
-            inertial_element.set("mass", f"{body_spec.mass}")
-            inertial_element.set(
-                "diaginertia", " ".join(map(str, body_spec.inertia.tolist()))
-            )
-            inertial_element.set("pos", " ".join(map(str, body_spec.ipos.tolist())))
-            inertial_element.set("quat", " ".join(map(str, body_spec.iquat.tolist())))
+        for body_id, body_element in enumerate(root.findall(".//body"), start=1):
+            body_spec = body_specs[body_id]
+            if (
+                body_id not in vertex_body_ids
+                and model.body_mass[body_id] <= self.minimum_mass
+            ):
+                self._write_inertial(
+                    body_element,
+                    mass=model.body_mass[body_id],
+                    inertia=model.body_inertia[body_id],
+                    position=model.body_ipos[body_id],
+                    orientation=model.body_iquat[body_id],
+                )
+            elif not numpy.isclose(body_spec.mass, 0.0):
+                # older MuJoCo versions, such as 3.3.5, leave it out of the file
+                self._write_inertial(
+                    body_element,
+                    mass=body_spec.mass,
+                    inertia=body_spec.inertia,
+                    position=body_spec.ipos,
+                    orientation=body_spec.iquat,
+                )
         for material_id, material_element in enumerate(root.findall(".//material")):
             material_spec = self.spec.materials[material_id]
             texture_name = material_spec.textures[0]
@@ -2722,6 +2747,33 @@ class MujocoBuilder(MultiSimBuilder):
             qpos += [0.0] * cloth.surface.vertices.size
         key_element.set("qpos", " ".join(map(str, qpos)))
         tree.write(file_path, encoding="utf-8", xml_declaration=True)
+
+    @staticmethod
+    def _write_inertial(
+        body_element: ET.Element,
+        mass: float,
+        inertia: numpy.ndarray,
+        position: numpy.ndarray,
+        orientation: numpy.ndarray,
+    ) -> None:
+        """
+        Give a body of a written scene the inertial, replacing any it has.
+
+        :param body_element: The body in the scene file.
+        :param mass: The body's mass, in kilograms.
+        :param inertia: The body's principal moments of inertia.
+        :param position: Where the body's centre of mass lies in its frame.
+        :param orientation: The orientation of the body's principal axes in its frame, as
+            a quaternion with its scalar first.
+        """
+        for inertial_element in body_element.findall("inertial"):
+            body_element.remove(inertial_element)
+        inertial_element = ET.Element("inertial")
+        inertial_element.set("mass", f"{mass}")
+        inertial_element.set("diaginertia", " ".join(map(str, inertia.tolist())))
+        inertial_element.set("pos", " ".join(map(str, position.tolist())))
+        inertial_element.set("quat", " ".join(map(str, orientation.tolist())))
+        body_element.insert(0, inertial_element)
 
     def _build_body(self, body: Body):
         gravity_compensation = body.get_simulator_property_of_type(GravityCompensation)
@@ -3300,30 +3352,50 @@ class MujocoBuilder(MultiSimBuilder):
                 for joint_name, joint_coef in mujoco_tendon.joints.items():
                     tendon.wrap_joint(joint_name, joint_coef)
 
+    def _build_air(self) -> None:
+        """
+        Fills the simulation with the world's :class:`Air`, if it has any.
+        """
+        air = self.world.get_simulator_property_of_type(Air)
+        if air is None:
+            return
+        self.spec.option.density = air.density
+        self.spec.option.viscosity = air.viscosity
+
     def _build_cloth_sheet(self, cloth: ClothSheet) -> None:
         """
         Builds a cloth sheet as a flex whose edges keep their length and whose vertices
-        are bodies of their own, each sliding freely along all three axes. They are the
-        last children of the world body, so their joints come last in the joint positions.
-
-        .. note:: Every vertex weighs at least :attr:`minimum_mass`, so a cloth with many
-            vertices weighs more than its :attr:`ClothSheet.mass`.
+        are bodies of their own, each sliding freely along all three axes and dragged on
+        by :class:`Air` across the cloth it stands for. They are the last children of the
+        world body, so their joints come last in the joint positions.
 
         :param cloth: The cloth sheet to build.
         """
-        vertex_mass = cloth.mass / len(cloth.surface.vertices)
         vertex_body_names = []
-        for index, position in enumerate(cloth.surface.vertices):
+        for index, (position, area) in enumerate(
+            zip(cloth.surface.vertices, cloth.vertex_areas)
+        ):
             vertex_body = self.spec.worldbody.add_body(
                 name=f"{cloth.name}_vertex_{index}",
                 pos=position.tolist(),
-                mass=vertex_mass,
+                mass=cloth.vertex_mass,
                 ipos=[0.0, 0.0, 0.0],
             )
             for axis in [Vector3.X(), Vector3.Y(), Vector3.Z()]:
                 vertex_body.add_joint(
                     type=mujoco.mjtJoint.mjJNT_SLIDE, axis=axis.to_np().tolist()[:3]
                 )
+            # MuJoCo's air drags on a flex only through geoms: a massless sphere that
+            # touches nothing, its cross-section the cloth the vertex stands for
+            drag_sphere = vertex_body.add_geom(
+                type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                size=[numpy.sqrt(area / numpy.pi), 0.0, 0.0],
+                contype=0,
+                conaffinity=0,
+                density=0.0,
+                group=GeomVisibilityAndCollisionType.UNDEFINED_2,
+            )
+            drag_sphere.fluid_ellipsoid = 1
             vertex_body_names.append(vertex_body.name)
         flex = self.spec.add_flex()
         flex.name = cloth.name
@@ -3340,10 +3412,13 @@ class MujocoBuilder(MultiSimBuilder):
         flex.elastic2d = MujocoFlexElasticity.BENDING
         flex.selfcollide = mujoco.mjtFlexSelf.mjFLEXSELF_NONE
         flex.rgba = list(cloth.color.to_rgba())
-        flex.edgedamping = cloth.edge_damping
         edges = self.spec.add_equality()
         edges.type = mujoco.mjtEq.mjEQ_FLEX
         edges.name1 = cloth.name
+        # MuJoCo's default lets an edge carrying a garment's weight stretch to about twice
+        # its length; this asks for the fastest response, which its refsafe flag limits
+        # to two time steps
+        edges.solref = [mujoco.mjMINVAL, 1.0]
 
     def body_spec_of(self, entity: KinematicStructureEntity) -> mujoco.MjsBody:
         """

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 
+import numpy
 import trimesh
 
 from krrood.patterns.path_enumeration import PathEnumeration
@@ -78,11 +79,6 @@ class ClothSheet(SimulatorAdditionalProperty):
     How stiffly the cloth resists bending.
     """
 
-    edge_damping: float = 0.0
-    """
-    How strongly the cloth's edges damp the speed at which they stretch and shrink.
-    """
-
     color: Color = field(default_factory=Color)
     """
     The color the cloth is drawn in.
@@ -93,6 +89,27 @@ class ClothSheet(SimulatorAdditionalProperty):
     What the cloth is in the world, such as the T-shirt it was made into; ``None`` for
     cloth nothing in the world stands for.
     """
+
+    @property
+    def vertex_mass(self) -> float:
+        """
+        The mass of each vertex of the cloth, an equal share of its mass, in kilograms.
+        """
+        return self.mass / len(self.surface.vertices)
+
+    @property
+    def vertex_areas(self) -> numpy.ndarray:
+        """
+        The area of cloth each vertex stands for, a third of every triangle it is a
+        corner of, in square metres.
+        """
+        areas = numpy.zeros(len(self.surface.vertices))
+        numpy.add.at(
+            areas,
+            self.surface.faces.ravel(),
+            numpy.repeat(self.surface.area_faces / 3, 3),
+        )
+        return areas
 
 
 # %% garments
