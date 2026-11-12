@@ -2297,7 +2297,7 @@ class KitchenEnvironment(WorldSource):
             desk_color = Color.WHITE()
             desk_plate_thickness = 0.03
             desk_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
-                x=0.05, y=1.28, z=desk_height
+                x=0.035, y=1.075, z=desk_height
             )
             desk = Desk.create_with_new_body_in_world(
                 world=world,
@@ -2503,7 +2503,7 @@ class KitchenEnvironment(WorldSource):
                 parent=world.root,
                 child=washing_machine_world.root,
                 parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    x=0.10367, y=2.5814, yaw=np.pi
+                    x=0.09175, y=2.073, yaw=np.pi
                 ),
             ),
         )

@@ -2,8 +2,9 @@
 A robot opens the door of the washing machine in the kitchen environment, simulated in
 MuJoCo.
 
-Run it as a script::
-    python3 -m experiments.laundry_demo.demo
+Run it from this folder::
+
+    python washing_machine_demo.py
 """
 
 from __future__ import annotations
