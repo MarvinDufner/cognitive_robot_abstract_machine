@@ -62,6 +62,7 @@ from giskardpy.motion_statechart.monitors.feature_monitors import (
     HeightMonitor,
     PerpendicularMonitor,
 )
+from giskardpy.motion_statechart.monitors.force_monitors import ContactForceReached
 from giskardpy.motion_statechart.monitors.joint_monitors import JointPositionReached
 from giskardpy.motion_statechart.monitors.monitors import LocalMinimumReached
 from giskardpy.motion_statechart.monitors.overwrite_state_monitors import (
@@ -74,6 +75,10 @@ from giskardpy.motion_statechart.monitors.progress_monitors import (
     Stalled,
     StillProgressing,
     _CancelBecauseNoProgress,
+)
+from giskardpy.motion_statechart.tasks.admittance_tasks import (
+    AdmittanceCartesianTrajectory,
+    Press,
 )
 from giskardpy.motion_statechart.tasks.align_planes import AlignPlanes
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
@@ -218,6 +223,13 @@ def _driven_base_node(node_type: type[DrivenBaseTask], world: World) -> DrivenBa
             reference_frame=_root(world)
         ),
     )
+
+
+def _measured_tip(world: World) -> Body:
+    """
+    :return: A tip a force/torque sensor of `world` measures for.
+    """
+    return world.get_body_by_name("hand_gripper_tool_frame")
 
 
 def _collision_rule(world: World) -> AvoidCollisionBetweenGroups:
@@ -865,6 +877,37 @@ def _collision_cases() -> list[NodeRoundTripCase]:
     ]
 
 
+def _force_cases() -> list[NodeRoundTripCase]:
+    """
+    :return: One case per node that reads a force/torque sensor, in a world annotating
+        one.
+    """
+    return [
+        NodeRoundTripCase(
+            AdmittanceCartesianTrajectory,
+            lambda world: [
+                AdmittanceCartesianTrajectory(
+                    root_link=world.root,
+                    tip_link=_measured_tip(world),
+                    goal_points=[
+                        Point3(x=0.5, y=0.0, z=0.7, reference_frame=world.root),
+                        Point3(x=0.6, y=0.0, z=0.7, reference_frame=world.root),
+                    ],
+                    press=Press(force=Vector3(z=12.0), lead_time=0.03),
+                )
+            ],
+            WorldFixture.HSR_WORLD,
+        ),
+        NodeRoundTripCase(
+            ContactForceReached,
+            lambda world: [
+                ContactForceReached(tip_link=_measured_tip(world), threshold=5.0)
+            ],
+            WorldFixture.HSR_WORLD,
+        ),
+    ]
+
+
 def _cases() -> list[NodeRoundTripCase]:
     """
     :return: One case per motion statechart node class that needs no ROS.
@@ -875,6 +918,7 @@ def _cases() -> list[NodeRoundTripCase]:
         *_feature_cases(),
         *_monitor_cases(),
         *_collision_cases(),
+        *_force_cases(),
     ]
 
 

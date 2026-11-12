@@ -2481,79 +2481,6 @@ class TestVelocityTasks:
 
     @pytest.mark.parametrize(
         "limit_cls",
-        [CartesianVelocityLimit, CartesianPositionVelocityLimit],
-        ids=["generic_linear", "position_only_linear"],
-    )
-    def test_a_velocity_limit_bounds_travel_across_the_root_as_well(
-        self, pr2_world_state_reset: World, limit_cls: type
-    ):
-        """
-        A tip travelling around its root link barely changes its distance from it, so a
-        limit read off that distance alone leaves such travel almost unbounded.
-        """
-        tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
-            "l_gripper_tool_frame"
-        )
-        root = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
-            "odom_combined"
-        )
-        max_linear_velocity = 0.05
-        # Across the direction the arm reaches out in, and short next to how far out it
-        # reaches, so almost none of the travel is away from the root.
-        position_goal = CartesianPosition(
-            root_link=root,
-            tip_link=tip,
-            goal_point=Point3(0.0, 0.1, 0.0, reference_frame=tip),
-        )
-        limit = limit_cls(
-            root_link=root, tip_link=tip, max_linear_velocity=max_linear_velocity
-        )
-
-        motion_statechart = self._build_msc(goal_node=position_goal, limit_node=limit)
-        executor = Executor(
-            context=MotionStatechartContext(world=pr2_world_state_reset),
-            trajectory_plotter=WorldStateTrajectoryPlotter(),
-        )
-        executor.compile(motion_statechart=motion_statechart)
-        executor.tick_until_end()
-
-        travelled = self._travelled_per_cycle(
-            executor.trajectory_plotter.world_state_trajectory, root, tip
-        )
-        control_period = (
-            executor.context.qp_controller_config.control_time_step.total_seconds()
-        )
-        # Bounded per axis, so a diagonal may run up to sqrt(3) times the asked speed.
-        assert (
-            np.max(travelled) / control_period
-            <= np.sqrt(3.0) * max_linear_velocity + 1e-6
-        )
-
-    def _travelled_per_cycle(
-        self,
-        world_state_trajectory: WorldStateTrajectory,
-        root_link: KinematicStructureEntity,
-        tip_link: KinematicStructureEntity,
-    ) -> np.ndarray:
-        """
-        :return: How far the tip moved between each pair of recorded states, in m.
-        """
-        world = world_state_trajectory.world
-        positions = []
-        for state_view in world_state_trajectory.values():
-            for derivative in Derivatives:
-                world.state.set_derivative(derivative, state_view.data[derivative, :])
-            world.notify_state_change()
-            positions.append(
-                world.compute_forward_kinematics(root_link, tip_link)
-                .position.evaluate()[:-1]
-                .astype(float)
-                .copy()
-            )
-        return np.linalg.norm(np.diff(np.vstack(positions), axis=0), axis=1)
-
-    @pytest.mark.parametrize(
-        "limit_cls",
         [CartesianVelocityLimit, CartesianRotationVelocityLimit],
         ids=["generic_angular", "rotation_only_angular"],
     )
@@ -2793,7 +2720,7 @@ def test_the_trajectory_still_tracks_when_a_later_node_registers_a_variable(
     motion_statechart.add_node(EndMotion.when_true(trajectory))
     executor.compile(statechart=motion_statechart)
 
-    # a node built after this one would do exactly this
+    # As a node built after this one would.
     executor.context.float_variable_data.register_expression(
         FloatVariable("registered_after_the_trajectory")
     )

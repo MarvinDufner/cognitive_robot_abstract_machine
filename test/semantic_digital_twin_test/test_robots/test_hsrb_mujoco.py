@@ -53,12 +53,15 @@ def test_every_joint_a_controller_commands_is_driven_by_one_servo(
 
     assert commanded <= set(driven)
     assert len(driven) == len(set(driven))
+    # Only the joints a controller commands: the base is servoed on velocity instead,
+    # and the drive is not one of them.
     for actuator in world.actuators:
-        assert isinstance(actuator, PositionServo)
+        if commanded.intersection(actuator.dofs):
+            assert isinstance(actuator, PositionServo)
     builder = MujocoBuilder()
     builder.build_world(world=world, file_path=str(tmp_path / "scene.xml"))
-    assert {actuator.target for actuator in builder.spec.actuators} == {
-        degree_of_freedom.name.name for degree_of_freedom in driven
+    assert {degree_of_freedom.name.name for degree_of_freedom in commanded} <= {
+        actuator.target for actuator in builder.spec.actuators
     }
 
 
@@ -80,7 +83,7 @@ def test_the_arm_is_held_by_the_gains_its_description_limits(spawned_hsrb):
         actuator for actuator in world.actuators if flex.raw_dof in actuator.dofs
     ]
 
-    assert flex_servo.gains == arm.drives_by_joint[HSRBJoint.ARM_FLEX].servo.gains
+    assert flex_servo.gains == arm.drive_of_each_joint[HSRBJoint.ARM_FLEX].gains
     assert lift_servo.gains.stiffness > flex_servo.gains.stiffness
     assert lift_servo.gains.torque_limit == 300.0
 

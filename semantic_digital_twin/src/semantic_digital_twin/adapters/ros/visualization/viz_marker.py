@@ -123,7 +123,7 @@ class VizMarkerPublisher(ModelChangeCallback, HasROS2Node):
 
         if self.tf_publisher is None:
             self.tf_publisher = self._tf_publisher_of_world()
-        self._publisher = self.node.create_publisher(
+        self.publisher = self.node.create_publisher(
             MarkerArray, self.topic_name, self.qos_profile
         )
         time.sleep(0.2)
@@ -197,7 +197,7 @@ class VizMarkerPublisher(ModelChangeCallback, HasROS2Node):
                 force_alpha=self.region_alpha,
             )
 
-        self._publisher.publish(self.markers)
+        self.publisher.publish(self.markers)
 
     def _add_markers_for_shapes(
         self,

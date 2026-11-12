@@ -8,6 +8,7 @@ from cramph.statechart import Statechart
 from giskardpy.motion_control import MotionControl
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.monitors.force_monitors import ContactForceReached
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.world import World
 
@@ -56,7 +57,7 @@ def push(
     :return: What it observed on the last of them.
     """
     for _ in range(readings):
-        sensor_of(world).write_wrench(force, np.zeros(3))
+        sensor_of(world).write_wrench(Wrench(force=force, torque=np.zeros(3)))
         observation = monitor.on_tick()
     return observation
 
@@ -76,7 +77,9 @@ def test_an_unread_sensor_is_not_yet_out_of_contact(hsr_world_copy):
 
 def test_a_sensor_measuring_nothing_reports_no_contact(hsr_world_copy):
     monitor, context = build_monitor(hsr_world_copy)
-    sensor_of(hsr_world_copy).write_wrench(np.zeros(3), np.zeros(3))
+    sensor_of(hsr_world_copy).write_wrench(
+        Wrench(force=np.zeros(3), torque=np.zeros(3))
+    )
 
     assert monitor.on_tick() is ObservationStateValues.FALSE
 
@@ -104,7 +107,7 @@ def test_a_touch_below_the_threshold_is_not_contact_yet(hsr_world_copy):
     monitor, context = build_monitor(hsr_world_copy)
 
     sensor_of(hsr_world_copy).write_wrench(
-        np.array([0.0, 0.0, 0.5 * THRESHOLD]), np.zeros(3)
+        Wrench(force=np.array([0.0, 0.0, 0.5 * THRESHOLD]), torque=np.zeros(3))
     )
 
     assert monitor.on_tick() is ObservationStateValues.FALSE
@@ -116,7 +119,9 @@ def test_the_torque_of_a_carried_tool_is_not_mistaken_for_contact(hsr_world_copy
     """
     monitor, context = build_monitor(hsr_world_copy)
 
-    sensor_of(hsr_world_copy).write_wrench(np.zeros(3), np.ones(3) * 10.0)
+    sensor_of(hsr_world_copy).write_wrench(
+        Wrench(force=np.zeros(3), torque=np.ones(3) * 10.0)
+    )
 
     assert monitor.on_tick() is ObservationStateValues.FALSE
 

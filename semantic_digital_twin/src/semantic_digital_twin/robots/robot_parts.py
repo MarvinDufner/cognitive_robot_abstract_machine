@@ -33,6 +33,7 @@ from krrood.ormatic.utils import classproperty
 from krrood.patterns.subclass_safe_generic import SubClassSafeGeneric
 from krrood.symbolic_math.float_variable_data import FloatVariableData
 from krrood.utils import get_generic_type_parameters
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.datastructures.camera_model import (
     CameraModel,
     CameraModality,
@@ -64,7 +65,6 @@ from semantic_digital_twin.exceptions import (
     RobotPartBelongsToAnotherRobotError,
     UselessConceptError,
     NoForceTorqueSensorForTipError,
-    UnnamedSensorFrameError,
 )
 from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.robots.exceptions import (
@@ -817,15 +817,14 @@ class ForceTorqueSensor(Sensor, AbstractRobotPart, HasInputSource[WrenchSource],
         self.wrench_data.register_expression(self.force)
         self.wrench_data.register_expression(self.torque)
 
-    def write_wrench(self, force: np.ndarray, torque: np.ndarray) -> None:
+    def write_wrench(self, wrench: Wrench) -> None:
         """
-        Overwrite the live wrench, without notifying the world of a state change.
+        Overwrite the live reading, without notifying the world of a state change.
 
-        :param force: Measured force in the sensor frame.
-        :param torque: Measured torque in the sensor frame.
+        :param wrench: What the sensor measures, in its own frame.
         """
-        self.wrench_data.set_value(self.force, force)
-        self.wrench_data.set_value(self.torque, torque)
+        self.wrench_data.set_value(self.force, wrench.force)
+        self.wrench_data.set_value(self.torque, wrench.torque)
         self.readings_received += 1
 
     @property
@@ -872,19 +871,13 @@ class ForceTorqueSensor(Sensor, AbstractRobotPart, HasInputSource[WrenchSource],
         return max(on_chain, key=on_chain.get)
 
     @property
-    def measured_force(self) -> np.ndarray:
+    def measured_wrench(self) -> Wrench:
         """
-        The force of the last reading, in the sensor frame, in N.
+        The last reading, in the sensor frame.
         """
-        return self.wrench_data.data[:3]
-
-    @property
-    def measured_torque(self) -> np.ndarray:
-        """
-        The torque of the last reading, about the sensor's own origin, in its frame, in
-        N m.
-        """
-        return self.wrench_data.data[3:6]
+        return Wrench(
+            force=self.wrench_data.data[:3], torque=self.wrench_data.data[3:6]
+        )
 
     @classmethod
     def simulated_source(cls) -> WrenchSource:
@@ -900,12 +893,12 @@ class ForceTorqueSensor(Sensor, AbstractRobotPart, HasInputSource[WrenchSource],
         )
 
     @classproperty
-    def frame_name(cls) -> str | None:
+    @abstractmethod
+    def frame_name(cls) -> str:
         """
         Name of the body this kind of sensor measures in, which is the frame its driver
         stamps its readings with.
         """
-        return None
 
     @classproperty
     def compensation(cls) -> WrenchCompensation | None:
@@ -927,12 +920,6 @@ class ForceTorqueSensor(Sensor, AbstractRobotPart, HasInputSource[WrenchSource],
     def setup_default_configuration_in_world_below_robot_root(
         cls, robot_root: KinematicStructureEntity
     ) -> Self:
-        """
-        :raises UnnamedSensorFrameError: If this kind of sensor does not name the body it
-            measures in.
-        """
-        if cls.frame_name is None:
-            raise UnnamedSensorFrameError(sensor_type=cls)
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
                 robot_root, cls.frame_name

@@ -207,7 +207,7 @@ def test_surface_path_stays_inside_xy_bounds(box_body):
         WipingTechnique.SPREAD: ToolPathSegmentKind.RASTER,
     }
     for technique, expected_kind in expected_kinds.items():
-        path = build_surface_path(box_body, lane_spacing=0.02, technique=technique)
+        path = build_surface_path(box_body, technique=technique)
         _, points, _ = _sample(path)
         assert np.all(points[:, 0] >= -0.1 - 1e-9)
         assert np.all(points[:, 0] <= 0.1 + 1e-9)
@@ -264,7 +264,6 @@ def test_a_raster_covers_its_rectangle_and_turns_just_outside_it():
     assert np.max(np.abs(points[:, 1])) <= 0.5 * height
     assert np.ptp(points[:, 0]) == pytest.approx(width + 2.0 * turn_radius, abs=1e-3)
     assert np.ptp(points[:, 1]) == pytest.approx(height, abs=1e-4)
-    # Every lane runs the full width of the rectangle.
     for lane_y in -0.5 * height + height * np.arange(lanes) / (lanes - 1):
         on_the_lane = points[np.abs(points[:, 1] - lane_y) < 1e-9]
         assert np.ptp(on_the_lane[:, 0]) == pytest.approx(width, abs=1e-3)

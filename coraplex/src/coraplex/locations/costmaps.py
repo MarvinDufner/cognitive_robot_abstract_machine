@@ -284,21 +284,42 @@ class Costmap(Location):
             )
             indices = np.column_stack(np.unravel_index(indices, segmented_map.shape))
 
-            height = segmented_map.shape[0]
-            width = segmented_map.shape[1]
-            center = np.array([height // 2, width // 2])
             for index in indices:
-                # Compute world position independent of origin orientation:
-                # map indices increase with world axes; origin is at the center.
-                offset = (index - center) * self.resolution
-                position = self.origin.position + Vector3(offset[0], offset[1], 0)
-
+                position = self.position_in_cell(index)
                 orientation: Quaternion = self._orientation_facing_origin(position)
                 yield Pose(
                     position,
                     orientation,
                     self.world.root,
                 )
+
+    @property
+    def _central_cell(self) -> np.ndarray:
+        """
+        :return: The index of the cell this map's origin lies in, which is its middle.
+        """
+        return np.array(self.map.shape[:2]) // 2
+
+    def position_in_cell(self, index: np.ndarray) -> Point3:
+        """
+        :param index: The index of one cell of this map.
+        :return: Where the middle of that cell lies, in the world's root frame.
+
+        Independent of how the origin is turned, since map indices increase with the
+        world axes.
+        """
+        offset = (index - self._central_cell) * self.resolution
+        return self.origin.position + Vector3(offset[0], offset[1], 0)
+
+    def cell_holding(self, pose: Pose) -> np.ndarray:
+        """
+        :param pose: A pose in any frame of the world.
+        :return: The index of the cell it lies in, which may be off the map, see
+            :meth:`position_in_cell`.
+        """
+        position = self.world.transform(pose, self.world.root).position.to_np()[:2]
+        offset = (position - self.origin.position.to_np()[:2]) / self.resolution
+        return np.rint(offset).astype(int) + self._central_cell
 
     def allows(self, pose: Pose) -> bool:
         """
@@ -310,14 +331,7 @@ class Costmap(Location):
             an occupancy map means the spot is clear and for a ring means it is on the
             ring. A pose off the edge of the map carries nothing.
         """
-        position = self.world.transform(pose, self.world.root).position.to_np()[:2]
-        centre = np.array(self.map.shape[:2]) // 2
-        index = (
-            np.rint(
-                (position - self.origin.position.to_np()[:2]) / self.resolution
-            ).astype(int)
-            + centre
-        )
+        index = self.cell_holding(pose)
         if np.any(index < 0) or np.any(index >= np.array(self.map.shape[:2])):
             return False
         return bool(self.map[index[0], index[1]] > 0.0)

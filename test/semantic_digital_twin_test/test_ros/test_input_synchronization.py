@@ -702,7 +702,7 @@ def test_tracking_a_connection_without_six_degrees_of_freedom_is_rejected(
 # %% writing a wrench into a sensor
 
 
-def wrench_message(force: List[float], torque: List[float]) -> WrenchStamped:
+def wrench_message(force: list[float], torque: list[float]) -> WrenchStamped:
     message = WrenchStamped()
     message.wrench.force.x, message.wrench.force.y, message.wrench.force.z = force
     message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z = torque
@@ -800,7 +800,7 @@ def test_every_reading_is_written_through(rclpy_node):
 
     feed(synchronizer, 1.0, 12.0)
 
-    assert_allclose(sensor.measured_force, [0.0, 0.0, 12.0])
+    assert_allclose(sensor.measured_wrench.force, [0.0, 0.0, 12.0])
 
 
 def test_a_cycle_without_a_new_message_writes_nothing(rclpy_node):
@@ -819,4 +819,4 @@ def test_a_cycle_without_a_new_message_writes_nothing(rclpy_node):
 
     assert applied_again is False
     assert sensor.readings_received == written
-    assert_allclose(sensor.measured_force, [0.0, 0.0, 7.0])
+    assert_allclose(sensor.measured_wrench.force, [0.0, 0.0, 7.0])

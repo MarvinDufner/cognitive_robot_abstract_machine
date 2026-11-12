@@ -45,13 +45,17 @@ from coraplex.robot_plans.actions.base import (
     SequentialAction,
     TryAllAction,
 )
-from coraplex.robot_plans.mixins import MovesToolCenterPoint, Press
+from coraplex.robot_plans.mixins import MovesToolCenterPoint
 from cramph.composites import Parallel, PausedUntilTrue
 from giskardpy.motion_statechart.weights import DefaultWeights
 from giskardpy.motion_statechart.monitors.cartesian_monitors import PositionReached
 from giskardpy.motion_statechart.monitors.progress_monitors import Stalled
 from giskardpy.motion_statechart.tasks.align_planes import AlignPlanes
 from giskardpy.motion_statechart.monitors.force_monitors import ContactForceReached
+from giskardpy.motion_statechart.tasks.admittance_tasks import (
+    AdmittanceCartesianTrajectory,
+    Press,
+)
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPosition,
     CartesianPositionTrajectory,
@@ -92,12 +96,9 @@ class FullBodyControlledAction(Action, ABC):
 
 
 @dataclass(kw_only=True, eq=False, repr=False)
-class ToolMotionAction(
-    FullBodyControlledAction, MovesToolCenterPoint, ActionOfSteps, ABC
-):
+class AlignedToolAction(FullBodyControlledAction, MovesToolCenterPoint, ABC):
     """
-    An action that moves a tool along a sampled tool path while keeping the tool aligned
-    with its target.
+    An action that holds a tool in one arm, aligned with what it works on.
     """
 
     arm: Arm
@@ -108,6 +109,62 @@ class ToolMotionAction(
     tool: Tool
     """
     The tool that performs the motion.
+    """
+
+    @property
+    @abstractmethod
+    def _alignment_target(self) -> Body | Pose | None:
+        """
+        :return: The target the tool is aligned with during the motion.
+        """
+
+    @property
+    def _alignment_pairs(self) -> list[AlignmentPair]:
+        """
+        :return: The normal pairs that keep the tool aligned with its target during
+            the motion, or an empty list if there is no alignment target.
+        """
+        target = self._alignment_target
+        if target is None:
+            return []
+        return self.tool.tool_alignment(target)
+
+    def _alignments(
+        self,
+        root: KinematicStructureEntity,
+        tip: KinematicStructureEntity,
+        weight: DefaultWeights,
+    ) -> list[AlignPlanes]:
+        """
+        :param root: The frame the alignment is expressed in.
+        :param tip: The tool frame that is turned.
+        :param weight: How the alignment weighs against collision avoidance.
+        :return: The tasks holding every alignment the tool asks for.
+        """
+        return [
+            AlignPlanes(
+                tip_link=tip,
+                root_link=root,
+                tip_normal=pair.tip_normal,
+                goal_normal=pair.goal_normal,
+                weight=weight.value,
+            )
+            for pair in self._alignment_pairs
+        ]
+
+    def create_temporary_collision_rules(self) -> list[CollisionRule]:
+        """
+        :return: An allowance for the manipulator holding the tool to touch what the
+            tool works on.
+        """
+        return [AllowCollisionForEndEffector(end_effector=self.arm.end_effector)]
+
+
+@dataclass(kw_only=True, eq=False, repr=False)
+class ToolMotionAction(AlignedToolAction, ActionOfSteps, ABC):
+    """
+    An action that moves a tool along a sampled tool path while keeping the tool aligned
+    with its target.
     """
 
     pointer_stride: int = 1
@@ -148,13 +205,6 @@ class ToolMotionAction(
         :return: The frame the tool path is expressed in.
         """
 
-    @property
-    @abstractmethod
-    def _alignment_target(self) -> Body | Pose | None:
-        """
-        :return: The target the tool is aligned with during the motion.
-        """
-
     @cached_property
     def _waypoints(self) -> list[Point3]:
         """
@@ -174,24 +224,6 @@ class ToolMotionAction(
             raise MissingWaypoints(self)
         return waypoints
 
-    @property
-    def _alignment_pairs(self) -> list[AlignmentPair]:
-        """
-        :return: The normal pairs that keep the tool aligned with its target during
-            the motion, or an empty list if there is no alignment target.
-        """
-        target = self._alignment_target
-        if target is None:
-            return []
-        return self.tool.tool_alignment(target)
-
-    def create_temporary_collision_rules(self) -> list[CollisionRule]:
-        """
-        :return: An allowance for the manipulator holding the tool to touch what the
-            tool works on, for the whole stroke.
-        """
-        return [AllowCollisionForEndEffector(end_effector=self.arm.end_effector)]
-
     def create_steps(self) -> list[StatechartNode]:
         """
         :return: The nodes moving the tool along the sampled waypoints while keeping it
@@ -207,19 +239,11 @@ class ToolMotionAction(
         """
         root = self.controlled_root
         tip = self.tool.get_tool_frame()
-        alignments = [
-            AlignPlanes(
-                tip_link=tip,
-                root_link=root,
-                tip_normal=pair.tip_normal,
-                goal_normal=pair.goal_normal,
-                weight=DefaultWeights.WEIGHT_BELOW_COLLISION_AVOIDANCE.value,
-            )
-            for pair in self._alignment_pairs
-        ]
         return [
             self._follow_the_path(root, tip),
-            *alignments,
+            *self._alignments(
+                root, tip, DefaultWeights.WEIGHT_BELOW_COLLISION_AVOIDANCE
+            ),
             *self._velocity_limits(root, tip, self.max_linear_velocity, None),
             *self.keep_base_still(),
         ]
@@ -243,13 +267,11 @@ class ToolMotionAction(
         )
         if self.press is None:
             return CartesianPositionTrajectory(**arguments)
-        return self.press.yielding_trajectory(**arguments)
+        return AdmittanceCartesianTrajectory(press=self.press, **arguments)
 
 
 @dataclass(kw_only=True, eq=False, repr=False)
-class LowerUntilContactAction(
-    FullBodyControlledAction, MovesToolCenterPoint, TryAllAction
-):
+class LowerUntilContactAction(AlignedToolAction, TryAllAction):
     """
     Lower a tool until its force/torque sensor feels the surface.
 
@@ -258,25 +280,10 @@ class LowerUntilContactAction(
     not.
     """
 
-    goal_point: Point3
+    goal_pose: Pose
     """
-    Point below the surface the tool is driven towards.
-    """
-
-    arm: Arm
-    """
-    The arm holding the tool.
-    """
-
-    tip: Body
-    """
-    The body that is lowered.
-    """
-
-    alignment_pairs: list[AlignmentPair] = field(default_factory=list)
-    """
-    Normal pairs kept aligned while lowering, so the tool keeps facing the surface it is
-    lowered onto.
+    Pose below the surface the tool is driven towards, and the surface it is aligned
+    with on the way down.
     """
 
     contact_force: float = 15.0
@@ -286,35 +293,21 @@ class LowerUntilContactAction(
 
     descent_velocity: float = 0.02
     """
-    How fast the tool is lowered, in m/s.
+    How fast the tool is lowered, in m/s: the speed the goal is tracked at, and the cap
+    asked of the arm.
 
     Slow, because the tool travels on between the reading that shows contact and the
     cycle that acts on it.
 
-    .. note:: This normalises the goal's error and does not bound the speed the tool
-        arrives at. :attr:`max_linear_velocity` is what bounds it.
+    .. warning:: The cap bounds how fast the tool leaves
+        :attr:`~coraplex.robot_plans.actions.composite.tool_based.
+        FullBodyControlledAction.controlled_root`, not how fast it travels, so a tool
+        held out across a surface can still come down faster than this.
     """
 
-    max_linear_velocity: float | None = None
-    """
-    Cap on the speed the tool descends at, in m/s.
-
-    ``None`` leaves it to the arm.
-    """
-
-    allow_gripper_collision: bool = False
-    """
-    Whether the manipulator holding the tool may touch what it is lowered onto.
-    """
-
-    def create_temporary_collision_rules(self) -> list[CollisionRule]:
-        """
-        :return: An allowance for the manipulator holding the tool to touch the surface
-            if :attr:`allow_gripper_collision`, none otherwise.
-        """
-        if not self.allow_gripper_collision:
-            return []
-        return [AllowCollisionForEndEffector(end_effector=self.arm.end_effector)]
+    @property
+    def _alignment_target(self) -> Pose:
+        return self.goal_pose
 
     def keep_base_still(self) -> list[MotionStatechartNode]:
         """
@@ -341,27 +334,21 @@ class LowerUntilContactAction(
             tool arriving at a point it is not meant to reach.
         """
         root = self.controlled_root
+        tip = self.tool.get_tool_frame()
         descent = Parallel(
             name=f"{self.name}/descent",
             nodes=[
                 CartesianPosition(
                     root_link=root,
-                    tip_link=self.tip,
-                    goal_point=self.goal_point,
+                    tip_link=tip,
+                    goal_point=self.goal_pose.position,
                     cruise_velocity=self.descent_velocity,
                     weight=float(DefaultWeights.WEIGHT_BELOW_COLLISION_AVOIDANCE),
                 ),
-                *[
-                    AlignPlanes(
-                        tip_link=self.tip,
-                        root_link=root,
-                        tip_normal=pair.tip_normal,
-                        goal_normal=pair.goal_normal,
-                        weight=DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE.value,
-                    )
-                    for pair in self.alignment_pairs
-                ],
-                *self._velocity_limits(root, self.tip, self.max_linear_velocity, None),
+                *self._alignments(
+                    root, tip, DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE
+                ),
+                *self._velocity_limits(root, tip, self.descent_velocity, None),
                 *self.keep_base_still(),
             ],
         )
@@ -369,7 +356,7 @@ class LowerUntilContactAction(
             descent,
             ContactForceReached(
                 name=f"{self.name}/contact",
-                tip_link=self.tip,
+                tip_link=tip,
                 threshold=self.contact_force,
             ),
         ]
@@ -531,22 +518,14 @@ class WipingAction(ToolMotionAction, TryAllAction):
 
     def _build_tool_path(self) -> ToolPath:
         if self.surface is not None:
-            # Pressing puts the path on the surface and lets the admittance regulate how
-            # hard; the default clearance would keep the tool just above it instead.
-            clearance = {} if self.press is None else {"approach_clearance": 0.0}
-            return build_surface_path(
-                self.surface,
-                lane_spacing=self._tool_span,
-                technique=self.technique,
-                **clearance,
-            )
+            return build_surface_path(self.surface, technique=self.technique)
         if self.technique is WipingTechnique.SPREAD:
-            return self._lane_path(self._tool_span)
+            return self._lane_path()
         if self.technique is WipingTechnique.SHEAR:
-            return self._circling_path(self._tool_span)
-        return self._spiral_path(self._tool_span)
+            return self._circling_path()
+        return self._spiral_path()
 
-    @property
+    @cached_property
     def _tool_span(self) -> float:
         """
         :return: How wide a strip the tool covers, in m.
@@ -567,25 +546,24 @@ class WipingAction(ToolMotionAction, TryAllAction):
             raise ToolWithoutFootprint(tool_name=str(self.tool.root.name))
         return span
 
-    def _inscribed_radius(self, tool_span: float) -> float:
+    @property
+    def _inscribed_radius(self) -> float:
         """
-        :param tool_span: How wide a strip the tool covers, in m.
         :return: The largest radius a path circling the patch's centre can have while
             the tool stays on the patch, in m.
         """
         across = self.width if self.width > 0.0 else self.length
-        return max(0.0, 0.5 * min(self.length, across) - 0.5 * tool_span)
+        return max(0.0, 0.5 * min(self.length, across) - 0.5 * self._tool_span)
 
-    def _lane_path(self, tool_span: float) -> ToolPath:
+    def _lane_path(self) -> ToolPath:
         """
-        :param tool_span: How wide a strip the tool covers, in m.
         :return: Parallel lanes covering the patch, or a single lane swept back and
             forth where the patch has no width.
 
         The path is the tool's centre line, so it stops half a span short of the patch
         at every edge and the tool still covers it to the edges.
         """
-        lane_length = max(0.0, self.length - tool_span)
+        lane_length = max(0.0, self.length - self._tool_span)
         if self.width <= 0.0:
             return ToolPath(
                 [
@@ -602,10 +580,10 @@ class WipingAction(ToolMotionAction, TryAllAction):
                     )
                 ]
             )
-        lane_span = max(0.0, self.width - tool_span)
+        lane_span = max(0.0, self.width - self._tool_span)
         # One more lane than the spans between them, so that neighbouring lanes are at
         # most a tool apart and no strip is left untouched.
-        lanes = max(2, math.ceil(lane_span / tool_span) + 1)
+        lanes = max(2, math.ceil(lane_span / self._tool_span) + 1)
         return ToolPath(
             [
                 ToolPathSegment(
@@ -618,17 +596,16 @@ class WipingAction(ToolMotionAction, TryAllAction):
             ]
         )
 
-    def _spiral_path(self, tool_span: float) -> ToolPath:
+    def _spiral_path(self) -> ToolPath:
         """
-        :param tool_span: How wide a strip the tool covers, in m.
         :return: An outward spiral over the largest disc the patch inscribes, turning
-            often enough that its pitch stays within that span.
+            often enough that its pitch stays within the tool's span.
 
         .. note:: A disc is all a spiral reaches, so a rectangular patch keeps its
             corners.
         """
-        radius = self._inscribed_radius(tool_span)
-        turns = max(1.0, math.ceil(radius / tool_span))
+        radius = self._inscribed_radius
+        turns = max(1.0, math.ceil(radius / self._tool_span))
         return ToolPath(
             [
                 ToolPathSegment(
@@ -641,13 +618,12 @@ class WipingAction(ToolMotionAction, TryAllAction):
             ]
         )
 
-    def _circling_path(self, tool_span: float) -> ToolPath:
+    def _circling_path(self) -> ToolPath:
         """
-        :param tool_span: How wide a strip the tool covers, in m.
         :return: Laps around the patch's centre, which is the shearing motion
             :func:`build_surface_path` gives a whole surface.
         """
-        radius = self._inscribed_radius(tool_span)
+        radius = self._inscribed_radius
         return ToolPath(
             [
                 ToolPathSegment(

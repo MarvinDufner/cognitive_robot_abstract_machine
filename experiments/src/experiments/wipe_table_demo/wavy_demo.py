@@ -2,35 +2,17 @@
 The HSRB wipes a kitchen table with ridges laid across it, so the tool has to follow a
 surface nothing told it about.
 
-The plan is the one of :mod:`experiments.wipe_table_demo.demo`: the descent feels for
-the first crest it meets and the press holds the force from there on, so how well
-contact is kept over the crests is what this run measures.
-
-The execution type is the first command line argument and the wiping technique the
-second, both defaulting to what :func:`main` takes::
-
-    python3 wavy_demo.py PHYSICALLY_SIMULATED SPREAD
-
-.. warning:: Only a physically simulated run resolves the ridges. A kinematically
-    simulated one models a flat surface at the height of the table top and feels
-    nothing of them, and a real run would wipe the bare table while the plan believes
-    the ridges are there.
+The plan is the one of :mod:`experiments.wipe_table_demo.demo`, so how well contact is
+kept over the crests is what this run measures.
 """
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-
-from typing_extensions import ClassVar
 
 from coraplex.datastructures.enums import WipingTechnique
 from coraplex.plans.executors import PhysicallySimulatedPlanExecutor, PlanExecutor
-from experiments.wipe_table_demo.demo import (
-    EXECUTORS,
-    RidgedSurface,
-    WipeTableDemonstration,
-)
+from experiments.wipe_table_demo.demo import RidgedSurface, WipeTableDemonstration
 from semantic_digital_twin.robots.hsrb import HSRB
 
 # %% the demonstration
@@ -45,16 +27,18 @@ class WipeWavyTableDemonstration(RidgedSurface, WipeTableDemonstration):
     what this run measures.
     """
 
-    ros_node_name: ClassVar[str] = "wipe_wavy_table_demo_node"
+    ros_node_name: str = "wipe_wavy_table_demo_node"
+    """
+    Name of the node this demonstration talks to ROS under.
+    """
 
     wipe_speed: float = 0.025
     """
     Slower than the flat table is wiped at, in m/s.
 
     What the press has to absorb at a crest is the speed the tool is driven into the
-    rising surface at, and halving it is worth more than any gain of the press's own:
-    the HSRB pressing 15 N over these crests peaks at 42 N and holds contact 82 % of the
-    time at 4.5 cm/s, and at 36 N and 89 % here.
+    rising surface at: the HSRB pressing 15 N over these crests peaks at 42 N and holds
+    contact 82 % of the time at 4.5 cm/s, and at 36 N and 89 % here.
     """
 
     ridged_span: float = 0.95
@@ -81,8 +65,7 @@ def main(
     """
     Run the demonstration.
 
-    :param executor_type: The executor running the plan, which decides whether it drives
-        the real robot or simulates it.
+    :param executor_type: The executor running the plan.
     :param technique: How the tool covers the table.
     """
     WipeWavyTableDemonstration(
@@ -91,8 +74,4 @@ def main(
 
 
 if __name__ == "__main__":
-    # Only what the command line names, so the default lives once, in main.
-    main(
-        *(EXECUTORS[name] for name in sys.argv[1:2]),
-        *(WipingTechnique[name] for name in sys.argv[2:3]),
-    )
+    main()

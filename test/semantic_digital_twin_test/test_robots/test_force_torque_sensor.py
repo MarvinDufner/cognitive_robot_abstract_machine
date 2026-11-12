@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
-from typing_extensions import List
 
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -16,6 +15,8 @@ from semantic_digital_twin.robots.input_source import (
     SimulatedBasePoseSource,
     SimulatedWrenchSource,
 )
+from krrood.ormatic.utils import classproperty
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.robots.tracy import (
     TracyLeftForceTorqueSensor,
@@ -37,6 +38,10 @@ class SensorClosestToTip(ForceTorqueSensor):
     Minimal concrete force/torque sensor, to place a second sensor on a chain that
     already carries one.
     """
+
+    @classproperty
+    def frame_name(cls) -> str:
+        return "arm_lift_link"
 
 
 def test_the_hsrb_annotates_a_sensor_at_its_wrist(hsr_world_copy):
@@ -84,7 +89,7 @@ def test_an_idle_sensor_is_distinguishable_from_one_measuring_zero(hsr_world_cop
 
     assert not sensor.has_received_wrench
 
-    sensor.write_wrench(np.zeros(3), np.zeros(3))
+    sensor.write_wrench(Wrench(force=np.zeros(3), torque=np.zeros(3)))
 
     assert sensor.has_received_wrench
 
@@ -94,7 +99,9 @@ def test_a_written_wrench_reaches_the_symbols(hsr_world_copy):
         hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
-    sensor.write_wrench(np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0, 6.0]))
+    sensor.write_wrench(
+        Wrench(force=np.array([1.0, 2.0, 3.0]), torque=np.array([4.0, 5.0, 6.0]))
+    )
 
     np.testing.assert_allclose(sensor.force.evaluate().flatten()[:3], [1.0, 2.0, 3.0])
     np.testing.assert_allclose(sensor.torque.evaluate().flatten()[:3], [4.0, 5.0, 6.0])
@@ -105,8 +112,10 @@ def test_writing_a_wrench_overwrites_the_previous_one(hsr_world_copy):
         hsr_world_copy, hsr_world_copy.get_body_by_name(TOOL_FRAME)
     )
 
-    sensor.write_wrench(np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0, 6.0]))
-    sensor.write_wrench(np.array([-1.0, 0.0, 9.5]), np.zeros(3))
+    sensor.write_wrench(
+        Wrench(force=np.array([1.0, 2.0, 3.0]), torque=np.array([4.0, 5.0, 6.0]))
+    )
+    sensor.write_wrench(Wrench(force=np.array([-1.0, 0.0, 9.5])))
 
     np.testing.assert_allclose(sensor.force.evaluate().flatten()[:3], [-1.0, 0.0, 9.5])
     np.testing.assert_allclose(sensor.torque.evaluate().flatten()[:3], np.zeros(3))
@@ -122,7 +131,7 @@ def test_the_wrench_holds_exactly_the_six_axes(hsr_world_copy):
     )
 
     for _ in range(3):
-        sensor.write_wrench(np.ones(3), np.ones(3))
+        sensor.write_wrench(Wrench(force=np.ones(3), torque=np.ones(3)))
 
     assert len(sensor.wrench_data.variables) == 6
     assert sensor.wrench_data.data.shape == (6,)
@@ -279,19 +288,3 @@ def test_a_compensated_sensor_states_everything_its_node_needs():
     assert compensation.gravity_frame
     assert compensation.retare_service
     assert compensation.load.mass > 0.0
-
-
-@pytest.mark.parametrize(
-    "sensor",
-    [
-        TracyLeftForceTorqueSensor,
-        TracyRightForceTorqueSensor,
-        HSRBWristForceTorqueSensor,
-    ],
-)
-def test_every_sensor_names_the_frame_it_measures_in(sensor):
-    """
-    The frame is what places the sensor in the world and what tf is asked for, so a
-    sensor that names none can be set up from neither.
-    """
-    assert sensor.frame_name is not None

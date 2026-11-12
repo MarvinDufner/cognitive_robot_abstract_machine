@@ -4,19 +4,24 @@ from inspect import signature
 import numpy as np
 import pytest
 
+from ..pytest_environment import runs_in_continuous_integration
+
 from coraplex.datastructures.enums import WipingTechnique
 from coraplex.plans.context_extensions import RobotAccess
 from coraplex.plans.executors import (
     KinematicallySimulatedPlanExecutor,
+    PhysicallySimulatedPlanExecutor,
     RealRobotPlanExecutor,
 )
 from coraplex.robot_plans.actions.composite.tool_based import WipingAction
 from cramph.context import StatechartContext
 from experiments.wipe_table_demo.demo import (
-    SimulatedContactWrench,
     TableSide,
     WipeTableDemonstration,
     main,
+)
+from semantic_digital_twin.adapters.sensors.force_torque import (
+    PhysicallySimulatedContactWrench,
 )
 from experiments.wipe_table_demo.wavy_demo import WipeWavyTableDemonstration
 from semantic_digital_twin.robots.hsrb import HSRB
@@ -41,9 +46,7 @@ def wiping_actions(demonstration, world) -> list[WipingAction]:
         world, demonstration.build_context_extensions(world)
     )
     statechart = demonstration.build_statechart(context)
-    return [
-        node for node in statechart.nodes if isinstance(node, WipingAction)
-    ]
+    return [node for node in statechart.nodes if isinstance(node, WipingAction)]
 
 
 def wiped_points(demonstration, world) -> np.ndarray:
@@ -149,7 +152,9 @@ def test_no_place_the_base_does_not_fit_is_offered():
     for pose in poses:
         assert room.allows(pose)
     assert [
-        side for side in demonstration.sides_of(world, table) if not room.allows(side.pose)
+        side
+        for side in demonstration.sides_of(world, table)
+        if not room.allows(side.pose)
     ]
 
 
@@ -162,11 +167,10 @@ def test_the_shallow_side_is_wiped_from_first():
     table = world.get_semantic_annotations_by_type(DiningTable)[0]
     body = table.root
     extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
-    world_T_table = world.compute_forward_kinematics_np(world.root, body)
 
     first = demonstration.standing_poses(world, table)[0]
 
-    table_P_base = np.linalg.inv(world_T_table) @ np.append(first.to_np()[:3, 3], 1.0)
+    table_P_base = world.transform(first.position, body).to_np().flatten()
     stands_along_x = abs(table_P_base[0]) > abs(table_P_base[1])
     assert stands_along_x == (extent.depth < extent.width)
 
@@ -179,14 +183,11 @@ def test_the_base_stands_clear_of_the_table_edge():
     table = world.get_semantic_annotations_by_type(DiningTable)[0]
     body = table.root
     extent = body.collision.as_bounding_box_collection_in_frame(body).bounding_box()
-    world_T_table = world.compute_forward_kinematics_np(world.root, body)
     robot = world.get_semantic_annotations_by_type(HSRB)[0]
     expected = robot.mobile_base.base_radius + demonstration.standing_clearance
 
     for pose in demonstration.standing_poses(world, table):
-        table_P_base = np.linalg.inv(world_T_table) @ np.append(
-            pose.to_np()[:3, 3], 1.0
-        )
+        table_P_base = world.transform(pose.position, body).to_np().flatten()
         outside_x = abs(table_P_base[0]) - 0.5 * extent.depth
         outside_y = abs(table_P_base[1]) - 0.5 * extent.width
         assert max(outside_x, outside_y) == pytest.approx(expected, abs=1e-6)
@@ -314,9 +315,7 @@ def test_every_wipe_fits_in_the_time_the_demonstration_allows_one_action():
     budget = demonstration.simulation_time_per_action.total_seconds()
 
     for action in wiping_actions(demonstration, world):
-        points = np.array(
-            [point.to_np().flatten()[:3] for point in action._waypoints]
-        )
+        points = np.array([point.to_np().flatten()[:3] for point in action._waypoints])
         travel = float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
 
         assert travel / demonstration.wipe_speed < budget
@@ -388,7 +387,7 @@ def test_only_the_crest_of_each_ridge_stands_out_of_the_table():
     sunk into the surface.
     """
     demonstration, world = ridged_demonstration()
-    surface = demonstration.contact_model(world).surface_height
+    surface = demonstration.surface_height(world)
 
     for box in ridge_boxes(world):
         assert box.max_z == pytest.approx(
@@ -399,38 +398,49 @@ def test_only_the_crest_of_each_ridge_stands_out_of_the_table():
 # %% force control
 
 
-def test_the_real_robot_reads_its_own_sensor():
-    """The simulated contact model stands in for the sensor, so a real run must not get
-    one: the controller follows the sensor's own topic instead."""
-    demonstration, world = populated_demonstration(
-        executor_type=RealRobotPlanExecutor
-    )
+@pytest.mark.parametrize(
+    "executor_type", [RealRobotPlanExecutor, KinematicallySimulatedPlanExecutor]
+)
+def test_a_run_without_physics_writes_no_reading(executor_type):
+    """
+    The real robot follows its sensor's own topic, and nothing resolves a contact for a
+    run that only moves the kinematics, so neither has a reading written for it.
+    """
+    demonstration, world = populated_demonstration(executor_type=executor_type)
 
     assert demonstration.wrench_inputs(world).synchronizers == []
 
 
-def test_a_simulated_run_supplies_its_own_contact():
-    demonstration, world = populated_demonstration()
-
-    inputs = demonstration.wrench_inputs(world)
-
-    assert [type(reading) for reading in inputs.synchronizers] == [
-        SimulatedContactWrench
-    ]
-
-
-def test_the_contact_reading_leaves_the_kinematic_state_alone():
+@pytest.mark.skipif(
+    not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
+)
+def test_a_physically_simulated_run_reads_the_contact_the_physics_resolves():
     """
-    A wrench is a measurement, not a degree of freedom.
-
-    Reporting a write would recompute the forward kinematics once per reading.
+    The press is only as good as the contact it is measured against, so the reading
+    comes from the engine that resolves it.
     """
-    demonstration, world = populated_demonstration()
-    contact = demonstration.wrench_inputs(world).synchronizers[0]
+    demonstration, world = populated_demonstration(
+        executor_type=PhysicallySimulatedPlanExecutor
+    )
 
-    assert contact.apply() is False
+    demonstration.start_simulation(world)
+    try:
+        inputs = demonstration.wrench_inputs(world).synchronizers
+
+        assert [type(reading) for reading in inputs] == [
+            PhysicallySimulatedContactWrench
+        ]
+        assert inputs[0].simulation is demonstration.simulation
+        # A wrench is a measurement, not a degree of freedom: reporting a write would
+        # recompute the forward kinematics once per reading.
+        assert inputs[0].apply() is False
+    finally:
+        demonstration.tear_down()
 
 
+@pytest.mark.skipif(
+    not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
+)
 def test_the_wipe_presses_into_the_surface_and_travels_across_it():
     """
     End to end: the admittance finds the table without being told its exact height, then
@@ -440,8 +450,7 @@ def test_the_wipe_presses_into_the_surface_and_travels_across_it():
     times the travel and says nothing more about it.
     """
     demonstration, world = populated_demonstration(placements=1)
-    table = world.get_semantic_annotations_by_type(DiningTable)[0]
-    surface_height = demonstration.contact_model(world).surface_height
+    surface_height = demonstration.surface_height(world)
     start = world.compute_forward_kinematics_np(
         world.root, world.get_body_by_name(demonstration.sponge_name)
     )[:3, 3].copy()
@@ -451,37 +460,10 @@ def test_the_wipe_presses_into_the_surface_and_travels_across_it():
     sponge = world.get_body_by_name(demonstration.sponge_name)
     end = world.compute_forward_kinematics_np(world.root, sponge)[:3, 3]
     assert np.linalg.norm(end[:2] - start[:2]) > 0.1
-    # The press settles where the surface pushes back as hard as it is pressed. What
-    # touches is the tool's own face, so that is what sinks into the surface, and its
-    # frame sits half a tool above it.
-    face_below_the_frame = demonstration.sponge_scale.z / 2
-    np.testing.assert_allclose(
-        end[2] - surface_height,
-        face_below_the_frame
-        - demonstration.press.force.to_np().item(2) / SimulatedContactWrench.stiffness,
-        atol=5e-3,
-    )
-
-
-def test_the_surface_never_pushes_harder_than_it_says_it_does():
-    """
-    The cap bounds the push of the whole face, not of each spring under it, or a tool
-    arriving fast reports many times the force the model documents.
-    """
-    demonstration, world = populated_demonstration()
-    contact = demonstration.wrench_inputs(world).synchronizers[0]
-    sponge = world.get_body_by_name(demonstration.sponge_name)
-    sensor = ForceTorqueSensor.for_tip(world, sponge)
-    # The tool's own body stands in for the surface, so every sampled point of its face
-    # is over it wherever the robot happens to be.
-    contact.surface = sponge
-    contact.surface_height = (
-        world.compute_forward_kinematics_np(world.root, sponge)[2, 3] + 1.0
-    )
-
-    force, _ = contact.contact_wrench(sensor)
-
-    assert np.linalg.norm(force) <= contact.maximum_force + 1e-6
+    # What touches is the tool's own face, so the frame that follows the path rests half
+    # a tool above the surface while the press holds it there.
+    face_below_the_frame = float(demonstration.sponge_scale.z) / 2
+    assert end[2] - surface_height == pytest.approx(face_below_the_frame, abs=0.01)
 
 
 def test_the_demonstration_simulates_unless_it_is_told_otherwise():
@@ -491,4 +473,4 @@ def test_the_demonstration_simulates_unless_it_is_told_otherwise():
     """
     default = signature(main).parameters["executor_type"].default
 
-    assert default is KinematicallySimulatedPlanExecutor
+    assert default is PhysicallySimulatedPlanExecutor

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 from std_srvs.srv import Trigger
-from typing_extensions import Any, Type
+from typing_extensions import Any
 
 from giskardpy.ros2_tools.exceptions import (
     ForceTorqueSensorNotTared,
@@ -15,6 +15,8 @@ from giskardpy.ros2_tools.wrench_compensation_node import (
     WrenchCompensationClient,
     WrenchGravityCompensator,
 )
+from krrood_spatial_math.spatial_types import RotationMatrix
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.robots.hsrb import HSRBService
 from semantic_digital_twin.robots.robot_parts import (
     ForceTorqueSensor,
@@ -28,20 +30,23 @@ Sensor axes aligned with the gravity frame, so gravity points along sensor -z.
 
 
 def rotated_about_x(angle: float) -> np.ndarray:
-    cosine, sine = np.cos(angle), np.sin(angle)
-    return np.array([[1.0, 0.0, 0.0], [0.0, cosine, -sine], [0.0, sine, cosine]])
+    """
+    :param angle: How far the sensor is turned about its x axis, in rad.
+    :return: The rotation from the sensor to the gravity frame.
+    """
+    return RotationMatrix.from_rpy(roll=angle).to_np()[:3, :3]
 
 
-def reading_at_rest(load: ForceTorqueSensorLoad, base_R_sensor: np.ndarray):
+def reading_at_rest(load: ForceTorqueSensorLoad, base_R_sensor: np.ndarray) -> Wrench:
     """
     The raw wrench the identified model predicts when nothing touches the tool.
     """
     gravity_in_sensor = base_R_sensor.T @ np.array(
         [0.0, 0.0, -WrenchGravityCompensator().gravity]
     )
-    return (
-        load.force_offset + load.mass * gravity_in_sensor,
-        load.torque_offset + np.cross(load.first_moment, gravity_in_sensor),
+    return Wrench(
+        force=load.force_offset + load.mass * gravity_in_sensor,
+        torque=load.torque_offset + np.cross(load.first_moment, gravity_in_sensor),
     )
 
 
@@ -67,23 +72,26 @@ def test_a_resting_sensor_reports_no_contact_in_any_pose(angle, wrist_load):
     load = wrist_load
     compensator = WrenchGravityCompensator(load=load)
     base_R_sensor = rotated_about_x(angle)
-    force_raw, torque_raw = reading_at_rest(load, base_R_sensor)
 
-    force, torque = compensator.contact_wrench(force_raw, torque_raw, base_R_sensor)
+    contact = compensator.contact_wrench(
+        reading_at_rest(load, base_R_sensor), base_R_sensor
+    )
 
-    np.testing.assert_allclose(force, np.zeros(3), atol=1e-9)
-    np.testing.assert_allclose(torque, np.zeros(3), atol=1e-9)
+    np.testing.assert_allclose(contact.force, np.zeros(3), atol=1e-9)
+    np.testing.assert_allclose(contact.torque, np.zeros(3), atol=1e-9)
 
 
 def test_a_push_survives_the_compensation(wrist_load):
     load = wrist_load
     compensator = WrenchGravityCompensator(load=load)
-    force_raw, torque_raw = reading_at_rest(load, UPRIGHT)
+    at_rest = reading_at_rest(load, UPRIGHT)
     push = np.array([0.0, 0.0, -8.0])
 
-    force, _ = compensator.contact_wrench(force_raw + push, torque_raw, UPRIGHT)
+    contact = compensator.contact_wrench(
+        Wrench(force=at_rest.force + push, torque=at_rest.torque), UPRIGHT
+    )
 
-    np.testing.assert_allclose(force, push, atol=1e-9)
+    np.testing.assert_allclose(contact.force, push, atol=1e-9)
 
 
 def test_an_unidentified_sensor_passes_its_reading_through():
@@ -93,10 +101,10 @@ def test_an_unidentified_sensor_passes_its_reading_through():
     compensator = WrenchGravityCompensator()
     reading = np.array([1.0, -2.0, 3.0])
 
-    force, torque = compensator.contact_wrench(reading, reading, UPRIGHT)
+    contact = compensator.contact_wrench(Wrench(force=reading, torque=reading), UPRIGHT)
 
-    np.testing.assert_allclose(force, reading)
-    np.testing.assert_allclose(torque, reading)
+    np.testing.assert_allclose(contact.force, reading)
+    np.testing.assert_allclose(contact.torque, reading)
 
 
 def test_gravity_points_down_in_a_level_sensor():
@@ -116,11 +124,15 @@ def test_a_still_sensor_yields_its_mean_residual():
     generator = np.random.default_rng(0)
 
     for _ in range(estimator.required_samples):
-        estimator.add(residual + generator.normal(scale=0.01, size=3), residual)
+        estimator.add(
+            Wrench(
+                force=residual + generator.normal(scale=0.01, size=3), torque=residual
+            )
+        )
 
-    bias_force, bias_torque = estimator.result()
-    np.testing.assert_allclose(bias_force, residual, atol=0.05)
-    np.testing.assert_allclose(bias_torque, residual)
+    bias = estimator.result()
+    np.testing.assert_allclose(bias.force, residual, atol=0.05)
+    np.testing.assert_allclose(bias.torque, residual)
 
 
 def test_a_moving_sensor_is_refused():
@@ -130,7 +142,7 @@ def test_a_moving_sensor_is_refused():
     estimator = BiasEstimator(required_samples=10, stationary_force_spread=0.5)
 
     for sample in range(estimator.required_samples):
-        estimator.add(np.array([float(sample), 0.0, 0.0]), np.zeros(3))
+        estimator.add(Wrench(force=np.array([float(sample), 0.0, 0.0])))
 
     assert estimator.result() is None
 
@@ -143,8 +155,8 @@ def test_a_window_counts_what_it_collected():
     estimator = BiasEstimator(required_samples=4)
 
     assert estimator.collected == 0
-    estimator.add(np.zeros(3), np.zeros(3))
-    estimator.add(np.zeros(3), np.zeros(3))
+    estimator.add(Wrench())
+    estimator.add(Wrench())
 
     assert estimator.collected == 2
 
@@ -160,8 +172,8 @@ def test_a_window_reports_how_far_its_forces_spread():
     """
     estimator = BiasEstimator(required_samples=2)
 
-    estimator.add(np.array([0.0, 0.0, 1.0]), np.zeros(3))
-    estimator.add(np.array([0.0, 0.0, 3.0]), np.zeros(3))
+    estimator.add(Wrench(force=np.array([0.0, 0.0, 1.0])))
+    estimator.add(Wrench(force=np.array([0.0, 0.0, 3.0])))
 
     assert estimator.force_spread == pytest.approx(1.0)
 
@@ -173,7 +185,7 @@ def test_noise_averages_out_between_the_halves_of_a_window():
     """
     estimator = BiasEstimator(required_samples=4)
     for force in (-1.0, 1.0, -1.0, 1.0):
-        estimator.add(np.array([0.0, 0.0, force]), np.zeros(3))
+        estimator.add(Wrench(force=np.array([0.0, 0.0, force])))
 
     assert estimator.force_shift == pytest.approx(0.0)
 
@@ -181,7 +193,7 @@ def test_noise_averages_out_between_the_halves_of_a_window():
 def test_a_drifting_reading_shows_up_as_a_shift_across_the_window():
     estimator = BiasEstimator(required_samples=4)
     for force in (0.0, 1.0, 2.0, 3.0):
-        estimator.add(np.array([0.0, 0.0, force]), np.zeros(3))
+        estimator.add(Wrench(force=np.array([0.0, 0.0, force])))
 
     # The halves average 0.5 and 2.5.
     assert estimator.force_shift == pytest.approx(2.0)
@@ -190,14 +202,14 @@ def test_a_drifting_reading_shows_up_as_a_shift_across_the_window():
 def test_a_short_window_is_not_a_result():
     estimator = BiasEstimator(required_samples=10)
 
-    assert not estimator.add(np.zeros(3), np.zeros(3))
+    assert not estimator.add(Wrench())
     assert estimator.result() is None
 
 
 def test_the_window_is_full_only_at_the_requested_count():
     estimator = BiasEstimator(required_samples=3)
 
-    assert [estimator.add(np.zeros(3), np.zeros(3)) for _ in range(3)] == [
+    assert [estimator.add(Wrench()) for _ in range(3)] == [
         False,
         False,
         True,
@@ -205,13 +217,12 @@ def test_the_window_is_full_only_at_the_requested_count():
 
 
 def test_a_measured_bias_is_subtracted_from_later_readings():
-    compensator = WrenchGravityCompensator()
     drift = np.array([0.0, 0.0, 2.5])
+    compensator = WrenchGravityCompensator(bias=Wrench(force=drift))
 
-    compensator.bias_force = drift
+    contact = compensator.contact_wrench(Wrench(force=drift), UPRIGHT)
 
-    force, _ = compensator.contact_wrench(drift, np.zeros(3), UPRIGHT)
-    np.testing.assert_allclose(force, np.zeros(3))
+    np.testing.assert_allclose(contact.force, np.zeros(3))
 
 
 # %% the load comes from the robot annotation
@@ -274,7 +285,7 @@ class NodeOfferingOneService:
     The client every request is made through.
     """
 
-    def create_client(self, service_type: Type[Any], service_name: str):
+    def create_client(self, service_type: type[Any], service_name: str):
         return self.client
 
 

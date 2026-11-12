@@ -30,14 +30,66 @@ from krrood_spatial_math.spatial_types import Point3, Vector3
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 
 
-class GoalFrameAxis(IntEnum):
+class CartesianAxis(IntEnum):
     """
-    The goal frame's axes, in the order the admittance state is laid out.
+    The axes of a Cartesian frame, in the order a :class:`Vector3` holds them.
     """
 
     X = 0
     Y = 1
     Z = 2
+
+
+# %% how hard a tool is held against what it works on
+
+
+@dataclass(frozen=True)
+class Press:
+    """
+    The force a motion holds against what it works on, and how it may yield to reach
+    that force.
+    """
+
+    force: Vector3 = field(default_factory=Vector3)
+    """
+    Contact force to hold, in N, in the frame it names, or in the goal frame where it
+    names none.
+    """
+
+    mass: Vector3 = field(default_factory=lambda: Vector3(x=1.0, y=1.0, z=1.0))
+    """
+    Virtual mass the press yields with, per axis, in kg.
+    """
+
+    damping: Vector3 = field(default_factory=lambda: Vector3(x=20.0, y=20.0, z=100.0))
+    """
+    Virtual damping the press yields with, per axis, in N s/m.
+    """
+
+    stiffness: Vector3 = field(default_factory=Vector3)
+    """
+    Virtual stiffness the press yields with, per axis, in N/m.
+
+    Zero lets the offset persist once the force is balanced, instead of pulling it back
+    to the nominal trajectory.
+    """
+
+    maximum_offset: Vector3 = field(
+        default_factory=lambda: Vector3(x=0.02, y=0.02, z=0.02)
+    )
+    """
+    How far the press may yield from the trajectory, per axis, in m.
+
+    .. warning:: Zero on an axis keeps the tip rigid along it, which an axis that only
+        feels friction needs. Without a bound the offset is a pure integrator: an
+        unbalanced force walks the goal metres away while the arm catches up.
+    """
+
+    lead_time: float = 0.0
+    """
+    How far ahead of its own offset the press tracks, in s, to compensate the delay
+    before the arm reaches a commanded pose.
+    """
 
 
 # %% yielding to contact force
@@ -49,58 +101,13 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
     Follow a trajectory while yielding to contact force.
 
     The tip is pulled towards the trajectory point offset by a virtual
-    mass-damper-spring, driven by the difference between the measured and the desired
-    contact force. The offset carries across the whole trajectory, so the press stays
-    settled while the tool travels from waypoint to waypoint.
-
-    .. note:: Without stiffness the offset also seeks contact on its own, so the
-        commanded surface height need not be exact: out of contact the whole desired
-        force is an error and the tool drifts towards the surface until it touches.
+    mass-damper-spring, driven by the measured force against the pressed one. Without
+    stiffness the offset seeks contact itself, so the surface height may be inexact.
     """
 
-    desired_force: Vector3 = field(default_factory=Vector3, kw_only=True)
+    press: Press = field(default_factory=Press, kw_only=True)
     """
-    Contact force the admittance balances, in the goal frame, in N.
-    """
-
-    mass: Vector3 = field(
-        default_factory=lambda: Vector3(x=1.0, y=1.0, z=1.0), kw_only=True
-    )
-    """
-    Virtual mass per axis, in kg.
-    """
-
-    damping: Vector3 = field(
-        default_factory=lambda: Vector3(x=20.0, y=20.0, z=100.0), kw_only=True
-    )
-    """
-    Virtual damping per axis, in N s/m.
-    """
-
-    stiffness: Vector3 = field(default_factory=Vector3, kw_only=True)
-    """
-    Virtual stiffness per axis, in N/m.
-
-    Zero lets the offset persist once the force is balanced, instead of pulling it back
-    to the nominal trajectory.
-    """
-
-    maximum_offset: Vector3 = field(
-        default_factory=lambda: Vector3(x=0.02, y=0.02, z=0.02), kw_only=True
-    )
-    """
-    How far the offset may take the tool from the trajectory, per axis, in m.
-
-    .. warning:: Without a bound the offset is a pure integrator: an unbalanced desired
-        force walks the goal metres away from the trajectory while the arm catches up.
-    """
-
-    lead_time: float = field(default=0.0, kw_only=True)
-    """
-    How far ahead of the offset the tracked point is placed, in s.
-
-    Compensates the delay between commanding a pose and the tool reaching it; zero hands
-    the offset on as it stands.
+    The force this trajectory holds against the surface, and how it may yield for it.
     """
 
     maximum_silence: timedelta = field(
@@ -151,13 +158,23 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
 
     @property
     def tracked_point(self) -> Point3:
+        """
+        Offset by what the press has yielded, see
+        :attr:`~giskardpy.motion_statechart.tasks.cartesian_tasks.
+        CartesianPositionTrajectory.tracked_point`.
+        """
         return self.goal_reference_frame_P_current_target_point + (
             self._admittance_position
         )
 
     @property
     def offset_from_trajectory(self) -> np.ndarray:
-        return self._state[:3] + self.lead_time * self._state[3:]
+        """
+        What the press has yielded, see
+        :attr:`~giskardpy.motion_statechart.tasks.cartesian_tasks.
+        CartesianPositionTrajectory.offset_from_trajectory`.
+        """
+        return self._state[:3] + self.press.lead_time * self._state[3:]
 
     @classproperty
     def required_context_extensions(cls) -> tuple[type[ContextExtension], ...]:
@@ -190,8 +207,7 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
                 self._state,
             )
             self.context.float_variable_data.set_value(
-                self._admittance_position,
-                self._state[:3] + self.lead_time * self._state[3:],
+                self._admittance_position, self.offset_from_trajectory
             )
         return super().on_tick()
 
@@ -234,16 +250,16 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
 
         :raises NonPositiveVirtualMassError: If any axis has a non-positive mass.
         """
-        if any(float(self.mass[axis]) <= 0 for axis in GoalFrameAxis):
-            raise NonPositiveVirtualMassError(node=self, mass=self.mass)
+        if any(float(self.press.mass[axis]) <= 0 for axis in CartesianAxis):
+            raise NonPositiveVirtualMassError(node=self, mass=self.press.mass)
 
         position_variables = [
             FloatVariable(name=f"{self.name}/admittance_position.{axis.name.lower()}")
-            for axis in GoalFrameAxis
+            for axis in CartesianAxis
         ]
         velocity_variables = [
             FloatVariable(name=f"{self.name}/admittance_velocity.{axis.name.lower()}")
-            for axis in GoalFrameAxis
+            for axis in CartesianAxis
         ]
         self._admittance_position = Vector3(
             *position_variables, reference_frame=self.goal_reference_frame
@@ -256,6 +272,7 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
         measured_force = goal_T_sensor.rotation_matrix @ self._force_torque_sensor.force
         self._compiled_step = self._yielding_step(
             measured_force=measured_force,
+            pressed_force=self._pressed_force_in_goal_frame(),
             positions=position_variables,
             velocities=velocity_variables,
             control_dt=self._control_time_step.total_seconds(),
@@ -268,16 +285,29 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
             sparse=False,
         )
 
+    def _pressed_force_in_goal_frame(self) -> Vector3:
+        """
+        :return: :attr:`Press.force` in the goal frame, which is where it already is
+            when it names no frame of its own.
+        """
+        if self.press.force.reference_frame is None:
+            return self.press.force
+        goal_T_force = self.context.world.compose_forward_kinematics_expression(
+            self.goal_reference_frame, self.press.force.reference_frame
+        )
+        return goal_T_force.rotation_matrix @ self.press.force
+
     def _yielding_step(
         self,
         measured_force: Vector3,
+        pressed_force: Vector3,
         positions: list[FloatVariable],
         velocities: list[FloatVariable],
         control_dt: float,
     ) -> sm.Vector:
         """
         One step of the virtual dynamics, per axis: ``mass * acceleration + damping *
-        velocity + stiffness * position = measured_force - desired_force``.
+        velocity + stiffness * position = measured_force - pressed_force``.
 
         .. warning:: The damping and stiffness terms are taken implicitly, which is
             stable for any positive parameters; taken explicitly the integration
@@ -285,23 +315,24 @@ class AdmittanceCartesianTrajectory(CartesianPositionTrajectory):
 
         :return: The next offsets followed by the next rates, stacked.
         """
+        press = self.press
         next_positions, next_velocities = [], []
-        for axis in GoalFrameAxis:
+        for axis in CartesianAxis:
             position, velocity = positions[axis], velocities[axis]
-            error = measured_force[axis] - self.desired_force[axis]
+            error = measured_force[axis] - pressed_force[axis]
             next_velocity = (
-                self.mass[axis] * velocity
-                + (error - self.stiffness[axis] * position) * control_dt
+                press.mass[axis] * velocity
+                + (error - press.stiffness[axis] * position) * control_dt
             ) / (
-                self.mass[axis]
-                + self.damping[axis] * control_dt
-                + self.stiffness[axis] * control_dt**2
+                press.mass[axis]
+                + press.damping[axis] * control_dt
+                + press.stiffness[axis] * control_dt**2
             )
             next_positions.append(
                 limit(
                     position + next_velocity * control_dt,
-                    -self.maximum_offset[axis],
-                    self.maximum_offset[axis],
+                    -press.maximum_offset[axis],
+                    press.maximum_offset[axis],
                 )
             )
             next_velocities.append(next_velocity)

@@ -10,7 +10,7 @@ from coraplex.plans.failures import PlanFailure
 if TYPE_CHECKING:
     from coraplex.robot_plans.actions.base import Action
     from cramph.node import StatechartNode
-    from semantic_digital_twin.robots.robot_parts import AbstractRobot
+    from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
     from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
     from semantic_digital_twin.world_description.world_entity import (
         SemanticAnnotation,
@@ -182,6 +182,29 @@ class WipingTargetMissing(DataclassException):
 
     def suggest_correction(self) -> str:
         return "provide either a container body or a target pose to wipe."
+
+
+@dataclass
+class MissingToolFrame(DataclassException):
+    """
+    Raised when no tool frame is available for the requested arm.
+    """
+
+    arm: Arm
+    """
+    The arm whose tool frame was requested.
+    """
+
+    robot: AbstractRobot
+    """
+    The robot whose arm was searched.
+    """
+
+    def error_message(self) -> str:
+        return f"no tool frame available for arm {self.arm} of {self.robot}"
+
+    def suggest_correction(self) -> str:
+        return "ensure the arm's end effector defines a tool frame."
 
 
 @dataclass

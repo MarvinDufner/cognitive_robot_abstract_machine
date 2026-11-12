@@ -25,16 +25,14 @@ import numpy as np
 import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
-from typing_extensions import Dict, List, Tuple, Type
-
 from giskardpy.ros2_tools.exceptions import NoTransformChainInBagError
 from giskardpy.ros2_tools.wrench_compensation_node import WrenchGravityCompensator
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.robots.hsrb import HSRBWristForceTorqueSensor
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from semantic_digital_twin.spatial_types import Quaternion
 
 Rotation = np.ndarray
-TransformKey = Tuple[str, str]
 
 
 class TransformTopic(StrEnum):
@@ -64,20 +62,69 @@ def rotation_of(rotation) -> Rotation:
     ).rotation_matrix.to_np()[:3, :3]
 
 
+@dataclass(frozen=True)
+class TransformKey:
+    """
+    The two frames one recorded transform relates.
+    """
+
+    parent: str
+    """
+    The frame the transform is expressed in.
+    """
+
+    child: str
+    """
+    The frame it places.
+    """
+
+
+@dataclass(frozen=True)
+class SampledRotation:
+    """
+    One recorded rotation and when it was recorded.
+    """
+
+    time: float
+    """
+    When it was recorded, in seconds.
+    """
+
+    rotation: Rotation
+    """
+    The rotation itself.
+    """
+
+
+@dataclass(frozen=True)
+class StampedWrench:
+    """
+    One recorded reading and when it was taken.
+    """
+
+    time: float
+    """
+    When it was taken, in seconds.
+    """
+
+    wrench: Wrench
+    """
+    The reading itself, in the sensor frame.
+    """
+
+
 @dataclass
 class RecordedTransforms:
     """
     The transforms a bag holds, kept apart by whether they can change.
     """
 
-    moving: Dict[TransformKey, List[Tuple[float, Rotation]]] = field(
-        default_factory=dict
-    )
+    moving: dict[TransformKey, list[SampledRotation]] = field(default_factory=dict)
     """
     Rotations over time, per parent and child frame.
     """
 
-    static: Dict[TransformKey, Rotation] = field(default_factory=dict)
+    static: dict[TransformKey, Rotation] = field(default_factory=dict)
     """
     Rotations that hold for the whole recording, per parent and child frame.
     """
@@ -87,23 +134,25 @@ class RecordedTransforms:
         :param topic: The transform topic the message arrived on.
         :param transform: One transform of that message.
         """
-        key = (transform.header.frame_id, transform.child_frame_id)
+        key = TransformKey(
+            parent=transform.header.frame_id, child=transform.child_frame_id
+        )
         rotation = rotation_of(transform.transform.rotation)
         if topic == TransformTopic.STATIC:
             self.static[key] = rotation
             return
         self.moving.setdefault(key, []).append(
-            (seconds(transform.header.stamp), rotation)
+            SampledRotation(time=seconds(transform.header.stamp), rotation=rotation)
         )
 
-    def chain(self, tip: str, root: str) -> List[str]:
+    def chain(self, tip: str, root: str) -> list[str]:
         """
         :param tip: The frame to start at.
         :param root: The frame to end at.
         :return: The frames from ``tip`` up to ``root``.
         :raises NoTransformChainInBagError: If the recording does not connect the two.
         """
-        parent = {child: par for par, child in list(self.static) + list(self.moving)}
+        parent = {key.child: key.parent for key in (*self.static, *self.moving)}
         path, current = [tip], tip
         while current != root:
             if current not in parent:
@@ -112,7 +161,7 @@ class RecordedTransforms:
             path.append(current)
         return path
 
-    def rotation_along(self, path: List[str], time: float) -> Rotation:
+    def rotation_along(self, path: list[str], time: float) -> Rotation:
         """
         :param path: The frames from the tip up to the root, as :meth:`chain` returns.
         :param time: When the rotation is wanted, in seconds.
@@ -121,12 +170,13 @@ class RecordedTransforms:
         """
         rotation = np.eye(3)
         for child, parent in zip(path[:-1], path[1:]):
-            if (parent, child) in self.static:
-                edge = self.static[(parent, child)]
+            key = TransformKey(parent=parent, child=child)
+            if key in self.static:
+                edge = self.static[key]
             else:
-                series = self.moving[(parent, child)]
-                times = np.array([sample[0] for sample in series])
-                edge = series[int(np.argmin(np.abs(times - time)))][1]
+                series = self.moving[key]
+                times = np.array([sample.time for sample in series])
+                edge = series[int(np.argmin(np.abs(times - time)))].rotation
             rotation = edge @ rotation
         return rotation
 
@@ -138,7 +188,7 @@ class CompensationCheck:
     what is left is noise.
     """
 
-    sensor: Type[ForceTorqueSensor]
+    sensor: type[ForceTorqueSensor]
     """
     The sensor whose load, frame and topic the recording is read with.
     """
@@ -174,7 +224,7 @@ class CompensationCheck:
             for topic in reader.get_all_topics_and_types()
         }
 
-        wrenches: List[Tuple[float, np.ndarray, np.ndarray]] = []
+        wrenches: list[StampedWrench] = []
         transforms = RecordedTransforms()
         while reader.has_next():
             topic, data, _ = reader.read_next()
@@ -182,17 +232,19 @@ class CompensationCheck:
             if topic == self.sensor.compensation.uncompensated_topic_name:
                 force, torque = message.wrench.force, message.wrench.torque
                 wrenches.append(
-                    (
-                        seconds(message.header.stamp),
-                        np.array([force.x, force.y, force.z]),
-                        np.array([torque.x, torque.y, torque.z]),
+                    StampedWrench(
+                        time=seconds(message.header.stamp),
+                        wrench=Wrench(
+                            force=np.array([force.x, force.y, force.z]),
+                            torque=np.array([torque.x, torque.y, torque.z]),
+                        ),
                     )
                 )
             elif topic in tuple(TransformTopic):
                 for transform in message.transforms:
                     transforms.add(topic, transform)
         for series in transforms.moving.values():
-            series.sort(key=lambda sample: sample[0])
+            series.sort(key=lambda sample: sample.time)
         return wrenches, transforms
 
     def settled_residuals(self, wrenches, transforms, path):
@@ -205,18 +257,16 @@ class CompensationCheck:
         """
         compensator = WrenchGravityCompensator(load=self.sensor.compensation.load)
         forces, torques, previous_gravity = [], [], None
-        for time, force_raw, torque_raw in wrenches:
-            base_R_sensor = transforms.rotation_along(path, time)
+        for sample in wrenches:
+            base_R_sensor = transforms.rotation_along(path, sample.time)
             gravity = compensator.gravity_in_sensor(base_R_sensor)
             if previous_gravity is not None and self._swung(gravity, previous_gravity):
                 previous_gravity = gravity
                 continue
             previous_gravity = gravity
-            force, torque = compensator.contact_wrench(
-                force_raw, torque_raw, base_R_sensor
-            )
-            forces.append(force)
-            torques.append(torque)
+            contact = compensator.contact_wrench(sample.wrench, base_R_sensor)
+            forces.append(contact.force)
+            torques.append(contact.torque)
         return np.array(forces), np.array(torques)
 
     def _swung(self, gravity: np.ndarray, previous: np.ndarray) -> bool:

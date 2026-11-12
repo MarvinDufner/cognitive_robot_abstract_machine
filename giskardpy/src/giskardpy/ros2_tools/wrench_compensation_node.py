@@ -4,9 +4,9 @@ ROS 2 node and utilities to turn a raw force/torque reading into the external co
 wrench, by removing the weight of what is mounted past the sensor and the sensor's own
 bias.
 
-Complements :mod:`giskardpy.ros2_tools.force_torque_filter_node`, which denoises a
-signal but deliberately does not model the load: its offset estimator tracks the signal,
-so a sustained contact force would slowly be absorbed into the offset.
+.. note:: :mod:`giskardpy.ros2_tools.force_torque_filter_node` denoises a signal but
+    deliberately does not model the load: its offset estimator tracks the signal, so a
+    sustained contact force would slowly be absorbed into the offset.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
-from typing_extensions import List, Optional, Tuple, Type
 
 from giskardpy.ros2_tools.exceptions import (
     ForceTorqueSensorNotTared,
@@ -31,6 +30,7 @@ from giskardpy.ros2_tools.exceptions import (
     WrenchCompensationUnavailable,
 )
 from krrood_spatial_math.spatial_types import Quaternion
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.robots.robot_parts import (
     ForceTorqueSensor,
     ForceTorqueSensorLoad,
@@ -57,14 +57,9 @@ class WrenchGravityCompensator:
     Gravitational acceleration, in m/s^2.
     """
 
-    bias_force: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    bias: Wrench = field(default_factory=Wrench)
     """
-    Residual force bias measured by the last re-tare, in N.
-    """
-
-    bias_torque: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    """
-    Residual torque bias measured by the last re-tare, in N m.
+    Residual bias measured by the last re-tare, in the sensor frame.
     """
 
     def gravity_in_sensor(self, base_R_sensor: np.ndarray) -> np.ndarray:
@@ -75,44 +70,36 @@ class WrenchGravityCompensator:
         """
         return base_R_sensor.T @ np.array([0.0, 0.0, -self.gravity])
 
-    def without_load(
-        self,
-        force_raw: np.ndarray,
-        torque_raw: np.ndarray,
-        base_R_sensor: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def without_load(self, raw: Wrench, base_R_sensor: np.ndarray) -> Wrench:
         """
         The reading with the load's weight and the constant bias removed, but before the
         re-tare bias. This is the residual a re-tare averages.
 
-        :param force_raw: Raw force in the sensor frame.
-        :param torque_raw: Raw torque in the sensor frame.
+        :param raw: The sensor's own reading, in its frame.
         :param base_R_sensor: Rotation from sensor to a gravity-aligned frame.
         """
         gravity_in_sensor = self.gravity_in_sensor(base_R_sensor)
-        force = force_raw - self.load.force_offset - self.load.mass * gravity_in_sensor
-        torque = (
-            torque_raw
+        return Wrench(
+            force=raw.force
+            - self.load.force_offset
+            - self.load.mass * gravity_in_sensor,
+            torque=raw.torque
             - self.load.torque_offset
-            - np.cross(self.load.first_moment, gravity_in_sensor)
+            - np.cross(self.load.first_moment, gravity_in_sensor),
         )
-        return force, torque
 
-    def contact_wrench(
-        self,
-        force_raw: np.ndarray,
-        torque_raw: np.ndarray,
-        base_R_sensor: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def contact_wrench(self, raw: Wrench, base_R_sensor: np.ndarray) -> Wrench:
         """
         The external contact wrench in the sensor frame.
 
-        :param force_raw: Raw force in the sensor frame.
-        :param torque_raw: Raw torque in the sensor frame.
+        :param raw: The sensor's own reading, in its frame.
         :param base_R_sensor: Rotation from sensor to a gravity-aligned frame.
         """
-        force, torque = self.without_load(force_raw, torque_raw, base_R_sensor)
-        return force - self.bias_force, torque - self.bias_torque
+        residual = self.without_load(raw, base_R_sensor)
+        return Wrench(
+            force=residual.force - self.bias.force,
+            torque=residual.torque - self.bias.torque,
+        )
 
 
 @dataclass
@@ -135,41 +122,33 @@ class BiasEstimator:
     below the movement or contact it has to reject.
     """
 
-    _forces: List[np.ndarray] = field(default_factory=list, init=False)
+    _residuals: list[Wrench] = field(default_factory=list, init=False)
     """
-    Force residuals collected so far.
-    """
-
-    _torques: List[np.ndarray] = field(default_factory=list, init=False)
-    """
-    Torque residuals collected so far.
+    Load-compensated residuals collected so far.
     """
 
     def reset(self) -> None:
         """
         Discard the samples collected so far.
         """
-        self._forces.clear()
-        self._torques.clear()
+        self._residuals.clear()
 
     @property
     def collected(self) -> int:
         """
         How many residuals the window holds so far.
         """
-        return len(self._forces)
+        return len(self._residuals)
 
-    def add(self, force: np.ndarray, torque: np.ndarray) -> bool:
+    def add(self, residual: Wrench) -> bool:
         """
         Add one residual.
 
-        :param force: Load-compensated force residual.
-        :param torque: Load-compensated torque residual.
+        :param residual: The load-compensated reading to average in.
         :return: Whether the window is now full.
         """
-        self._forces.append(force)
-        self._torques.append(torque)
-        return len(self._forces) >= self.required_samples
+        self._residuals.append(residual)
+        return len(self._residuals) >= self.required_samples
 
     @property
     def force_spread(self) -> float:
@@ -179,39 +158,49 @@ class BiasEstimator:
         What tells a window the sensor sat still through from one it was moved or
         touched during. ``nan`` while nothing has been collected.
         """
-        if not self._forces:
+        if not self._residuals:
             return float("nan")
-        return float(np.array(self._forces).std(axis=0).max())
+        return float(self._collected_forces.std(axis=0).max())
 
     @property
     def force_shift(self) -> float:
         """
         How far the largest axis moved from the first half of the window to the second,
-        in N.
+        in N, which separates a drifting reading from a merely noisy one: noise averages
+        out between the halves, a drift does not.
 
-        Separates a reading that is drifting from one that is merely noisy: noise averages
-        out between the halves, a drift does not. ``nan`` while the window is too short to
-        halve.
+        ``nan`` while the window cannot be halved.
         """
-        if len(self._forces) < 2:
+        if len(self._residuals) < 2:
             return float("nan")
-        forces = np.array(self._forces)
+        forces = self._collected_forces
         half = len(forces) // 2
         return float(
             np.abs(forces[half:].mean(axis=0) - forces[:half].mean(axis=0)).max()
         )
 
-    def result(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    @property
+    def _collected_forces(self) -> np.ndarray:
+        """
+        :return: The forces of the collected residuals, as rows.
+        """
+        return np.array([residual.force for residual in self._residuals])
+
+    def result(self) -> Wrench | None:
         """
         :return: The mean bias, or None while the window is short or if the sensor moved
             during it.
         """
-        if len(self._forces) < self.required_samples:
+        if len(self._residuals) < self.required_samples:
             return None
         if self.force_spread > self.stationary_force_spread:
             return None
-        forces = np.array(self._forces)
-        return forces.mean(axis=0), np.array(self._torques).mean(axis=0)
+        return Wrench(
+            force=self._collected_forces.mean(axis=0),
+            torque=np.array([residual.torque for residual in self._residuals]).mean(
+                axis=0
+            ),
+        )
 
 
 # %% ros node
@@ -227,7 +216,7 @@ class WrenchCompensationNode(Node):
     working unchanged.
     """
 
-    sensor: Type[ForceTorqueSensor] = field(kw_only=True)
+    sensor: type[ForceTorqueSensor] = field(kw_only=True)
     """
     The sensor to compensate.
 
@@ -303,7 +292,7 @@ class WrenchCompensationNode(Node):
             callback_group=group,
         )
 
-    def _base_R_sensor(self, sensor_frame: str) -> Optional[np.ndarray]:
+    def _base_R_sensor(self, sensor_frame: str) -> np.ndarray | None:
         """
         :param sensor_frame: Frame the incoming wrench is expressed in.
         :return: Rotation from the sensor to the gravity frame, or None while tf cannot
@@ -325,39 +314,48 @@ class WrenchCompensationNode(Node):
         ).rotation_matrix.to_np()[:3, :3]
 
     def _on_message(self, message: WrenchStamped) -> None:
+        """
+        Publish one reading's contact wrench, and collect its residual while a re-tare
+        is running. A reading tf cannot place the sensor for is dropped.
+
+        :param message: The sensor's own reading.
+        """
         base_R_sensor = self._base_R_sensor(
             message.header.frame_id or self.sensor.frame_name
         )
         if base_R_sensor is None:
             return
-        force_raw = np.array(
-            [message.wrench.force.x, message.wrench.force.y, message.wrench.force.z]
+        raw = Wrench(
+            force=np.array(
+                [message.wrench.force.x, message.wrench.force.y, message.wrench.force.z]
+            ),
+            torque=np.array(
+                [
+                    message.wrench.torque.x,
+                    message.wrench.torque.y,
+                    message.wrench.torque.z,
+                ]
+            ),
         )
-        torque_raw = np.array(
-            [message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z]
-        )
-        force, torque = self.compensator.without_load(
-            force_raw, torque_raw, base_R_sensor
-        )
+        residual = self.compensator.without_load(raw, base_R_sensor)
 
         with self._lock:
-            if self._collecting and self.estimator.add(force, torque):
+            if self._collecting and self.estimator.add(residual):
                 self._finish_retare()
 
         compensated = WrenchStamped()
         compensated.header = message.header
-        contact_force = force - self.compensator.bias_force
-        contact_torque = torque - self.compensator.bias_torque
+        contact = self.compensator.contact_wrench(raw, base_R_sensor)
         (
             compensated.wrench.force.x,
             compensated.wrench.force.y,
             compensated.wrench.force.z,
-        ) = map(float, contact_force)
+        ) = map(float, contact.force)
         (
             compensated.wrench.torque.x,
             compensated.wrench.torque.y,
             compensated.wrench.torque.z,
-        ) = map(float, contact_torque)
+        ) = map(float, contact.torque)
         self.publisher.publish(compensated)
 
     def _on_retare(self, request: Trigger.Request, response: Trigger.Response):
@@ -412,7 +410,7 @@ class WrenchCompensationNode(Node):
                 f"spread belongs above it."
             )
         else:
-            self.compensator.bias_force, self.compensator.bias_torque = result
+            self.compensator.bias = result
             self._retare_outcome = RetareOutcome.APPLIED
         self.get_logger().info(f"re-tare: {self._retare_outcome}")
         self._retare_done.set()

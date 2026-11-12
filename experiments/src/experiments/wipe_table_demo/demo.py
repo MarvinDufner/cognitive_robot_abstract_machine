@@ -1,24 +1,14 @@
 """
 The HSRB wipes a kitchen table, regulating how hard it presses with its wrist
-force/torque sensor.
+force/torque sensor, and driving the base along the table to reach what the arm cannot.
 
-The wipe itself is coraplex's :class:`~coraplex.robot_plans.actions.composite.tool_based.
-WipingAction`; giving it a ``press`` is what turns its geometric tool path into a
-compliant one. The base drives along to help the arm reach, so a placement covers more
-than the arm alone reaches from it, and the plan drives along the table to wipe the next.
-
-A :class:`~coraplex.plans.executors.RealRobotPlanExecutor` drives the real robot and
-takes the world from the running
-controller, which must already be up (see
-``giskardpy/middleware/ros2/scripts/iai_robots/hsr/iai_hsr_real_time.py``) together with
-the wrench compensation node, so the sensor reports contact force rather than the
-gripper's own weight. The default builds the kitchen locally and simulates the contact.
+The wipe is coraplex's :class:`~coraplex.robot_plans.actions.composite.tool_based.
+WipingAction`; giving it a ``press`` turns its geometric path into a compliant one.
 """
 
 from __future__ import annotations
 
 import math
-import sys
 from copy import deepcopy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -26,14 +16,12 @@ from enum import Enum
 from datetime import timedelta
 
 import numpy as np
-from typing_extensions import ClassVar
 
 from coraplex.datastructures.enums import WipingTechnique
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.locations.costmaps import Costmap, OccupancyCostmap
 from coraplex.plans.context_extensions import RobotAccess
 from coraplex.plans.executors import (
-    KinematicallySimulatedPlanExecutor,
     PhysicallySimulatedPlanExecutor,
     PlanExecutor,
     RealRobotPlanExecutor,
@@ -44,15 +32,14 @@ from coraplex.robot_plans.actions.composite.tool_based import (
 )
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
-from coraplex.robot_plans.mixins import Press
 from cramph.composites import Sequence
+from giskardpy.motion_statechart.tasks.admittance_tasks import Press
 from cramph.context import ContextExtension, StatechartContext
 from cramph.executor import ExecutorExtension
 from cramph.statechart import Statechart
 from giskardpy.motion_control import WorldStateInputSynchronization
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
-    ToolContactWrench,
 )
 from semantic_digital_twin.input_synchronization import (
     WorldStateInputs,
@@ -72,7 +59,6 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
 )
 from krrood_spatial_math.spatial_types import (
     HomogeneousTransformationMatrix,
-    Point3,
     Pose,
     Vector3,
 )
@@ -153,165 +139,6 @@ class WipedPatch:
     """
 
 
-# %% simulated contact
-
-
-@dataclass
-class SimulatedContactWrench(ToolContactWrench):
-    """
-    What a flat surface of known height presses the tool with, modelled rather than
-    simulated: penetration into the surface produces a force along the surface normal,
-    stiffened by how fast the tool is still descending (Hunt-Crossley).
-
-    Cheap enough to run a kinematically simulated plan against, where nothing resolves
-    contacts.
-    """
-
-    surface_height: float | None = field(default=None, kw_only=True)
-    """
-    Height of the wiped surface in the world frame, in m.
-
-    ``None`` takes the top of :attr:`surface`, which is right for a surface that is one
-    slab and wrong for one carrying a fixture taller than it.
-    """
-
-    surface: Body = field(kw_only=True)
-    """
-    The wiped body, whose footprint bounds where contact is felt.
-    """
-
-    control_period: float = field(kw_only=True)
-    """
-    Time between two readings, in s, used to measure how fast the tool approaches.
-    """
-
-    stiffness: float = field(default=2000.0, kw_only=True)
-    """
-    Stiffness of the simulated surface, in N/m.
-
-    .. warning:: A control cycle is long enough that a fast approach registers as deep
-        penetration, which this model would otherwise report as a spike of many
-        kilonewtons; :attr:`maximum_force` bounds that.
-    """
-
-    velocity_gain: float = field(default=4000.0, kw_only=True)
-    """
-    Extra stiffness per metre per second of approach speed, in N s/m^2.
-
-    Damps the simulated impact so the press settles instead of ringing.
-    """
-
-    maximum_force: float = field(default=50.0, kw_only=True)
-    """
-    Largest force this surface pushes the whole contact face back with, in N.
-    """
-
-    face_samples: int = field(default=5, kw_only=True)
-    """
-    How many points across each side of the tool's contact face the surface is sampled
-    at.
-
-    One point cannot tell a tool lying flat from one resting on an edge, and a real
-    sensor tells them apart by the torque. A grid of springs produces that torque.
-    """
-
-    _penetration: float = field(init=False, default=0.0)
-    """
-    Mean penetration measured on the previous reading, in m.
-    """
-
-    _tool_face: np.ndarray = field(init=False, repr=False)
-    """
-    The sampled points of the tool's contact face, homogeneous, in the tool's own frame.
-    """
-
-    def __post_init__(self):
-        if self.surface_height is None:
-            self.surface_height = (
-                self.surface.collision.as_bounding_box_collection_in_frame(
-                    self.world.root
-                )
-                .bounding_box()
-                .max_z
-            )
-        box = self.tool.collision.as_bounding_box_collection_in_frame(
-            self.tool
-        ).bounding_box()
-        # The face that meets the surface is the one the tool's own z axis points out of,
-        # which is how a tool is held: the axis away from the hand faces what it works on.
-        across = np.linspace(box.min_x, box.max_x, self.face_samples)
-        along = np.linspace(box.min_y, box.max_y, self.face_samples)
-        grid_x, grid_y = np.meshgrid(across, along)
-        self._tool_face = np.stack(
-            [
-                grid_x.ravel(),
-                grid_y.ravel(),
-                np.full(grid_x.size, box.max_z),
-                np.ones(grid_x.size),
-            ]
-        )
-
-    def over_the_surface(self, points: np.ndarray) -> np.ndarray:
-        """
-        :param points: Points in the world frame, as columns.
-        :return: Which of them stand over the surface rather than beside it, where
-            there is nothing to touch.
-        """
-        box = self.surface.collision.as_bounding_box_collection_in_frame(
-            self.world.root
-        ).bounding_box()
-        return (
-            (box.min_x <= points[0])
-            & (points[0] <= box.max_x)
-            & (box.min_y <= points[1])
-            & (points[1] <= box.max_y)
-        )
-
-    def contact_wrench(
-        self, sensor: ForceTorqueSensor
-    ) -> tuple[np.ndarray, np.ndarray]:
-        world_T_tool = self.world.compute_forward_kinematics_np(
-            self.world.root, self.tool
-        )
-        world_T_sensor = self.world.compute_forward_kinematics_np(
-            self.world.root, sensor.root
-        )
-        points = (world_T_tool @ self._tool_face)[:3]
-        penetrations = self.surface_height - points[2]
-        touching = (penetrations > 0.0) & self.over_the_surface(points)
-
-        mean_penetration = (
-            float(penetrations[touching].sum()) / self._tool_face.shape[1]
-        )
-        approach_speed = max(
-            0.0, (mean_penetration - self._penetration) / self.control_period
-        )
-        self._penetration = mean_penetration
-        if not touching.any():
-            return np.zeros(3), np.zeros(3)
-
-        # Each sampled point is its own spring, so the springs under the low edge of a
-        # tilted tool push harder than those under the high edge, and the difference is
-        # what the sensor reads as torque.
-        per_point = (
-            self.stiffness + self.velocity_gain * approach_speed
-        ) / self._tool_face.shape[1]
-        magnitudes = penetrations * touching * per_point
-        # The cap bounds what the whole face is pushed with. Scaling the springs down
-        # together rather than clipping each keeps the lopsidedness that is the torque.
-        pushed_with = magnitudes.sum()
-        if pushed_with > self.maximum_force:
-            magnitudes = magnitudes * (self.maximum_force / pushed_with)
-        world_forces = np.zeros((3, len(magnitudes)))
-        world_forces[2] = magnitudes
-        levers = points - world_T_sensor[:3, 3][:, None]
-        world_force = world_forces.sum(axis=1)
-        world_torque = np.cross(levers.T, world_forces.T).sum(axis=0)
-
-        sensor_R_world = world_T_sensor[:3, :3].T
-        return sensor_R_world @ world_force, sensor_R_world @ world_torque
-
-
 # %% the demonstrations
 
 
@@ -319,6 +146,16 @@ class SimulatedContactWrench(ToolContactWrench):
 class WipingDemonstration(RobotDemonstration, ABC):
     """
     A demonstration that wipes a surface with a sponge held in one hand.
+    """
+
+    executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor
+    """
+    Physics by default, since the press is regulated against a measured contact force
+    and only a physics engine resolves one, see
+    :attr:`~coraplex.demonstrations.RobotDemonstration.executor_type`.
+
+    .. warning:: A kinematically simulated run feels nothing, so its descent never
+        reaches contact and its press never yields.
     """
 
     technique: WipingTechnique = WipingTechnique.SPREAD
@@ -350,16 +187,14 @@ class WipingDemonstration(RobotDemonstration, ABC):
             # Light, because the mass over the damping is phase lag the loop does not
             # need: 10 kg costs a third of the contact.
             mass=Vector3(x=2.0, y=2.0, z=2.0),
-            # The press chases the surface at the force asked for divided by this, so
-            # 5 cm/s here. What the touchdown arrives at, and the only one of these
-            # numbers that measurably decides how hard: an HSRB pressing 15 N on a
-            # table peaks at 32 N with the task's own 100, 20 N with 150, 17 N with
-            # this, and 18 N again with 500.
+            # The press chases the surface at the force asked for divided by this,
+            # so 5 cm/s here, and it is the only one of these numbers that measurably
+            # decides how hard: 15 N peaks at 32 N with 100, 20 N with 150, 17 N here.
             damping=Vector3(x=300.0, y=300.0, z=300.0),
             # Only along the surface normal: the tool feels friction while it travels,
             # and a press free to yield to that drifts against its own direction of
             # travel until it stalls.
-            travel=Vector3(x=0.0, y=0.0, z=0.02),
+            maximum_offset=Vector3(x=0.0, y=0.0, z=0.02),
             # About half of the 50 ms the arm takes to reach a commanded height.
             lead_time=0.03,
         )
@@ -377,21 +212,13 @@ class WipingDemonstration(RobotDemonstration, ABC):
     flat one.
     """
 
-    simulated_control_period: float = 1 / 50
-    """
-    Time between two simulated control cycles, in s, matching the rate coraplex
-    simulates at.
-    """
-
     sponge_resolution_time: timedelta = timedelta(milliseconds=500)
     """
     How long the simulation takes to resolve a contact with the sponge's pad, which is
     how soft the pad is.
 
-    .. warning:: This leaves the pad about as stiff as
-        :attr:`SimulatedContactWrench.stiffness`. A tenth of it makes the pad a rigid
-        block the press can only chase: half the wipe out of contact, touching down at
-        132 N instead of 12 N.
+    .. warning:: A tenth of this makes the pad a rigid block the press can only chase:
+        half the wipe out of contact, touching down at 132 N instead of 12 N.
     """
 
     @property
@@ -536,6 +363,18 @@ class WipingDemonstration(RobotDemonstration, ABC):
         :return: The body whose top the tool is held against.
         """
 
+    def surface_height(self, world: World) -> float:
+        """
+        :param world: World the demonstration acts on.
+        :return: Height of the wiped surface in the world frame, in m.
+        """
+        return float(
+            self.wiped_surface(world)
+            .collision.as_bounding_box_collection_in_frame(world.root)
+            .bounding_box()
+            .max_z
+        )
+
     def build_approach(
         self, context: StatechartContext, patch: Pose
     ) -> list[MoveManipulatorAction]:
@@ -587,21 +426,14 @@ class WipingDemonstration(RobotDemonstration, ABC):
             surface really is is measured rather than assumed.
         """
         world = context.world
-        tool = world.get_semantic_annotations_by_type(Sponge)[0]
+        below_the_surface = deepcopy(patch)
+        below_the_surface.z = patch.z - self.descent_overshoot
         return LowerUntilContactAction(
-            goal_point=Point3(
-                x=patch.to_np()[0, 3],
-                y=patch.to_np()[1, 3],
-                z=patch.to_np()[2, 3] - self.descent_overshoot,
-                reference_frame=world.root,
-            ),
+            goal_pose=below_the_surface,
             arm=self.wiping_arm(world),
-            tip=tool.get_tool_frame(),
-            alignment_pairs=tool.tool_alignment(patch),
+            tool=world.get_semantic_annotations_by_type(Sponge)[0],
             contact_force=self.touchdown_force,
             descent_velocity=self.descent_velocity,
-            max_linear_velocity=self.descent_velocity,
-            allow_gripper_collision=True,
         )
 
     def build_context_extensions(self, world: World) -> list[ContextExtension]:
@@ -624,34 +456,25 @@ class WipingDemonstration(RobotDemonstration, ABC):
         """
         :param world: World the demonstration acts on.
         :return: What writes the force/torque reading into the world while the plan
-            runs: nothing on the real robot, which follows its sensor's own topic, the
-            physics wherever a plan is performed in any, and a contact model otherwise.
+            runs: the physics wherever a plan is performed in any, and nothing
+            otherwise, since a real sensor publishes its own topic and nothing resolves
+            a contact for a run that only moves the kinematics.
 
         The source is attached to the sensor it writes, so the sensor states where its
         readings come from rather than the loop alone knowing.
         """
         inputs = WorldStateInputs(world=world)
-        if issubclass(self.executor_type, RealRobotPlanExecutor):
+        if self.simulation is None:
             return inputs
         tool = world.get_body_by_name(self.sponge_name)
-        if self.simulation is None:
-            pressed_with = self.contact_model(world)
-        else:
-            pressed_with = PhysicallySimulatedContactWrench(
+        sensor = ForceTorqueSensor.for_tip(world, tool)
+        sensor.use_source(
+            PhysicallySimulatedContactWrench(
                 world=world, tool=tool, simulation=self.simulation
             )
-        sensor = ForceTorqueSensor.for_tip(world, tool)
-        sensor.use_source(pressed_with)
+        )
         inputs.add_input(sensor.source)
         return inputs
-
-    @abstractmethod
-    def contact_model(self, world: World) -> SimulatedContactWrench:
-        """
-        :param world: World the demonstration acts on.
-        :return: The surface this demonstration presses on, modelled for a run that
-            resolves no contacts of its own.
-        """
 
 
 @dataclass
@@ -660,10 +483,8 @@ class RidgedSurface(WipingDemonstration, ABC):
     A wiping demonstration whose surface carries ridges across the wiped patch, so the
     tool has to follow a surface nothing told it about.
 
-    .. warning:: Only a physically simulated run resolves the ridges. A kinematically
-        simulated one models a flat surface at the height of the top and feels nothing
-        of them, and a real run would wipe the bare surface while the plan believes the
-        ridges are there.
+    .. warning:: Only a physically simulated run resolves the ridges. A real run would
+        wipe the bare surface while the plan believes the ridges are there.
     """
 
     wave_amplitude: float = 0.02
@@ -761,7 +582,10 @@ class WipeTableDemonstration(WipingDemonstration):
     The HSRB wipes the kitchen's dining table, one side at a time.
     """
 
-    ros_node_name: ClassVar[str] = "wipe_table_demo_node"
+    ros_node_name: str = "wipe_table_demo_node"
+    """
+    Name of the node this demonstration talks to ROS under.
+    """
 
     placements: int | None = None
     """
@@ -963,7 +787,7 @@ class WipeTableDemonstration(WipingDemonstration):
             centre=Pose.from_xyz_rpy(
                 x=float(centre[0]),
                 y=float(centre[1]),
-                z=self.contact_model(world).surface_height,
+                z=self.surface_height(world),
                 # The lanes run along the edge, which is the long way across the patch.
                 yaw=heading + 0.5 * math.pi,
                 reference_frame=world.root,
@@ -994,14 +818,6 @@ class WipeTableDemonstration(WipingDemonstration):
 
     def wiped_surface(self, world: World) -> Body:
         return world.get_semantic_annotations_by_type(DiningTable)[0].root
-
-    def contact_model(self, world: World) -> SimulatedContactWrench:
-        return SimulatedContactWrench(
-            world=world,
-            tool=world.get_body_by_name(self.sponge_name),
-            surface=self.wiped_surface(world),
-            control_period=self.simulated_control_period,
-        )
 
     def standing_poses(self, world: World, table: DiningTable) -> list[Pose]:
         """
@@ -1127,25 +943,14 @@ class WipeTableDemonstration(WipingDemonstration):
         )
 
 
-EXECUTORS: dict[str, type[PlanExecutor]] = {
-    "KINEMATICALLY_SIMULATED": KinematicallySimulatedPlanExecutor,
-    "PHYSICALLY_SIMULATED": PhysicallySimulatedPlanExecutor,
-    "REAL": RealRobotPlanExecutor,
-}
-"""
-The executors this demonstration can be run with, by the name the command line gives.
-"""
-
-
 def main(
-    executor_type: type[PlanExecutor] = KinematicallySimulatedPlanExecutor,
+    executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor,
     technique: WipingTechnique = WipeTableDemonstration.technique,
 ) -> None:
     """
     Run the demonstration.
 
-    :param executor_type: The executor running the plan, which decides whether it drives
-        the real robot or simulates it.
+    :param executor_type: The executor running the plan.
     :param technique: How the tool covers the table.
     """
     WipeTableDemonstration(
@@ -1154,8 +959,4 @@ def main(
 
 
 if __name__ == "__main__":
-    # Only what the command line names, so the default lives once, in main.
-    main(
-        *(EXECUTORS[name] for name in sys.argv[1:2]),
-        *(WipingTechnique[name] for name in sys.argv[2:3]),
-    )
+    main()

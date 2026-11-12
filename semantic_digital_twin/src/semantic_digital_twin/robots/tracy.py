@@ -11,6 +11,7 @@ from typing_extensions import Self
 
 from krrood.ormatic.utils import classproperty
 
+
 from semantic_digital_twin.collision_checking.collision_rules import (
     AvoidExternalCollisions,
     AvoidSelfCollisions,
@@ -30,8 +31,8 @@ from semantic_digital_twin.robots.robot_part_mixins import (
     HasSensors,
 )
 from semantic_digital_twin.robots.robot_parts import (
-    ForceTorqueSensor,
     AbstractRobot,
+    ForceTorqueSensor,
     MountingTable,
     RobotCamera,
     EndEffector,
@@ -391,9 +392,7 @@ class TracyLeftForceTorqueSensor(ForceTorqueSensor):
 @dataclass(eq=False)
 class TracyRightForceTorqueSensor(ForceTorqueSensor):
     """
-    The force/torque sensor in the right wrist.
-
-    Rooted at the flange and read uncompensated, as for
+    The force/torque sensor in the right wrist, rooted and read as for
     :class:`TracyLeftForceTorqueSensor`.
     """
 

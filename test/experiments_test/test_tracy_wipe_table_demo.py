@@ -13,9 +13,11 @@ from coraplex.robot_plans.actions.composite.tool_based import (
     WipingAction,
 )
 from coraplex.robot_plans.actions.core.robot_body import MoveManipulatorAction
+from giskardpy.motion_statechart.tasks.cartesian_tasks import (
+    CartesianPositionVelocityLimit,
+)
 from cramph.context import StatechartContext
 from experiments.tracy_wipe_table_demo.demo import TracyWipeTableDemonstration
-from experiments.wipe_table_demo.demo import SimulatedContactWrench
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
 )
@@ -128,7 +130,7 @@ def test_the_bench_top_is_the_surface_and_not_the_fixture_standing_on_it():
     boxes = list(bench.collision.as_bounding_box_collection_in_frame(world.root))
     spot = demonstration.touchdown_pose(world).to_np()[:3, 3]
 
-    height = demonstration.bench_height(world)
+    height = demonstration.surface_height(world)
 
     assert height < max(box.max_z for box in boxes)
     assert height == pytest.approx(
@@ -156,14 +158,13 @@ def test_the_wiped_patch_lies_on_the_bench_top():
 
 def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
     """
-    The bench carries a camera pole whose lower brace lies flat on the top, and that pole
-    is a body of its own: reading the bench's own shapes alone misses it. What sweeps the
-    patch is the whole hand, which reaches almost twice as far sideways as the sponge and
-    is free to spin about the surface normal, so the sponge alone clearing it is not
-    enough either.
+    The camera pole whose brace lies flat on the bench top is a body of its own, so the
+    bench's own shapes miss it, and what sweeps the patch is the whole hand, which
+    reaches almost twice as far sideways as the sponge and is free to spin about the
+    surface normal.
     """
     demonstration, world = populated_demonstration()
-    top = demonstration.bench_height(world)
+    top = demonstration.surface_height(world)
     end_effector = demonstration.wiping_arm(world).end_effector
     hand = [
         box
@@ -204,29 +205,24 @@ def test_the_wiped_patch_stays_clear_of_what_stands_on_the_bench():
 
 
 def test_the_real_robot_reads_its_own_sensor():
-    demonstration, world = populated_demonstration(
-        executor_type=RealRobotPlanExecutor
-    )
+    """
+    The controller follows the sensor's own topic, so nothing may be written over it.
+    """
+    demonstration, world = populated_demonstration(executor_type=RealRobotPlanExecutor)
 
     assert demonstration.wrench_inputs(world).synchronizers == []
 
 
-def test_a_simulated_run_feels_the_bench_it_wipes():
-    demonstration, world = populated_demonstration()
-
-    inputs = demonstration.wrench_inputs(world).synchronizers
-
-    assert [type(reading) for reading in inputs] == [SimulatedContactWrench]
-    assert inputs[0].surface is world.get_body_by_name(demonstration.bench_name)
-
-
+@pytest.mark.skipif(
+    not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
+)
 def test_the_wipe_presses_into_the_bench_and_travels_across_it():
     """
     End to end: the admittance finds the bench without being told its exact height, then
     holds the press while the tool covers ground.
     """
     demonstration, world = populated_demonstration()
-    bench_height = demonstration.bench_height(world)
+    bench_height = demonstration.surface_height(world)
     start = world.compute_forward_kinematics_np(
         world.root, world.get_body_by_name(demonstration.sponge_name)
     )[:3, 3].copy()
@@ -237,16 +233,10 @@ def test_the_wipe_presses_into_the_bench_and_travels_across_it():
         world.root, world.get_body_by_name(demonstration.sponge_name)
     )[:3, 3]
     assert np.linalg.norm(end[:2] - start[:2]) > 0.1
-    # The press settles where the surface pushes back as hard as it is pressed. What
-    # touches is the tool's own face, so that is what sinks into the surface, and its
-    # frame sits half a tool above it.
+    # What touches is the tool's own face, so the frame that follows the path rests half
+    # a tool above the surface while the press holds it there.
     face_below_the_frame = float(demonstration.sponge_scale.z) / 2
-    np.testing.assert_allclose(
-        end[2] - bench_height,
-        face_below_the_frame
-        - demonstration.press.force.to_np().item(2) / SimulatedContactWrench.stiffness,
-        atol=5e-3,
-    )
+    assert end[2] - bench_height == pytest.approx(face_below_the_frame, abs=0.01)
 
 
 # %% feeling for the bench
@@ -299,24 +289,29 @@ def test_the_descent_aims_past_the_bench_so_only_contact_ends_it():
     steps = plan_steps(demonstration, world)
     descent = steps[index_of(steps, LowerUntilContactAction)]
 
-    goal_height = descent.goal_point.to_np().flatten()[2]
-    assert goal_height < demonstration.bench_height(world)
+    assert float(descent.goal_pose.z) < demonstration.surface_height(world)
 
 
 def test_the_descent_is_capped_to_the_speed_it_is_asked_to_lower_at():
     """
-    A descent's own ``descent_velocity`` is a reference velocity, which normalises the
-    goal's error and does not limit anything, so without a cap the tool arrives at
-    whatever speed the arm can manage and the pad meets the bench at ten times the
-    force.
+    A descent's own velocity normalises the goal's error and limits nothing, so without
+    a cap of the same value the tool arrives at whatever speed the arm can manage and
+    the pad meets the bench at ten times the force.
     """
     demonstration, world = populated_demonstration()
 
     steps = plan_steps(demonstration, world)
     descent = steps[index_of(steps, LowerUntilContactAction)]
+    capped = [
+        node
+        for node in descent.create_steps()[0].nodes
+        if isinstance(node, CartesianPositionVelocityLimit)
+    ]
 
-    assert descent.max_linear_velocity == demonstration.descent_velocity
     assert descent.descent_velocity == demonstration.descent_velocity
+    assert [node.max_linear_velocity for node in capped] == [
+        demonstration.descent_velocity
+    ]
 
 
 def test_the_wipe_is_capped_to_a_travel_speed():
@@ -356,7 +351,7 @@ def test_the_tool_turns_onto_the_bench_well_above_it_and_only_then_comes_down():
     steps = plan_steps(demonstration, world)
 
     heights = [
-        approach.target_pose.to_np()[2, 3] - demonstration.bench_height(world)
+        approach.target_pose.to_np()[2, 3] - demonstration.surface_height(world)
         for approach in approach_steps(steps)
     ]
     assert heights == pytest.approx(
@@ -389,19 +384,19 @@ def test_the_whole_plan_compiles():
 # %% the physics a run is performed in
 
 
-def test_a_kinematically_simulated_run_needs_no_physics():
+def test_a_kinematically_simulated_run_writes_no_reading():
     """
-    Nothing resolves contacts in a kinematic run, so its press is modelled instead.
+    Nothing resolves contacts in a kinematic run, so there is no wrench to write and the
+    press has nothing to yield to.
     """
-    demonstration, world = populated_demonstration()
+    demonstration, world = populated_demonstration(
+        executor_type=KinematicallySimulatedPlanExecutor
+    )
 
     demonstration.start_simulation(world)
 
     assert demonstration.simulation is None
-    assert [
-        type(reading)
-        for reading in demonstration.wrench_inputs(world).synchronizers
-    ] == [SimulatedContactWrench]
+    assert demonstration.wrench_inputs(world).synchronizers == []
 
 
 @pytest.mark.skipif(

@@ -3,12 +3,12 @@ from __future__ import annotations
 # %% Imports
 import os
 from collections import defaultdict
-
-import numpy as np
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
+
+import numpy as np
 from typing_extensions import Self
 
 from krrood.ormatic.utils import classproperty

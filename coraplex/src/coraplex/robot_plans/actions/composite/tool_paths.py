@@ -624,7 +624,6 @@ def build_container_path(
 
 def build_surface_path(
     surface_body: Body,
-    lane_spacing: float,
     technique: WipingTechnique = WipingTechnique.WIPE,
     reference_size: float = 0.10,
     approach_clearance: float = 0.02,
@@ -633,8 +632,6 @@ def build_surface_path(
     Build a planar wiping tool path on a surface.
 
     :param surface_body: The surface to act on.
-    :param lane_spacing: How far apart neighbouring lanes of a raster lie, in meters:
-        how wide a strip the tool covers, so that no strip is left untouched.
     :param technique: The wiping technique to use.
     :param reference_size: Reference size in meters that scales the motion duration.
     :param approach_clearance: Extra vertical clearance in meters when approaching the
@@ -662,13 +659,10 @@ def build_surface_path(
     )
     spiral_r1 = 0.9 * radius_xy
     shear_amplitude = 0.35 * radius_xy
+    raster_width = 0.9 * size_x
     raster_height = 0.9 * size_y
-    # One more lane than the spans between them, so that neighbouring lanes are at most
-    # a tool apart and no strip is left untouched.
-    raster_lanes = max(2, int(np.ceil(raster_height / lane_spacing)) + 1)
-    # Short by what the lane changes reach beyond the lanes, so the path stays on the
-    # surface rather than turning off its edge.
-    raster_width = 0.9 * size_x - raster_height / (raster_lanes - 1)
+    lane_spacing = max(0.02, 0.25 * float(reference_size))
+    raster_lanes = max(4, int(np.ceil(raster_height / max(lane_spacing, 1e-6))))
 
     hull_xy = _top_surface_hull_xy(surface_body)
 

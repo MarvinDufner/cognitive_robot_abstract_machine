@@ -114,6 +114,7 @@ class WorldFixture(StrEnum):
     PRISMATIC_BOT2 = "prismatic_bot2"
     PR2_WORLD = "pr2_world_state_reset"
     PR2_APARTMENT_CONTEXT = "pr2_apartment_context"
+    HSR_WORLD = "hsr_world_copy"
 
 
 @dataclass

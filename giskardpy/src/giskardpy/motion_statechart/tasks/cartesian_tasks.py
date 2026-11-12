@@ -1015,9 +1015,8 @@ class CartesianPositionVelocityLimit(Task):
     max_linear_velocity: float = 0.1
     """
     Maximum allowed linear speed of the tip in meters per second (m/s).
-    Default: 0.1 m/s. Enforced per axis, since a linear program cannot bound a norm, so
-    the tip holds this speed along each axis and at most ``sqrt(3)`` times it along a
-    diagonal.
+    Default: 0.1 m/s. The enforcement ensures the Euclidean norm of the
+    tip-frame translational velocity does not exceed this value.
     """
     weight: float = DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE
     """

@@ -13,8 +13,10 @@ from giskardpy.motion_statechart.exceptions import (
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.tasks.admittance_tasks import (
     AdmittanceCartesianTrajectory,
+    Press,
 )
 from krrood_spatial_math.spatial_types import Point3, Vector3
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 
 TOOL_FRAME = "hand_gripper_tool_frame"
@@ -31,7 +33,7 @@ def stroke(world, waypoints=5):
     ]
 
 
-def build_admittance(world, waypoints=5, goal_points=None, **task_arguments):
+def build_admittance(world, waypoints=5, goal_points=None, **press_arguments):
     """
     Compile a chart holding one admittance trajectory and return it with its context.
     """
@@ -46,7 +48,7 @@ def build_admittance(world, waypoints=5, goal_points=None, **task_arguments):
             tip_link=world.get_body_by_name(TOOL_FRAME),
             goal_points=goal_points if goal_points else stroke(world, waypoints),
             maximum_skip_ahead=2,
-            **task_arguments,
+            press=Press(**press_arguments),
         )
     )
     chart.add_node(EndMotion.when_true(task))
@@ -60,7 +62,7 @@ def press(task, context, sensor, force, ticks=SETTLING_TICKS):
     """
     offsets = []
     for _ in range(ticks):
-        sensor.write_wrench(force, np.zeros(3))
+        sensor.write_wrench(Wrench(force=force, torque=np.zeros(3)))
         task.on_tick()
         offsets.append(task._state[:3].copy())
     return np.array(offsets)
@@ -99,7 +101,7 @@ def test_the_offset_survives_moving_to_the_next_waypoint(hsr_world_copy):
 
     # Advance along the stroke, as tracking the trajectory does.
     task.current_index += 1
-    sensor.write_wrench(np.array([0.0, 0.0, -10.0]), np.zeros(3))
+    sensor.write_wrench(Wrench(force=np.array([0.0, 0.0, -10.0]), torque=np.zeros(3)))
     task.on_tick()
 
     assert np.linalg.norm(task._state[:3] - offset_before) < 0.01
@@ -112,25 +114,24 @@ def test_the_compiled_step_matches_the_dynamics_it_stands_for(hsr_world_copy):
     mass = Vector3(x=1.5, y=2.0, z=0.8)
     damping = Vector3(x=20.0, y=35.0, z=100.0)
     stiffness = Vector3(x=0.0, y=5.0, z=2000.0)
-    desired_force = Vector3(x=0.0, y=1.0, z=8.0)
+    pressed_force = Vector3(x=0.0, y=1.0, z=8.0)
     maximum_offset = Vector3(x=0.03, y=0.05, z=0.01)
     task, context, _ = build_admittance(
         hsr_world_copy,
         mass=mass,
         damping=damping,
         stiffness=stiffness,
-        desired_force=desired_force,
+        force=pressed_force,
         maximum_offset=maximum_offset,
     )
     sensor = sensor_of(hsr_world_copy)
-    control_dt = (
-        context.require_extension(MotionControlContext)
-        .qp_controller_config.control_time_step.total_seconds()
-    )
+    control_dt = context.require_extension(
+        MotionControlContext
+    ).qp_controller_config.control_time_step.total_seconds()
     m = mass.to_np()[:3].flatten()
     d = damping.to_np()[:3].flatten()
     k = stiffness.to_np()[:3].flatten()
-    f_desired = desired_force.to_np()[:3].flatten()
+    f_desired = pressed_force.to_np()[:3].flatten()
     travel = maximum_offset.to_np()[:3].flatten()
     generator = np.random.default_rng(0)
 
@@ -210,7 +211,7 @@ def test_a_stiff_axis_settles_without_bouncing(hsr_world_copy):
         mass=Vector3(x=1.0, y=1.0, z=1.0),
         damping=Vector3(x=100.0, y=100.0, z=100.0),
         stiffness=Vector3(x=stiffness, y=stiffness, z=stiffness),
-        desired_force=Vector3(z=8.0),
+        force=Vector3(z=8.0),
     )
     sensor = sensor_of(hsr_world_copy)
 
@@ -227,7 +228,7 @@ def test_the_tool_seeks_the_surface_when_it_feels_nothing(hsr_world_copy):
 
     That is why the commanded height need not be exact.
     """
-    task, context, _ = build_admittance(hsr_world_copy, desired_force=Vector3(z=8.0))
+    task, context, _ = build_admittance(hsr_world_copy, force=Vector3(z=8.0))
     sensor = sensor_of(hsr_world_copy)
 
     offsets = press(task, context, sensor, np.zeros(3), ticks=20)
@@ -269,7 +270,7 @@ def test_the_offset_stops_at_its_allowed_travel(hsr_world_copy):
     travel = 0.02
     task, context, _ = build_admittance(
         hsr_world_copy,
-        desired_force=Vector3(z=8.0),
+        force=Vector3(z=8.0),
         maximum_offset=Vector3(x=travel, y=travel, z=travel),
     )
     sensor = sensor_of(hsr_world_copy)
@@ -302,7 +303,7 @@ def test_the_offset_the_press_holds_is_not_distance_left_to_travel(hsr_world_cop
     task, context, _ = build_admittance(
         hsr_world_copy,
         goal_points=[waypoint, waypoint],
-        desired_force=Vector3(z=8.0),
+        force=Vector3(z=8.0),
         maximum_offset=Vector3(x=travel, y=travel, z=travel),
     )
     sensor = sensor_of(hsr_world_copy)
@@ -321,10 +322,10 @@ def test_an_offset_at_its_allowed_travel_yields_again_on_contact(hsr_world_copy)
     the surface pushes harder than asked for.
     """
     travel = 0.02
-    desired_force = 8.0
+    pressed_force = 8.0
     task, context, _ = build_admittance(
         hsr_world_copy,
-        desired_force=Vector3(z=desired_force),
+        force=Vector3(z=pressed_force),
         maximum_offset=Vector3(x=travel, y=travel, z=travel),
     )
     sensor = sensor_of(hsr_world_copy)
@@ -337,7 +338,7 @@ def test_an_offset_at_its_allowed_travel_yields_again_on_contact(hsr_world_copy)
         task,
         context,
         sensor,
-        goal_R_sensor.T @ np.array([0.0, 0.0, 2.0 * desired_force]),
+        goal_R_sensor.T @ np.array([0.0, 0.0, 2.0 * pressed_force]),
         ticks=5,
     )
 
@@ -355,7 +356,7 @@ def test_the_tracked_point_is_handed_on_ahead_of_the_offset(hsr_world_copy):
     lead_time = 0.2
     task, context, _ = build_admittance(
         hsr_world_copy,
-        desired_force=Vector3(z=10.0),
+        force=Vector3(z=10.0),
         damping=Vector3(x=100.0, y=100.0, z=100.0),
         maximum_offset=Vector3(x=0.5, y=0.5, z=0.5),
         lead_time=lead_time,
@@ -391,7 +392,7 @@ def test_a_press_carries_on_between_readings(hsr_world_copy):
     """
     task, context, _ = build_admittance(hsr_world_copy)
     sensor = sensor_of(hsr_world_copy)
-    sensor.write_wrench(np.array([0.0, 0.0, -5.0]), np.zeros(3))
+    sensor.write_wrench(Wrench(force=np.array([0.0, 0.0, -5.0]), torque=np.zeros(3)))
     task.on_tick()
 
     for _ in range(silent_ticks_allowed(task, context)):
@@ -402,12 +403,12 @@ def test_a_press_carries_on_between_readings(hsr_world_copy):
 
 def test_a_press_stops_when_its_sensor_falls_silent(hsr_world_copy):
     """
-    Without a reading the offset would walk to :attr:`maximum_offset` into the surface
-    on whatever the last reading held.
+    Without a reading the offset would walk to :attr:`Press.maximum_offset` into the
+    surface on whatever the last reading held.
     """
     task, context, _ = build_admittance(hsr_world_copy)
     sensor = sensor_of(hsr_world_copy)
-    sensor.write_wrench(np.array([0.0, 0.0, -5.0]), np.zeros(3))
+    sensor.write_wrench(Wrench(force=np.array([0.0, 0.0, -5.0]), torque=np.zeros(3)))
     task.on_tick()
 
     with pytest.raises(SilentForceTorqueSensorError):

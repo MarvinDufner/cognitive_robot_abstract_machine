@@ -10,7 +10,6 @@ from datetime import timedelta
 
 import numpy as np
 import pytest
-from typing_extensions import List
 
 from ...pytest_environment import runs_in_continuous_integration
 
@@ -18,8 +17,8 @@ from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.adapters.sensors.force_torque import (
     PhysicallySimulatedContactWrench,
 )
-from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.robots.robot_parts import ForceTorqueSensor
 from krrood_spatial_math.spatial_types import (
     HomogeneousTransformationMatrix,
@@ -51,15 +50,9 @@ class SensorWithoutHardware(ForceTorqueSensor):
     Minimal concrete force/torque sensor, to be written into without a robot.
     """
 
-    def setup_hardware_interfaces(self):
-        pass
-
-    def setup_joint_states(self) -> List[JointState]:
-        return []
-
-    @classmethod
-    def setup_default_configuration_in_world_below_robot_root(cls, robot_root):
-        raise NotImplementedError
+    @classproperty
+    def frame_name(cls) -> str:
+        return SENSOR_NAME
 
 
 @dataclass
@@ -95,6 +88,9 @@ TOOL_WIDTH = 0.1
 
 SENSOR_OFFSET = 0.1
 """How far beside the tool the sensor sits, along the tool's x axis, in m."""
+
+SENSOR_NAME = "sensor_frame"
+"""Name of the body the sensor measures in."""
 
 DROP_HEIGHT = 0.3
 """Where the tool starts above the floor, in m."""
@@ -139,7 +135,7 @@ def lowered_tool() -> LoweredToolWorld:
                 ),
             )
         )
-        sensor_frame = Body(name=PrefixedName("sensor_frame"))
+        sensor_frame = Body(name=PrefixedName(SENSOR_NAME))
         world.add_connection(
             FixedConnection(
                 parent=tool,
@@ -179,7 +175,7 @@ def test_a_tool_in_the_air_is_pressed_with_nothing(lowered_tool):
 
     assert not announced
     assert lowered_tool.sensor.has_received_wrench
-    np.testing.assert_allclose(lowered_tool.sensor.measured_force, np.zeros(3))
+    np.testing.assert_allclose(lowered_tool.sensor.measured_wrench.force, np.zeros(3))
 
 
 def test_a_landed_tool_is_pressed_along_the_sensors_own_axis(lowered_tool):
@@ -196,7 +192,7 @@ def test_a_landed_tool_is_pressed_along_the_sensors_own_axis(lowered_tool):
 
     reading.apply()
 
-    force = lowered_tool.sensor.measured_force
+    force = lowered_tool.sensor.measured_wrench.force
     assert force[2] < 0.0
     np.testing.assert_allclose(force[:2], np.zeros(2), atol=1e-6)
 
@@ -217,7 +213,7 @@ def test_the_torque_is_the_push_about_the_sensors_own_origin(lowered_tool):
 
     sensor_P_contact = np.array([-SENSOR_OFFSET, 0.0, TOOL_WIDTH / 2.0])
     np.testing.assert_allclose(
-        lowered_tool.sensor.wrench_data.data[3:],
-        np.cross(sensor_P_contact, lowered_tool.sensor.measured_force),
+        lowered_tool.sensor.measured_wrench.torque,
+        np.cross(sensor_P_contact, lowered_tool.sensor.measured_wrench.force),
         atol=1e-3,
     )

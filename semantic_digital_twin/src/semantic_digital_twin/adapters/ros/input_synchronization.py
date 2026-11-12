@@ -19,6 +19,7 @@ from semantic_digital_twin.exceptions import (
     AlreadyTrackedByTfFrameError,
     ConnectionCannotBeTrackedByTfFrameError,
 )
+from semantic_digital_twin.datastructures.wrench import Wrench
 from semantic_digital_twin.input_synchronization import InputSynchronizer
 from semantic_digital_twin.robots.input_source import (
     BasePoseSource,
@@ -223,8 +224,10 @@ class WrenchSynchronizer(TopicInputSynchronizer[WrenchStamped]):
     def apply_message(self, message: WrenchStamped) -> None:
         force, torque = message.wrench.force, message.wrench.torque
         self.sensor.write_wrench(
-            np.array([force.x, force.y, force.z]),
-            np.array([torque.x, torque.y, torque.z]),
+            Wrench(
+                force=np.array([force.x, force.y, force.z]),
+                torque=np.array([torque.x, torque.y, torque.z]),
+            )
         )
 
     def take_message(self) -> WrenchStamped | None:
