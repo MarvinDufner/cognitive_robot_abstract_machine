@@ -80,7 +80,9 @@ class LaundryDemonstration(RobotDemonstration):
         )
         robot = replace(
             self.robot_specification(),
-            world_T_odom=world.transform(standing_pose, world.root).homogeneous_matrix,
+            localization_pose=world.transform(
+                standing_pose, world.root
+            ).homogeneous_matrix,
         ).spawn(world)
         # Tiago starts in a T pose otherwise
         for arm in robot.all_arms:
