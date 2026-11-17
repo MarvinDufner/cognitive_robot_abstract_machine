@@ -1993,3 +1993,29 @@ class TShirt(IsNonRigid, IsPerceivable):
                 color=color if color is not None else Color(),
             )
         )
+
+
+# %% laundry
+
+
+@dataclass(eq=False)
+class LaundryBasket(Container, IsPerceivable):
+    """
+    A basket that laundry is kept and carried in.
+    """
+
+    laundry_grasp_pose: Pose | None = field(default=None, hash=False, kw_only=True)
+    """
+    Where to take hold of the laundry in the basket at its highest point, approached
+    along the pose's x-axis and closed along its y-axis, or ``None`` if perception has
+    not looked into the basket.
+    """
+
+    @synchronized_attribute_modification
+    def update_laundry_grasp_pose(self, laundry_grasp_pose: Pose | None) -> None:
+        """
+        Record where perception last found to take hold of the laundry in the basket.
+
+        :param laundry_grasp_pose: The grasp, or ``None`` if perception found no laundry.
+        """
+        self.laundry_grasp_pose = laundry_grasp_pose

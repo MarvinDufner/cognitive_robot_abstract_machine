@@ -179,3 +179,6 @@ CLAUDE.local.md
 
 # Some robokudo annotators have default models downloaded
 robokudo/src/robokudo/models/
+
+# SAM weights that ultralytics downloads into the working directory
+mobile_sam.pt

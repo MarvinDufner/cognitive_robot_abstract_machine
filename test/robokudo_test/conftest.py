@@ -15,6 +15,7 @@ from pymongo.errors import ServerSelectionTimeoutError
 from py_trees.blackboard import Blackboard
 from rclpy.node import Node
 from semantic_digital_twin.adapters.ros.node_registry import ROSNodeRegistry
+from semantic_digital_twin.world import World
 
 import robokudo.defs
 import robokudo.world
@@ -178,6 +179,16 @@ def isolate_semantic_world() -> Iterator[None]:
     yield
     robokudo.world.get_object_belief_states().clear()
     robokudo.world.init_world_with_entity_tracker()
+
+
+@pytest.fixture
+def perception_world() -> World:
+    """
+    :return: RoboKudo's world, holding nothing but the frame the camera is posed in.
+    """
+    world = World.create_with_root_body("world")
+    robokudo.world.set_world(world)
+    return world
 
 
 # %% annotator visualization output

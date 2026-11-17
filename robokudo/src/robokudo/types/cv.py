@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import cv2
+import numpy as np
 import open3d as o3d
 from typing_extensions import TYPE_CHECKING
 
@@ -24,7 +25,6 @@ from robokudo.types.core import Type
 from robokudo.types.tf import Pose
 
 if TYPE_CHECKING:
-    import numpy as np
     import numpy.typing as npt
 
 
@@ -173,6 +173,18 @@ class ImageROI(Type):
     """
     Rectangular region of interest
     """
+
+    def full_image_mask(self, image_shape: tuple[int, int]) -> npt.NDArray[np.uint8]:
+        """
+        :param image_shape: The height and width of the image the region lies in.
+        :return: The mask, which covers the region, placed on an otherwise empty image.
+        """
+        mask = np.zeros(image_shape, dtype=np.uint8)
+        mask[
+            self.roi.pos.y : self.roi.pos.y + self.roi.height,
+            self.roi.pos.x : self.roi.pos.x + self.roi.width,
+        ] = self.mask
+        return mask
 
 
 @dataclass(kw_only=True)

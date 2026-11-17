@@ -29,7 +29,9 @@ from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     WorldEntityWithIDKwargsTracker,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.semantic_annotations.mixins import HasRootBody
 from semantic_digital_twin.world import World, Body
+from typing_extensions import TypeVar
 from semantic_digital_twin.world_description.connections import Connection6DoF
 
 # Module-level singleton-like variables
@@ -255,6 +257,41 @@ def get_object_belief_states() -> dict[UUID, ObjectBeliefState]:
     :return: A map of all UUIDs to their object belief states.
     """
     return _tracked_objects
+
+
+def find_believed_body(hypothesis: ObjectHypothesis) -> Body | None:
+    """
+    :param hypothesis: A detected object.
+    :return: The body in RoboKudo's world of the belief whose latest hypothesis is the
+        detected object, or ``None`` if no belief in that world holds it.
+    """
+    for belief in _tracked_objects.values():
+        if (
+            belief.latest_hypothesis is hypothesis
+            and belief.body._world is world_instance()
+        ):
+            return belief.body
+    return None
+
+
+SemanticAnnotationType = TypeVar("SemanticAnnotationType", bound=HasRootBody)
+
+
+def find_semantic_annotation(
+    root: Body, semantic_annotation_type: type[SemanticAnnotationType]
+) -> SemanticAnnotationType | None:
+    """
+    :param root: A body of RoboKudo's world.
+    :param semantic_annotation_type: The kind of annotation to look for.
+    :return: The annotation of that kind whose root is the body, or ``None`` if the body
+        has none.
+    """
+    for semantic_annotation in world_instance().get_semantic_annotations_by_type(
+        semantic_annotation_type
+    ):
+        if semantic_annotation.root is root:
+            return semantic_annotation
+    return None
 
 
 def _get_world_body_from_cas(cas: CAS, rk_world: World) -> Body | None:

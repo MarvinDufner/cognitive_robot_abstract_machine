@@ -8,8 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from semantic_digital_twin.datastructures.camera_resolution import CameraResolution
+from typing_extensions import TYPE_CHECKING
 
 from robokudo.exceptions import RoboKudoError
+
+if TYPE_CHECKING:
+    from semantic_digital_twin.world_description.world_entity import Body
 
 
 # %% Collection reader placement
@@ -184,3 +188,40 @@ class TShirtNotUnique(RoboKudoError, LookupError):
 
     def suggest_correction(self) -> str:
         return "add exactly one T-shirt to the world before running the pipeline."
+
+
+# %% laundry pickup
+@dataclass
+class CameraImageAxisVertical(RoboKudoError, ValueError):
+    """
+    The camera's image is turned so that its horizontal axis points straight up or down,
+    which leaves no horizontal direction for a gripper to close along.
+    """
+
+    def error_message(self) -> str:
+        return "The image's horizontal axis points straight up or down in the world."
+
+    def suggest_correction(self) -> str:
+        return "turn the camera so that its image is not rolled by a quarter turn."
+
+
+@dataclass
+class LaundryBasketNotAnnotated(RoboKudoError, LookupError):
+    """
+    A grasp on laundry was found in a basket whose body in the world is not annotated as
+    a :class:`~semantic_digital_twin.semantic_annotations.semantic_annotations.LaundryBasket`.
+    """
+
+    body: Body
+    """
+    The body the world connector made of the basket.
+    """
+
+    def error_message(self) -> str:
+        return f"The body {self.body.name} has no laundry basket annotation to record the grasp on."
+
+    def suggest_correction(self) -> str:
+        return (
+            "map the laundry basket class to LaundryBasket in a SemanticAnnotationConnector "
+            "that runs before the grasp is recorded."
+        )
