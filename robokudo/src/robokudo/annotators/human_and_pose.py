@@ -12,14 +12,11 @@ clearly visible keypoint.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-import cv2
 import numpy as np
 import open3d
-from krrood.ormatic.utils import classproperty
 from py_trees.common import Status
 from typing_extensions import TYPE_CHECKING, Any
 from ultralytics import YOLO
@@ -29,6 +26,7 @@ from robokudo.annotators.exceptions import NotAPoseModelException
 from robokudo.cas import CASViews
 from robokudo.defs import PACKAGE_NAME
 from robokudo.types.annotation import Classification, CloudAnnotation
+from robokudo.types.camera import DepthFrame
 from robokudo.types.cv import Rect
 from robokudo.types.human import (
     BodyKeypoint,
@@ -37,20 +35,16 @@ from robokudo.types.human import (
     KeypointKind,
 )
 from robokudo.types.scene import HumanHypothesis
-from robokudo.utils.cv_helper import get_scaled_color_image_for_depth_image
 from robokudo.utils.decorators import record_time
 from robokudo.utils.module_loader import ModuleLoader
 from robokudo.utils.o3d_helper import (
     concatenate_clouds,
-    get_cloud_from_rgb_depth_and_mask,
 )
 
 if TYPE_CHECKING:
     import numpy.typing as npt
     from ultralytics.engine.results import Results
 
-    from robokudo.types.cv import ColorToDepthRatio
-    from semantic_digital_twin.datastructures.camera_model import PinholeCameraModel
 
 # %% body keypoints
 
@@ -77,100 +71,6 @@ class PoseKeypoint(IntEnum):
     RIGHT_KNEE = 14
     LEFT_ANKLE = 15
     RIGHT_ANKLE = 16
-
-
-# %% depth
-
-
-@dataclass
-class DepthFrame:
-    """
-    The depth measurements point clouds are built from, with matching color.
-    """
-
-    depth_image: npt.NDArray[np.uint16]
-    """
-    The depth image.
-    """
-
-    rgb_image: npt.NDArray[np.uint8]
-    """
-    The color image in RGB order, scaled to the depth image resolution.
-    """
-
-    color_to_depth_ratio: ColorToDepthRatio
-    """
-    Size of the depth image relative to the color image.
-    """
-
-    camera_model: PinholeCameraModel
-    """
-    Projection model at the depth image resolution.
-    """
-
-    @classproperty
-    def mask_foreground(cls) -> int:
-        """
-        Value of the pixels a point cloud is built from in a depth mask.
-        """
-        return 255
-
-    def box_cloud(self, box: Rect, depth_truncate: float) -> open3d.geometry.PointCloud:
-        """
-        Build the point cloud of the depth measurements inside a box.
-
-        :param box: The box in color image pixels.
-        :param depth_truncate: Distance in meters beyond which measurements are left
-            out.
-        :return: The colored point cloud of the depth measurements inside the box.
-        """
-        left, top, right, bottom = self.color_to_depth_ratio.depth_region(
-            box
-        ).get_corner_points()
-        mask = np.zeros_like(self.depth_image, dtype=np.uint8)
-        mask[top:bottom, left:right] = self.mask_foreground
-        return self._masked_cloud(mask, depth_truncate=depth_truncate)
-
-    def disc_cloud(self, x: float, y: float, radius: int) -> open3d.geometry.PointCloud:
-        """
-        Build the point cloud of the depth measurements inside a disc.
-
-        :param x: Horizontal disc center in color image pixels.
-        :param y: Vertical disc center in color image pixels.
-        :param radius: Disc radius in depth image pixels.
-        :return: The colored point cloud of the depth measurements inside the disc.
-        """
-        center = self.color_to_depth_ratio.depth_pixel(x, y)
-        mask = np.zeros_like(self.depth_image, dtype=np.uint8)
-        cv2.circle(
-            mask,
-            (center.x, center.y),
-            radius,
-            self.mask_foreground,
-            thickness=cv2.FILLED,
-        )
-        return self._masked_cloud(mask)
-
-    def _masked_cloud(
-        self, mask: npt.NDArray[np.uint8], **cloud_settings: float
-    ) -> open3d.geometry.PointCloud:
-        """
-        Build the point cloud of the depth measurements a mask marks.
-
-        :param mask: Mask on the depth image whose pixels with value
-            :attr:`mask_foreground` the cloud is built from.
-        :param cloud_settings: Further settings of
-            :func:`~robokudo.utils.o3d_helper.get_cloud_from_rgb_depth_and_mask`.
-        :return: The colored point cloud of the depth measurements inside the mask.
-        """
-        return get_cloud_from_rgb_depth_and_mask(
-            rgb_image=self.rgb_image,
-            depth_image=self.depth_image,
-            mask=mask,
-            camera_model=self.camera_model,
-            mask_true_value=self.mask_foreground,
-            **cloud_settings,
-        )
 
 
 # %% annotator
@@ -335,7 +235,11 @@ class HumanAndPoseAnnotator(ThreadedAnnotator):
         parameters: HumanAndPoseAnnotator.Descriptor.Parameters = (
             self.descriptor.parameters
         )
-        depth_frame = self._depth_frame() if parameters.global_with_depth else None
+        depth_frame = (
+            DepthFrame.from_cas(self.get_cas())
+            if parameters.global_with_depth
+            else None
+        )
         result = self._predict(self.get_cas().get(CASViews.COLOR_IMAGE))
 
         hypotheses = [
@@ -347,28 +251,6 @@ class HumanAndPoseAnnotator(ThreadedAnnotator):
         if parameters.global_with_visualization:
             self._visualize(result, hypotheses)
         return Status.SUCCESS
-
-    def _depth_frame(self) -> DepthFrame:
-        """
-        Collect the depth measurements of the CAS and scale the color image and the
-        camera model to the depth image resolution.
-
-        :return: The depth measurements of the CAS with the matching color image.
-        """
-        cas = self.get_cas()
-        color_to_depth_ratio = cas.color_to_depth_ratio
-        scaled_color = get_scaled_color_image_for_depth_image(
-            cas, cas.get(CASViews.COLOR_IMAGE)
-        )
-        return DepthFrame(
-            depth_image=cas.get(CASViews.DEPTH_IMAGE),
-            rgb_image=cv2.cvtColor(scaled_color, cv2.COLOR_BGR2RGB),
-            color_to_depth_ratio=color_to_depth_ratio,
-            camera_model=cas.require_camera_observation().effective_camera_model.scaled(
-                scale_x=color_to_depth_ratio.horizontal,
-                scale_y=color_to_depth_ratio.vertical,
-            ),
-        )
 
     def _hypothesis(
         self, result: Results, index: int, depth_frame: DepthFrame | None
@@ -425,13 +307,15 @@ class HumanAndPoseAnnotator(ThreadedAnnotator):
             return hypothesis
 
         hypothesis.points = depth_frame.box_cloud(
-            hypothesis.roi.roi, parameters.depth_truncate
+            box=hypothesis.roi.roi, depth_truncate=parameters.depth_truncate
         )
         if parameters.shrink_bounding_box is not None and keeps_full_box:
             hypothesis.annotations.append(
                 CloudAnnotation(
                     source=self.name,
-                    points=depth_frame.box_cloud(shrunk_box, parameters.depth_truncate),
+                    points=depth_frame.box_cloud(
+                        box=shrunk_box, depth_truncate=parameters.depth_truncate
+                    ),
                 )
             )
         if parameters.generate_clouds_for_keypoints:
@@ -482,7 +366,9 @@ class HumanAndPoseAnnotator(ThreadedAnnotator):
                 keypoint=keypoint,
                 points=(
                     depth_frame.disc_cloud(
-                        keypoint.x, keypoint.y, parameters.keypoint_masking_radius
+                        x=keypoint.x,
+                        y=keypoint.y,
+                        radius=parameters.keypoint_masking_radius,
                     )
                     if keypoint.confidence
                     >= parameters.keypoint_confidence_threshold_for_clouds

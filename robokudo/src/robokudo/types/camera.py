@@ -7,12 +7,17 @@ from __future__ import annotations
 # %% Imports
 from dataclasses import dataclass, replace
 
+import cv2
 import numpy as np
+import open3d
 from krrood.ormatic.utils import classproperty
 from typing_extensions import TYPE_CHECKING
 
 from robokudo.exceptions import CameraPoseMissing, InvalidCameraObservation
-from robokudo.types.cv import ColorToDepthRatio, Point2D
+from robokudo.cas import CASViews
+from robokudo.types.cv import ColorToDepthRatio, Point2D, Rect
+from robokudo.utils.cv_helper import get_scaled_color_image_for_depth_image
+from robokudo.utils.o3d_helper import get_cloud_from_rgb_depth_and_mask
 from robokudo.utils.ros_frames import normalize_ros_frame_id
 from semantic_digital_twin.datastructures.camera_model import PinholeCameraModel
 from semantic_digital_twin.robots.robot_parts import Camera
@@ -270,3 +275,120 @@ class RegisteredDepthImage:
         if np.isnan(coordinates).any():
             return None
         return Point3(*coordinates, reference_frame=self.world_T_camera.reference_frame)
+
+
+@dataclass
+class DepthFrame:
+    """
+    The depth measurements point clouds are built from, with matching color.
+    """
+
+    depth_image: npt.NDArray[np.uint16]
+    """
+    The depth image.
+    """
+
+    rgb_image: npt.NDArray[np.uint8]
+    """
+    The color image in RGB order, scaled to the depth image resolution.
+    """
+
+    color_to_depth_ratio: ColorToDepthRatio
+    """
+    Size of the depth image relative to the color image.
+    """
+
+    camera_model: PinholeCameraModel
+    """
+    Projection model at the depth image resolution.
+    """
+
+    @classproperty
+    def mask_foreground(cls) -> int:
+        """
+        Value of the pixels a point cloud is built from in a depth mask.
+        """
+        return 255
+
+    @classmethod
+    def from_cas(cls, cas: CAS) -> DepthFrame:
+        """
+        :param cas: A CAS holding a color image, a depth image and a camera observation.
+        :return: The CAS's depth image with its color image and camera model scaled to
+            the depth image's resolution.
+        :raises CameraObservationMissing: If the CAS has no camera observation.
+        """
+        color_to_depth_ratio = cas.color_to_depth_ratio
+        scaled_color = get_scaled_color_image_for_depth_image(
+            cas, cas.get(CASViews.COLOR_IMAGE)
+        )
+        return cls(
+            depth_image=cas.get(CASViews.DEPTH_IMAGE),
+            rgb_image=cv2.cvtColor(scaled_color, cv2.COLOR_BGR2RGB),
+            color_to_depth_ratio=color_to_depth_ratio,
+            camera_model=cas.require_camera_observation().effective_camera_model.scaled(
+                scale_x=color_to_depth_ratio.horizontal,
+                scale_y=color_to_depth_ratio.vertical,
+            ),
+        )
+
+    def box_cloud(
+        self, *, box: Rect, depth_truncate: float
+    ) -> open3d.geometry.PointCloud:
+        """
+        Build the point cloud of the depth measurements inside a box.
+
+        :param box: The box in color image pixels.
+        :param depth_truncate: Distance in meters beyond which measurements are left
+            out.
+        :return: The colored point cloud of the depth measurements inside the box.
+        """
+        left, top, right, bottom = self.color_to_depth_ratio.depth_region(
+            box
+        ).get_corner_points()
+        mask = np.zeros_like(self.depth_image, dtype=np.uint8)
+        mask[top:bottom, left:right] = self.mask_foreground
+        return self.masked_cloud(mask=mask, depth_truncate=depth_truncate)
+
+    def disc_cloud(
+        self, *, x: float, y: float, radius: int
+    ) -> open3d.geometry.PointCloud:
+        """
+        Build the point cloud of the depth measurements inside a disc.
+
+        :param x: Horizontal disc center in color image pixels.
+        :param y: Vertical disc center in color image pixels.
+        :param radius: Disc radius in depth image pixels.
+        :return: The colored point cloud of the depth measurements inside the disc.
+        """
+        center = self.color_to_depth_ratio.depth_pixel(x, y)
+        mask = np.zeros_like(self.depth_image, dtype=np.uint8)
+        cv2.circle(
+            mask,
+            (center.x, center.y),
+            radius,
+            self.mask_foreground,
+            thickness=cv2.FILLED,
+        )
+        return self.masked_cloud(mask=mask)
+
+    def masked_cloud(
+        self, *, mask: npt.NDArray[np.uint8], **cloud_settings: float
+    ) -> open3d.geometry.PointCloud:
+        """
+        Build the point cloud of the depth measurements a mask marks.
+
+        :param mask: Mask on the depth image whose pixels with value
+            :attr:`mask_foreground` the cloud is built from.
+        :param cloud_settings: Further settings of
+            :func:`~robokudo.utils.o3d_helper.get_cloud_from_rgb_depth_and_mask`.
+        :return: The colored point cloud of the depth measurements inside the mask.
+        """
+        return get_cloud_from_rgb_depth_and_mask(
+            rgb_image=self.rgb_image,
+            depth_image=self.depth_image,
+            mask=mask,
+            camera_model=self.camera_model,
+            mask_true_value=self.mask_foreground,
+            **cloud_settings,
+        )
