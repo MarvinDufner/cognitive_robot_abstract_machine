@@ -223,14 +223,14 @@ class RegisteredDepthImage:
             world_T_camera=camera_observation.world_T_camera_or_raise(),
         )
 
-    def world_points(
+    def camera_points(
         self, color_pixels: npt.NDArray[np.int_]
     ) -> npt.NDArray[np.float64]:
         """
         :param color_pixels: The (x, y) of color image pixels, one pixel per row.
-        :return: The (x, y, z) of the world point the camera saw at each of those
-            pixels, one point per row, ``NaN`` where it measured no depth or the pixel
-            lies outside the image.
+        :return: The (x, y, z) in the optical frame of the point the camera saw at each
+            of those pixels, one point per row, ``NaN`` where it measured no depth or
+            the pixel lies outside the image.
         """
         depth_pixels = np.floor(
             np.asarray(color_pixels, dtype=np.float64)
@@ -251,7 +251,7 @@ class RegisteredDepthImage:
         depth[depth <= 0.0] = np.nan
 
         principal_point = self.camera_model.principal_point
-        camera_points = np.column_stack(
+        return np.column_stack(
             [
                 (depth_pixels[:, 0] - float(principal_point.x))
                 * depth
@@ -260,10 +260,21 @@ class RegisteredDepthImage:
                 * depth
                 / self.camera_model.focal_length_y,
                 depth,
-                np.ones(len(depth)),
             ]
         )
-        return (camera_points @ self.world_T_camera.to_np().T)[:, :3]
+
+    def world_points(
+        self, color_pixels: npt.NDArray[np.int_]
+    ) -> npt.NDArray[np.float64]:
+        """
+        :param color_pixels: The (x, y) of color image pixels, one pixel per row.
+        :return: The (x, y, z) of the world point the camera saw at each of those
+            pixels, one point per row, ``NaN`` where it measured no depth or the pixel
+            lies outside the image.
+        """
+        camera_points = self.camera_points(color_pixels)
+        homogeneous = np.column_stack([camera_points, np.ones(len(camera_points))])
+        return (homogeneous @ self.world_T_camera.to_np().T)[:, :3]
 
     def world_point(self, color_pixel: Point2D) -> Point3 | None:
         """

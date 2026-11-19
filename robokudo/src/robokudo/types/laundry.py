@@ -17,7 +17,25 @@ from robokudo.types.scene import ObjectHypothesis
 # %% the objects
 
 
-class LaundryBasketClassName(StrEnum):
+class DetectedClassName(StrEnum):
+    """
+    Class names that a detector classifies objects by; members are added by subclasses.
+    """
+
+    @classmethod
+    def classifies(cls, hypothesis: ObjectHypothesis) -> bool:
+        """
+        :param hypothesis: A detected object.
+        :return: Whether any classification of the object names one of these classes.
+        """
+        return any(
+            annotation.classname in cls
+            for annotation in hypothesis.annotations
+            if isinstance(annotation, Classification)
+        )
+
+
+class LaundryBasketClassName(DetectedClassName):
     """
     The class names a laundry basket is detected by.
     """
@@ -37,17 +55,16 @@ class LaundryBasketClassName(StrEnum):
     A box, taken to hold laundry.
     """
 
-    @classmethod
-    def is_laundry_basket(cls, hypothesis: ObjectHypothesis) -> bool:
-        """
-        :param hypothesis: A detected object.
-        :return: Whether any classification of the object names a laundry basket.
-        """
-        return any(
-            annotation.classname in cls
-            for annotation in hypothesis.annotations
-            if isinstance(annotation, Classification)
-        )
+
+class LaundryClassName(DetectedClassName):
+    """
+    The class names laundry is detected by.
+    """
+
+    CLOTHES = "clothes"
+    """
+    Any garments, the name the detector finds a heap of them by.
+    """
 
 
 # %% picking up
@@ -62,6 +79,11 @@ class LaundryGraspAnnotation(Annotation):
     pixel: Point2D
     """
     The color image pixel of the highest point of the laundry.
+    """
+
+    height_above_floor: float
+    """
+    How high the highest point of the laundry lies above the floor, in metres.
     """
 
     grasp_pose: Pose

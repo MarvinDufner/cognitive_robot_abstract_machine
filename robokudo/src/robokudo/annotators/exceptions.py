@@ -225,3 +225,16 @@ class LaundryBasketNotAnnotated(RoboKudoError, LookupError):
             "map the laundry basket class to LaundryBasket in a SemanticAnnotationConnector "
             "that runs before the grasp is recorded."
         )
+
+
+@dataclass
+class FloorPlaneMissing(RoboKudoError, LookupError):
+    """
+    Laundry heights are measured from the floor, but no plane was detected in the CAS.
+    """
+
+    def error_message(self) -> str:
+        return "No floor plane was detected to measure the laundry's height from."
+
+    def suggest_correction(self) -> str:
+        return "run a PlaneAnnotator before the LaundryGraspPoseAnnotator."

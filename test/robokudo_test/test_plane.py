@@ -106,3 +106,30 @@ def test_a_seeded_annotator_finds_the_same_plane_every_time() -> None:
 
 def test_the_seed_is_off_by_default() -> None:
     assert PlaneAnnotator.Descriptor().parameters.random_seed is None
+
+
+# %% heights above a plane
+
+
+def test_points_on_the_side_of_the_origin_lie_above_the_plane() -> None:
+    """
+    Heights are measured from the plane, positive towards its frame's origin.
+    """
+    floor = Plane(model=[0.0, 0.0, 1.0, -1.0])
+
+    heights = floor.heights(
+        np.array([[0.0, 0.0, 0.7], [0.3, -0.2, 1.0], [0.0, 0.0, 1.2]])
+    )
+
+    assert np.allclose(heights, [0.3, 0.0, -0.2])
+
+
+def test_heights_do_not_depend_on_the_scale_of_the_plane_equation() -> None:
+    """
+    Every multiple of a plane's equation describes the same plane.
+    """
+    floor = Plane(model=[0.0, 0.0, -2.0, 2.0])
+
+    heights = floor.heights(np.array([[0.0, 0.0, 0.7]]))
+
+    assert np.allclose(heights, [0.3])

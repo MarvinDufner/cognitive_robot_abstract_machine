@@ -177,13 +177,22 @@ class ImageROI(Type):
     def full_image_mask(self, image_shape: tuple[int, int]) -> npt.NDArray[np.uint8]:
         """
         :param image_shape: The height and width of the image the region lies in.
-        :return: The mask, which covers the region, placed on an otherwise empty image.
+        :return: The mask placed on an otherwise empty image, cut at the image's edges
+            where the region reaches past them.
         """
+        image_height, image_width = image_shape
+        mask_height, mask_width = self.mask.shape[:2]
+        top, left = self.roi.pos.y, self.roi.pos.x
+        inside_top, inside_left = max(top, 0), max(left, 0)
+        inside_bottom = min(top + mask_height, image_height)
+        inside_right = min(left + mask_width, image_width)
         mask = np.zeros(image_shape, dtype=np.uint8)
-        mask[
-            self.roi.pos.y : self.roi.pos.y + self.roi.height,
-            self.roi.pos.x : self.roi.pos.x + self.roi.width,
-        ] = self.mask
+        if inside_bottom <= inside_top or inside_right <= inside_left:
+            return mask
+        mask[inside_top:inside_bottom, inside_left:inside_right] = self.mask[
+            inside_top - top : inside_bottom - top,
+            inside_left - left : inside_right - left,
+        ]
         return mask
 
 

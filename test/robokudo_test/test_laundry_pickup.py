@@ -6,19 +6,25 @@ on the basket in the semantic digital twin.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import open3d
 import pytest
 
 import robokudo.world
 from robokudo.annotators.hypothesis_point_cloud import HypothesisPointCloudAnnotator
-from robokudo.annotators.exceptions import LaundryBasketNotAnnotated
+from robokudo.annotators.exceptions import FloorPlaneMissing, LaundryBasketNotAnnotated
 from robokudo.annotators.laundry_grasp_connector import LaundryGraspConnector
 from robokudo.annotators.laundry_grasp_pose import LaundryGraspPoseAnnotator
 from robokudo.cas import CAS
-from robokudo.types.annotation import Classification
+from robokudo.types.annotation import Classification, Plane
 from robokudo.types.camera import RegisteredDepthImage
-from robokudo.types.laundry import LaundryBasketClassName, LaundryGraspAnnotation
+from robokudo.types.cv import Rect
+from robokudo.types.laundry import (
+    LaundryBasketClassName,
+    LaundryClassName,
+    LaundryGraspAnnotation,
+)
 from robokudo.types.scene import ObjectHypothesis
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     LaundryBasket,
@@ -44,9 +50,11 @@ def scene(perception_world: World) -> LaundryBasketScene:
 @pytest.fixture
 def cas(scene: LaundryBasketScene) -> CAS:
     """
-    :return: A CAS holding the scene's camera frame.
+    :return: A CAS holding the scene's camera frame and the floor plane detected in it.
     """
-    return scene.cas()
+    cas = scene.cas()
+    cas.annotations.append(scene.floor_plane())
+    return cas
 
 
 @pytest.fixture
@@ -62,6 +70,29 @@ def basket(scene: LaundryBasketScene, cas: CAS) -> ObjectHypothesis:
     )
     cas.annotations.append(hypothesis)
     return hypothesis
+
+
+def detected_laundry(cas: CAS, region: Rect, mask: np.ndarray) -> ObjectHypothesis:
+    """
+    :return: Laundry as the open-vocabulary detector segments and classifies it, in the
+        CAS.
+    """
+    hypothesis = ObjectHypothesis()
+    hypothesis.roi.roi = region
+    hypothesis.roi.mask = mask
+    hypothesis.annotations.append(
+        Classification(classname=LaundryClassName.CLOTHES, confidence=0.5)
+    )
+    cas.annotations.append(hypothesis)
+    return hypothesis
+
+
+@pytest.fixture
+def laundry(scene: LaundryBasketScene, cas: CAS) -> ObjectHypothesis:
+    """
+    :return: The laundry inside the basket, as the detector segments it.
+    """
+    return detected_laundry(cas, scene.laundry_region(), scene.laundry_mask())
 
 
 def laundry_grasps(hypothesis: ObjectHypothesis) -> list[LaundryGraspAnnotation]:
@@ -82,9 +113,7 @@ def test_a_segmented_object_gets_the_point_cloud_its_mask_covers(
     """
     update_in_pipeline(HypothesisPointCloudAnnotator(), cas)
 
-    assert len(basket.points.points) == scene.basket_region.width * (
-        scene.basket_region.height
-    )
+    assert len(basket.points.points) == np.count_nonzero(scene.basket_mask())
 
 
 def test_an_object_that_has_a_point_cloud_keeps_it(
@@ -116,6 +145,7 @@ def test_an_object_without_a_mask_gets_no_point_cloud(cas: CAS) -> None:
 # %% the grasp on the laundry
 
 
+@pytest.mark.usefixtures("laundry")
 def test_the_laundry_is_grasped_at_its_highest_point_not_at_the_rim(
     scene: LaundryBasketScene, cas: CAS, basket: ObjectHypothesis
 ) -> None:
@@ -130,6 +160,140 @@ def test_the_laundry_is_grasped_at_its_highest_point_not_at_the_rim(
     assert np.allclose(grasp.grasp_pose.to_np()[:3, 3], expected_position.to_np()[:3])
 
 
+@pytest.mark.usefixtures("laundry")
+def test_the_grasp_records_the_height_of_the_laundry_above_the_floor(
+    scene: LaundryBasketScene, cas: CAS, basket: ObjectHypothesis
+) -> None:
+    """
+    The laundry's height is measured from the floor, not from the world's origin.
+    """
+    update_in_pipeline(LaundryGraspPoseAnnotator(), cas)
+
+    [grasp] = laundry_grasps(basket)
+    assert np.isclose(
+        grasp.height_above_floor,
+        (scene.table_depth - scene.peak_depth)
+        / RegisteredDepthImage.millimetres_per_metre,
+    )
+
+
+def test_the_laundry_farthest_from_a_tilted_floor_is_grasped(
+    scene: LaundryBasketScene,
+    cas: CAS,
+    basket: ObjectHypothesis,
+    laundry: ObjectHypothesis,
+) -> None:
+    """
+    Where the floor is tilted against the world, the laundry is highest where it is
+    farthest from the floor, not where it is highest in the world.
+    """
+    [floor] = CAS.filter_by_type(Plane, cas.annotations)
+    floor.model = [np.sqrt(0.5), 0.0, np.sqrt(0.5), -1.0]
+
+    update_in_pipeline(LaundryGraspPoseAnnotator(), cas)
+
+    [grasp] = laundry_grasps(basket)
+    assert grasp.pixel.x == laundry.roi.roi.pos.x
+
+
+@pytest.mark.usefixtures("laundry")
+def test_without_a_detected_floor_the_laundry_has_no_height(
+    cas: CAS, basket: ObjectHypothesis
+) -> None:
+    """
+    Heights are measured from the floor, so plane detection has to find it first.
+    """
+    [floor] = CAS.filter_by_type(Plane, cas.annotations)
+    cas.annotations.remove(floor)
+
+    with pytest.raises(FloorPlaneMissing):
+        update_in_pipeline(LaundryGraspPoseAnnotator(), cas)
+
+
+@pytest.mark.usefixtures("basket")
+def test_the_lowest_laundry_is_shown_in_the_coldest_color_of_the_heatmap(
+    scene: LaundryBasketScene, cas: CAS, laundry: ObjectHypothesis
+) -> None:
+    """
+    The laundry is colored by its height above the floor, from its lowest to its highest
+    point.
+    """
+    annotator = LaundryGraspPoseAnnotator()
+    left, top, right, bottom = laundry.roi.roi.get_corner_points()
+
+    update_in_pipeline(annotator, cas)
+
+    coldest_color = cv2.applyColorMap(
+        np.zeros((1, 1), dtype=np.uint8), annotator.height_colormap
+    )[0, 0]
+    image = annotator.get_annotator_output_struct().image
+    assert (image[bottom - 1, left] == coldest_color).all()
+
+
+def test_laundry_hanging_over_the_rim_is_grasped_where_it_hangs(
+    scene: LaundryBasketScene, cas: CAS, basket: ObjectHypothesis
+) -> None:
+    """
+    Laundry hanging over the rim lies as high as the rim, above the laundry's peak
+    inside, so it is grasped there.
+    """
+    left, top, right, bottom = scene.laundry_region().get_corner_points()
+    basket_right = scene.basket_region.get_corner_points()[2]
+    hanging_region = Rect.from_corner_points(left, top, basket_right, bottom)
+    detected_laundry(
+        cas,
+        hanging_region,
+        np.full(
+            (hanging_region.height, hanging_region.width),
+            np.iinfo(np.uint8).max,
+            dtype=np.uint8,
+        ),
+    )
+
+    update_in_pipeline(LaundryGraspPoseAnnotator(), cas)
+
+    [grasp] = laundry_grasps(basket)
+    assert right <= grasp.pixel.x < basket_right
+    assert cas.depth_image[grasp.pixel.y, grasp.pixel.x] == scene.rim_depth
+
+
+def test_a_basket_without_detected_laundry_offers_no_grasp(
+    cas: CAS, basket: ObjectHypothesis
+) -> None:
+    """
+    Only detected laundry is grasped, never the basket itself.
+    """
+    update_in_pipeline(LaundryGraspPoseAnnotator(), cas)
+
+    assert laundry_grasps(basket) == []
+
+
+def test_laundry_outside_the_basket_is_not_grasped_from_it(
+    scene: LaundryBasketScene, cas: CAS, basket: ObjectHypothesis
+) -> None:
+    """
+    Laundry lying beside the basket does not belong to it.
+    """
+    image_size = scene.image_size
+    floor_region = Rect.from_corner_points(
+        image_size - 40, image_size - 40, image_size - 10, image_size - 10
+    )
+    detected_laundry(
+        cas,
+        floor_region,
+        np.full(
+            (floor_region.height, floor_region.width),
+            np.iinfo(np.uint8).max,
+            dtype=np.uint8,
+        ),
+    )
+
+    update_in_pipeline(LaundryGraspPoseAnnotator(), cas)
+
+    assert laundry_grasps(basket) == []
+
+
+@pytest.mark.usefixtures("laundry")
 @pytest.mark.parametrize("classname", list(LaundryBasketClassName))
 def test_a_basket_detected_by_any_of_its_class_names_offers_a_laundry_grasp(
     cas: CAS, basket: ObjectHypothesis, classname: LaundryBasketClassName
@@ -144,6 +308,7 @@ def test_a_basket_detected_by_any_of_its_class_names_offers_a_laundry_grasp(
     assert len(laundry_grasps(basket)) == 1
 
 
+@pytest.mark.usefixtures("laundry")
 def test_the_laundry_is_approached_from_above_with_fingers_across_the_view(
     cas: CAS, basket: ObjectHypothesis
 ) -> None:
@@ -159,11 +324,12 @@ def test_the_laundry_is_approached_from_above_with_fingers_across_the_view(
     assert np.allclose(rotation[:, 1], camera_x_axis)
 
 
+@pytest.mark.usefixtures("laundry")
 def test_no_grasp_is_found_where_the_camera_measured_no_depth_in_the_basket(
     scene: LaundryBasketScene, cas: CAS, basket: ObjectHypothesis
 ) -> None:
     """
-    A basket whose inside the camera did not measure offers no grasp.
+    Laundry the camera did not measure offers no grasp.
     """
     left, top, right, bottom = scene.basket_region.get_corner_points()
     cas.depth_image[top:bottom, left:right] = 0
@@ -173,6 +339,7 @@ def test_no_grasp_is_found_where_the_camera_measured_no_depth_in_the_basket(
     assert laundry_grasps(basket) == []
 
 
+@pytest.mark.usefixtures("laundry")
 def test_an_object_that_is_no_laundry_basket_offers_no_laundry_grasp(
     cas: CAS, basket: ObjectHypothesis
 ) -> None:
@@ -207,6 +374,7 @@ def laundry_basket(
     return laundry_basket
 
 
+@pytest.mark.usefixtures("laundry")
 def test_the_laundry_basket_records_the_grasp_perception_found(
     cas: CAS, basket: ObjectHypothesis, laundry_basket: LaundryBasket
 ) -> None:
@@ -221,6 +389,7 @@ def test_the_laundry_basket_records_the_grasp_perception_found(
     assert laundry_basket.laundry_grasp_pose is grasp.grasp_pose
 
 
+@pytest.mark.usefixtures("laundry")
 def test_a_frame_without_a_grasp_keeps_the_grasp_found_before(
     cas: CAS, basket: ObjectHypothesis, laundry_basket: LaundryBasket
 ) -> None:
@@ -237,6 +406,7 @@ def test_a_frame_without_a_grasp_keeps_the_grasp_found_before(
     assert laundry_basket.laundry_grasp_pose is grasp.grasp_pose
 
 
+@pytest.mark.usefixtures("laundry")
 def test_a_grasp_on_a_basket_not_annotated_as_laundry_basket_is_refused(
     cas: CAS, basket: ObjectHypothesis
 ) -> None:

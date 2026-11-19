@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import cv2
+import numpy as np
 import open3d as o3d
 from semantic_digital_twin.world_description.geometry import (
     Box as SemDTBox,
@@ -36,7 +37,6 @@ from robokudo.types.tf import (
 )
 
 if TYPE_CHECKING:
-    import numpy as np
     import numpy.typing as npt
     from semantic_digital_twin.world_description.world_entity import Region
 
@@ -124,6 +124,17 @@ class Plane(Annotation):
     """
     List of pointcloud indices that belong to this plane
     """
+
+    def heights(self, points: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """
+        :param points: Points in the frame of the plane's equation, one (x, y, z) per
+            row.
+        :return: The distance of each point from the plane, positive on the side the
+            frame's origin lies on.
+        """
+        normal = np.asarray(self.model[:3], dtype=np.float64)
+        offset = self.model[3]
+        return (points @ normal + offset) / np.linalg.norm(normal) * np.sign(offset)
 
 
 @dataclass

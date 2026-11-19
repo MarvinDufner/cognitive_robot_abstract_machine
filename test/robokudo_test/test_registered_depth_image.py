@@ -31,6 +31,23 @@ def depth(scene: ClothOnTableScene) -> RegisteredDepthImage:
     return RegisteredDepthImage.from_cas(scene.cas())
 
 
+# %% camera points
+
+
+def test_the_pixel_on_the_optical_axis_lies_on_it_at_its_depth(
+    scene: ClothOnTableScene, depth: RegisteredDepthImage
+) -> None:
+    """
+    A point is given in the optical frame, the axis running through the image center.
+    """
+    [point] = depth.camera_points(np.array([[100, 100]]))
+
+    assert np.allclose(
+        point,
+        [0.0, 0.0, scene.table_depth / RegisteredDepthImage.millimetres_per_metre],
+    )
+
+
 # %% world points
 
 

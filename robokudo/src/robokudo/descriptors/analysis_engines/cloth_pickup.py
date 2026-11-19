@@ -15,10 +15,16 @@ from robokudo.annotators.hypothesis_point_cloud import HypothesisPointCloudAnnot
 from robokudo.annotators.image_preprocessor import ImagePreprocessorAnnotator
 from robokudo.annotators.laundry_grasp_connector import LaundryGraspConnector
 from robokudo.annotators.laundry_grasp_pose import LaundryGraspPoseAnnotator
+from robokudo.annotators.plane import PlaneAnnotator
 from robokudo.annotators.open_vocabulary_object_detection_annotator import (
     OpenVocabularyObjectDetectionAnnotator,
 )
 from robokudo.annotators.query import GenerateQueryResult, QueryAnnotator
+from robokudo.annotators.scene_freeze import (
+    FreezeSceneOnRequest,
+    HoldFrozenScene,
+    SceneFreeze,
+)
 from robokudo.annotators.semantic_annotation_connector import (
     SemanticAnnotationConnector,
 )
@@ -28,8 +34,9 @@ from robokudo.descriptors.factories.cr_descriptor_factory import (
 )
 from robokudo.idioms import pipeline_init
 from robokudo.pipeline import Pipeline
-from robokudo.types.laundry import LaundryBasketClassName
+from robokudo.types.laundry import LaundryBasketClassName, LaundryClassName
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Cloth,
     LaundryBasket,
 )
 
@@ -51,26 +58,35 @@ class AnalysisEngine(AnalysisEngineInterface):
 
     def implementation(self) -> Pipeline:
         """
-        :return: A pipeline that tracks the baskets every frame and, only when a query
-            arrives, finds the highest point of the laundry in each basket, records a
-            top-down grasp on it and answers the query.
+        :return: A pipeline that tracks the baskets every frame and, on a query, records
+            a top-down grasp on the point of each basket's laundry highest above the
+            floor and answers;
+            after a query named ``freeze`` it holds that scene until the next query.
         """
         detection_descriptor = OpenVocabularyObjectDetectionAnnotator.Descriptor()
-        detection_descriptor.parameters.classes = list(LaundryBasketClassName)
+        detection_descriptor.parameters.classes = [
+            *LaundryBasketClassName,
+            *LaundryClassName,
+        ]
         detection_descriptor.parameters.precision_mode = True
 
         annotation_descriptor = SemanticAnnotationConnector.Descriptor()
         annotation_descriptor.parameters.semantic_annotation_types = {
-            classname: LaundryBasket for classname in LaundryBasketClassName
+            **{classname: LaundryBasket for classname in LaundryBasketClassName},
+            **{classname: Cloth for classname in LaundryClassName},
         }
+
+        scene_freeze = SceneFreeze()
 
         laundry_grasp_on_query = Sequence("Laundry Grasp On Query", memory=True)
         laundry_grasp_on_query.add_children(
             [
                 RunningIsFailure(name="Query Received", child=QueryAnnotator()),
+                PlaneAnnotator(name="FloorPlaneDetection"),
                 LaundryGraspPoseAnnotator(),
                 LaundryGraspConnector(),
                 GenerateQueryResult(),
+                FreezeSceneOnRequest(scene_freeze=scene_freeze),
             ]
         )
 
@@ -78,6 +94,7 @@ class AnalysisEngine(AnalysisEngineInterface):
         pipeline.add_children(
             [
                 pipeline_init(),
+                HoldFrozenScene(scene_freeze=scene_freeze),
                 CollectionReaderAnnotator(
                     descriptor=CollectionReaderDescriptorFactory.create_descriptor(
                         "hsr_ros2"
