@@ -215,7 +215,8 @@ class OpenVocabularyObjectDetectionAnnotator(
         Detect configured classes with optional masks cropped to their regions.
 
         :param image: Color image in BGR channel order.
-        :return: Classified hypotheses with bounding boxes and optional masks.
+        :return: Classified hypotheses with bounding boxes clipped to the image and
+            optional masks.
         """
         inputs = self.processor(
             text=self.classes,
@@ -235,15 +236,21 @@ class OpenVocabularyObjectDetectionAnnotator(
         object_hypotheses = []
         bounding_box_decimal_places = 2
         confidence_decimal_places = 3
-        for box, score, label in zip(
+        image_height, image_width = image.shape[:2]
+        for detected_box, score, label in zip(
             result[DetectionResultField.BOXES],
             result[DetectionResultField.SCORES],
             result[DetectionResultField.LABELS],
         ):
-            box = [
-                round(coordinate, bounding_box_decimal_places)
-                for coordinate in box.tolist()
-            ]
+            box = (
+                numpy.clip(
+                    detected_box.tolist(),
+                    0,
+                    (image_width, image_height, image_width, image_height),
+                )
+                .round(bounding_box_decimal_places)
+                .tolist()
+            )
             confidence = round(score.item(), confidence_decimal_places)
             self.rk_logger.info(
                 f"Detected {self.classes[label]} with confidence {confidence} at location {box}"

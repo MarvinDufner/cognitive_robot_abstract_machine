@@ -1,3 +1,8 @@
+"""
+Matching object hypotheses against queries, and the blackboard interface through which a
+pipeline answers the query action server.
+"""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from queue import Queue
@@ -341,6 +346,16 @@ class QueryHandler(object):
             )
 
         QueryHandler.send_arbitrary_answer(result)
+
+    @staticmethod
+    def send_interim_result(*, result: Query.Result) -> None:
+        """
+        Offer a result for the active goal to end with, should a newer query supersede
+        it before the pipeline sends an answer.
+
+        :param result: The latest result of the active query.
+        """
+        Blackboard().set(BBIdentifier.QUERY_INTERIM_RESULT, result)
 
     @staticmethod
     def send_arbitrary_answer(result: Any) -> None:

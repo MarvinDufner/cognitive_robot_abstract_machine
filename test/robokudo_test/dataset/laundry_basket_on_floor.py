@@ -23,7 +23,8 @@ class LaundryBasketScene(TableFromAboveScene):
     """
     A camera one metre above the floor looks straight down into a square laundry basket.
 
-    Its rim stands higher than the laundry inside, which lies flat but for one peak.
+    Its rim stands higher than the laundry inside, which lies flat but for one cone-
+    shaped mound.
     """
 
     basket_region: Rect = field(
@@ -58,6 +59,11 @@ class LaundryBasketScene(TableFromAboveScene):
     Distance from the camera to the peak of the laundry, in millimetres.
     """
 
+    peak_radius: int = 10
+    """
+    Radius of the mound's base around the peak, in pixels.
+    """
+
     basket_gray_level: int = 50
     """
     Brightness of the basket and the laundry in it.
@@ -74,16 +80,27 @@ class LaundryBasketScene(TableFromAboveScene):
 
     def depth_image(self) -> npt.NDArray[np.uint16]:
         """
-        :return: The distance to the floor, the rim, the laundry and its peak.
+        :return: The distance to the floor, the rim, the laundry and its mound.
         """
         depth = self.table_depth_image()
         left, top, right, bottom = self.basket_region.get_corner_points()
         depth[top:bottom, left:right] = self.rim_depth
-        depth[
-            top + self.rim_width : bottom - self.rim_width,
-            left + self.rim_width : right - self.rim_width,
-        ] = self.laundry_depth
-        depth[self.peak_pixel.y, self.peak_pixel.x] = self.peak_depth
+        rows, columns = np.mgrid[: self.image_size, : self.image_size]
+        mound = np.clip(
+            1.0
+            - np.hypot(columns - self.peak_pixel.x, rows - self.peak_pixel.y)
+            / self.peak_radius,
+            0.0,
+            None,
+        )
+        laundry_depth = (
+            self.laundry_depth - (self.laundry_depth - self.peak_depth) * mound
+        )
+        inside_rim = (
+            slice(top + self.rim_width, bottom - self.rim_width),
+            slice(left + self.rim_width, right - self.rim_width),
+        )
+        depth[inside_rim] = np.round(laundry_depth[inside_rim])
         return depth
 
     def basket_mask(self) -> npt.NDArray[np.uint8]:
