@@ -9,6 +9,7 @@ from coraplex.plans.failures import PlanFailure
 
 if TYPE_CHECKING:
     from coraplex.robot_plans.actions.base import Action
+    from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
     from coraplex.robot_plans.task_definitions import Command
     from cramph.node import StatechartNode
     from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
@@ -355,6 +356,25 @@ class PerceptionSourceUnavailable(PerceptionException):
 
     def suggest_correction(self) -> str:
         return "start the perception pipeline before running the plan."
+
+
+@dataclass
+class CameraImageAxisVertical(PerceptionException):
+    """
+    Raised when a grasp is to close along a camera image's horizontal axis while that
+    axis points straight up or down, so it has no direction on the floor.
+    """
+
+    camera_name: PrefixedName
+    """
+    Name of the camera whose image axis is vertical.
+    """
+
+    def error_message(self) -> str:
+        return f"The horizontal image axis of {self.camera_name} points straight up or down."
+
+    def suggest_correction(self) -> str:
+        return "Turn the camera so its image is not rolled by a right angle."
 
 
 @dataclass

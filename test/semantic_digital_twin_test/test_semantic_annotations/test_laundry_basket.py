@@ -7,16 +7,22 @@ from __future__ import annotations
 import numpy
 import pytest
 
-from krrood_spatial_math.spatial_types import Pose
+from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix, Pose
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     WorldEntityWithIDKwargsTracker,
 )
+from semantic_digital_twin.exceptions import LaundryGraspNotPerceived, NoClothInWorld
 from semantic_digital_twin.semantic_annotations.mixins import IsPerceivable
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Cloth,
     Container,
     LaundryBasket,
 )
+from semantic_digital_twin.specifications.kinematic_structure_entities import (
+    BodySpecification,
+)
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.geometry import Scale
 
 # %% fixtures
 
@@ -44,6 +50,53 @@ def laundry_grasp_pose(laundry_basket: LaundryBasket) -> Pose:
         z=0.35,
         pitch=numpy.pi / 2,
         reference_frame=laundry_basket._world.root,
+    )
+
+
+def add_cloth(
+    *, world: World, name: str, top: HomogeneousTransformationMatrix
+) -> Cloth:
+    """
+    :param world: The world to add the cloth to.
+    :param name: The name of the cloth's body.
+    :param top: Where the middle of the cloth's top lies, in the world frame.
+    :return: A folded T-shirt, a flat box of cloth.
+    """
+    scale = Scale(0.2, 0.2, 0.05)
+    body = BodySpecification.box(
+        name, scale, origin=HomogeneousTransformationMatrix.from_xyz_rpy(z=-scale.z / 2)
+    ).spawn(world, parent_T_self=top)
+    with world.modify_world():
+        cloth = Cloth(root=body)
+        world.add_semantic_annotation(cloth)
+    return cloth
+
+
+@pytest.fixture
+def perceived_laundry_basket(
+    laundry_basket: LaundryBasket, laundry_grasp_pose: Pose
+) -> LaundryBasket:
+    """
+    :return: The laundry basket, with the grasp perception found on its laundry.
+    """
+    with laundry_basket._world.modify_world():
+        laundry_basket.update_laundry_grasp_pose(laundry_grasp_pose)
+    return laundry_basket
+
+
+@pytest.fixture
+def grasped_cloth(
+    perceived_laundry_basket: LaundryBasket, laundry_grasp_pose: Pose
+) -> Cloth:
+    """
+    :return: The cloth whose top the perceived grasp lies on.
+    """
+    return add_cloth(
+        world=perceived_laundry_basket._world,
+        name="grasped_t_shirt",
+        top=HomogeneousTransformationMatrix.from_point_rotation_matrix(
+            point=laundry_grasp_pose.position
+        ),
     )
 
 
@@ -106,3 +159,84 @@ def test_the_laundry_basket_keeps_its_laundry_grasp_after_a_json_roundtrip(
     assert numpy.allclose(
         restored.laundry_grasp_pose.to_np(), laundry_grasp_pose.to_np()
     )
+
+
+# %% taking hold of the laundry
+
+
+def test_the_laundry_is_not_grasped_before_it_was_perceived(
+    laundry_basket: LaundryBasket,
+) -> None:
+    """
+    Without a grasp perception found, there is nowhere to take hold of the laundry.
+    """
+    with pytest.raises(LaundryGraspNotPerceived):
+        laundry_basket.grasp_on_laundry(pinch_depth=0.02)
+
+
+def test_the_laundry_is_not_grasped_in_a_world_without_cloth(
+    perceived_laundry_basket: LaundryBasket,
+) -> None:
+    """
+    A grasp has to be on some cloth.
+    """
+    with pytest.raises(NoClothInWorld):
+        perceived_laundry_basket.grasp_on_laundry(pinch_depth=0.02)
+
+
+def test_the_laundry_is_grasped_on_the_cloth_the_grasp_lies_on(
+    perceived_laundry_basket: LaundryBasket, grasped_cloth: Cloth
+) -> None:
+    """
+    Of several cloths, the grasp is on the one whose surface the perceived grasp lies
+    on.
+    """
+    add_cloth(
+        world=perceived_laundry_basket._world,
+        name="other_t_shirt",
+        top=HomogeneousTransformationMatrix.from_xyz_rpy(x=0.6, y=-0.2, z=0.3),
+    )
+
+    grasp = perceived_laundry_basket.grasp_on_laundry(pinch_depth=0.02)
+
+    assert grasp.graspable is grasped_cloth
+
+
+def test_the_fingers_close_the_pinch_depth_past_the_perceived_grasp(
+    perceived_laundry_basket: LaundryBasket,
+    grasped_cloth: Cloth,
+    laundry_grasp_pose: Pose,
+) -> None:
+    """
+    The grasp moves along its approach, into the laundry, by the pinch depth.
+    """
+    pinch_depth = 0.02
+
+    grasp = perceived_laundry_basket.grasp_on_laundry(pinch_depth=pinch_depth)
+
+    world_T_perceived = laundry_grasp_pose.to_np()
+    approach = world_T_perceived[:3, 0]
+    assert numpy.allclose(
+        grasp.world_T_grasp.to_np()[:3, 3],
+        world_T_perceived[:3, 3] + pinch_depth * approach,
+    )
+
+
+def test_a_turned_grasp_closes_along_the_same_line_from_the_other_side(
+    perceived_laundry_basket: LaundryBasket, grasped_cloth: Cloth
+) -> None:
+    """
+    Turned half a turn about its approach, the grasp keeps its approach and its closing
+    line, but closes the other way along it.
+    """
+    grasp = perceived_laundry_basket.grasp_on_laundry(pinch_depth=0.02)
+
+    turned = perceived_laundry_basket.grasp_on_laundry(
+        pinch_depth=0.02, turned_about_approach=True
+    )
+
+    world_T_grasp = grasp.world_T_grasp.to_np()
+    world_T_turned = turned.world_T_grasp.to_np()
+    assert numpy.allclose(world_T_turned[:3, 3], world_T_grasp[:3, 3])
+    assert numpy.allclose(world_T_turned[:3, 0], world_T_grasp[:3, 0])
+    assert numpy.allclose(world_T_turned[:3, 1], -world_T_grasp[:3, 1])

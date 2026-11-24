@@ -76,11 +76,16 @@ from semantic_digital_twin.robots.hsrb import HSRBGripper
 from semantic_digital_twin.robots.robot_parts import Arm, EndEffector
 from semantic_digital_twin.semantic_annotations.mixins import HasRootBody
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Cloth,
     Drawer,
     Handle,
     Milk,
     Spoon,
 )
+from semantic_digital_twin.specifications.kinematic_structure_entities import (
+    BodySpecification,
+)
+from semantic_digital_twin.world_description.geometry import Scale
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from krrood_spatial_math.spatial_types import Pose
 from semantic_digital_twin.world import World
@@ -1722,6 +1727,29 @@ def test_the_real_hsr_hand_is_squeezed_as_its_executor_says(hsr_apartment_contex
     assert [action.squeeze for action in width_actions_of(plan)] == [
         width_close.squeeze
     ]
+
+
+def test_cloth_is_held_by_shutting_the_gripper(pr2_apartment_context):
+    """
+    Cloth gives way under the fingers, so a grasp on it shuts the gripper rather than
+    meeting the width of the cloth's geometry.
+    """
+    world, view, extensions = pr2_apartment_context
+    body = BodySpecification.box("t_shirt", Scale(0.2, 0.2, 0.05)).spawn(world)
+    with world.modify_world():
+        cloth = Cloth(root=body)
+        world.add_semantic_annotation(cloth)
+
+    plan = rewritten(
+        GraspingAction(
+            grasp=GraspCandidate.from_body_origin(cloth), arm=left_or_only_arm(view)
+        ),
+        extensions,
+        executor_for=physically_simulated_executor,
+    )
+
+    assert width_actions_of(plan) == []
+    assert len(shutting_goals_of(plan)) == 1
 
 
 def test_an_object_without_collision_is_still_held_by_shutting_the_gripper(

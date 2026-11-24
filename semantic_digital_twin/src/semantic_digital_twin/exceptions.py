@@ -2612,3 +2612,36 @@ class ObjectHasNoWidthWithoutCollision(UsageError):
 
     def suggest_correction(self) -> str:
         return "Give the body collision geometry, or state the width yourself."
+
+
+@dataclass
+class LaundryGraspNotPerceived(UsageError):
+    """
+    Raised when a grasp on the laundry in a basket is asked for before perception found
+    where to take hold of it.
+    """
+
+    basket_name: PrefixedName
+    """
+    Name of the laundry basket whose laundry was to be grasped.
+    """
+
+    def error_message(self) -> str:
+        return f"Perception has not found where to take hold of the laundry in {self.basket_name}."
+
+    def suggest_correction(self) -> str:
+        return "Perceive the laundry in the basket before grasping it."
+
+
+@dataclass
+class NoClothInWorld(UsageError):
+    """
+    Raised when a grasp on laundry is asked for while the world holds no cloth to take
+    hold of.
+    """
+
+    def error_message(self) -> str:
+        return "The world holds no cloth to take hold of."
+
+    def suggest_correction(self) -> str:
+        return "Annotate the laundry as cloth before grasping it."

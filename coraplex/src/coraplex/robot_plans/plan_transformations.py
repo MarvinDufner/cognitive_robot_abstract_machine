@@ -69,7 +69,10 @@ from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.robots.robot_part_mixins import HasTwoFingers
 from semantic_digital_twin.robots.robot_parts import Arm
 from semantic_digital_twin.semantic_annotations.mixins import HasRootBody
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Cloth,
+    Drawer,
+)
 from krrood_spatial_math.spatial_types import Pose
 from coraplex.plans.context_extensions import RobotAccess
 from cramph.context import StatechartContext
@@ -452,7 +455,8 @@ class CloseFingersToObjectWidth(PlanTransformation[GraspingAction]):
     contact alone meets the object at its own width, measured on the object. A gripper
     whose fingers are not modelled like the real ones keeps shutting, since a width
     reached on its model need not hold on the real gripper, and so does a gripper the
-    grasp does not move by goals for its fingers.
+    grasp does not move by goals for its fingers. Cloth has no width of its own to meet,
+    so a grasp on it shuts the gripper too.
     """
 
     squeeze: float = 0.0
@@ -468,6 +472,7 @@ class CloseFingersToObjectWidth(PlanTransformation[GraspingAction]):
             and gripper.fingers_are_modelled_like_the_real_ones
             and issubclass(plan_node.gripper_goal_type, MoveFingers)
             and plan_node.grasp.graspable.root.has_collision()
+            and not isinstance(plan_node.grasp.graspable, Cloth)
         )
 
     def apply(self, plan_node: GraspingAction) -> None:
