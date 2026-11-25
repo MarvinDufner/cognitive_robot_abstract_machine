@@ -144,3 +144,20 @@ class ImageResolutionMismatch(RoboKudoError, ValueError):
 
     def suggest_correction(self) -> str:
         return "Scale the color image to the resolution of the depth image."
+
+
+# %% Grasp prediction
+@dataclass
+class MissingGraspPredictionGripper(RoboKudoError):
+    """
+    A grasp pose annotator was not told which gripper to predict grasps of.
+    """
+
+    def error_message(self) -> str:
+        return "The grasp pose annotator's descriptor names no gripper."
+
+    def suggest_correction(self) -> str:
+        return (
+            "Set the descriptor's gripper parameter, for example to "
+            "GraspGenXGripper.from_two_finger_gripper(gripper=robot.arm.end_effector)."
+        )

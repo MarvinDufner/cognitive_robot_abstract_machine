@@ -218,6 +218,21 @@ class PoseAnnotation(Pose, Annotation):
     ...
 
 
+@dataclass(kw_only=True)
+class GraspAnnotation(PoseAnnotation):
+    """
+    A grasp predicted for an object hypothesis, in the camera frame.
+
+    Its x-axis points the way the gripper approaches the object, its y-axis along the
+    axis the fingers close along, and it sits where the closed fingertips meet.
+    """
+
+    confidence: float = 0.0
+    """
+    How likely the predictor rates the grasp to succeed, from 0 to 1.
+    """
+
+
 @dataclass
 class PositionAnnotation(Position, Annotation):
     """Position annotation combining position and annotation functionality.

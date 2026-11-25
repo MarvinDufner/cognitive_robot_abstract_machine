@@ -70,3 +70,12 @@ dev = [
     "torch",
     "ultralytics",
 ]
+# The grasp pose annotator's network, GraspGenX, pins numpy and trimesh below what the
+# workspace needs, so it is installed on its own without its dependencies:
+# pip install --no-deps git+https://github.com/NVlabs/GraspGenX@16349a5c5d5cea1da6c3b0541d60c8312f0b0db6
+grasping = [
+    "torch",
+    "omegaconf",
+    "diffusers",
+    "addict",
+]
