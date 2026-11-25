@@ -69,10 +69,8 @@ class GraspCandidate:
     @property
     def width_along_closing_axis(self) -> float:
         """
-        How wide the object stands along the axis the fingers close along, in metres.
-
-        Read as the width of the object's bounding box seen along that axis, which is
-        the object's own width wherever the grasp lies square to the box.
+        How wide the object stands along the axis the fingers close along, in metres:
+        the extent of its collision geometry along that axis.
 
         :raises ObjectHasNoWidthWithoutCollision: If the object carries no collision
             geometry.
@@ -80,21 +78,8 @@ class GraspCandidate:
         body = self.graspable.root
         if not body.has_collision():
             raise ObjectHasNoWidthWithoutCollision(body.name)
-        bounding_box = body.collision.as_bounding_box_collection_in_frame(
-            body
-        ).bounding_box()
-        extents = np.array(
-            [
-                interval.upper - interval.lower
-                for interval in (
-                    bounding_box.x_interval,
-                    bounding_box.y_interval,
-                    bounding_box.z_interval,
-                )
-            ]
-        )
         closing_direction = self.grasp_pose.to_np()[:3, 1]
-        return float(np.abs(closing_direction) @ extents)
+        return float(np.ptp(body.collision.combined_mesh.vertices @ closing_direction))
 
     @property
     def world_T_grasp(self) -> Pose:

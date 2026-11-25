@@ -72,7 +72,7 @@ from krrood_spatial_math.spatial_types import (
 )
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import FixedConnection
-from semantic_digital_twin.world_description.geometry import Box, Mesh, Scale
+from semantic_digital_twin.world_description.geometry import Box, Cylinder, Mesh, Scale
 from semantic_digital_twin.world_description.inertial_properties import Inertial
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
@@ -1132,6 +1132,35 @@ def test_a_diagonal_grasp_meets_the_box_across_its_shadow(milk):
 
     expected = (BOX_SCALE.x + BOX_SCALE.y) / np.sqrt(2)
     assert diagonal.width_along_closing_axis == pytest.approx(expected)
+
+
+def test_a_can_closed_on_across_a_diagonal_meets_its_diameter():
+    """
+    A can is as wide as its diameter whichever way the fingers close on it from the
+    side, wider though the box around it stands along its diagonal.
+    """
+    can_shape = Cylinder(width=0.066, height=0.12)
+    body = Body(
+        name=PrefixedName("can", prefix="grasp_candidates"),
+        collision=ShapeCollection([can_shape]),
+    )
+    can = IsGraspable(root=body)
+    world = World()
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body)
+        world.add_semantic_annotation(can)
+    diagonal = GraspCandidate(
+        can,
+        Pose(
+            orientation=RotationMatrix.from_vectors(
+                x=Vector3.NEGATIVE_Z(),
+                y=Vector3(x=1 / np.sqrt(2), y=1 / np.sqrt(2), z=0),
+            ).quaternion,
+            reference_frame=body,
+        ),
+    )
+
+    assert diagonal.width_along_closing_axis == pytest.approx(can_shape.width, rel=0.01)
 
 
 def test_an_object_without_collision_has_no_width_to_measure():
