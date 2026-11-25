@@ -57,7 +57,10 @@ from semantic_digital_twin.exceptions import (
     NoSupportingSurfaceError,
     UnknownPartWholeRelationshipField,
 )
-from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
+from semantic_digital_twin.grasping.grasp_candidates import (
+    GraspCandidate,
+    PerceivedGrasp,
+)
 from krrood.entity_query_language.query.match import Match
 from semantic_digital_twin.grasping.grasp_strategies import (
     GraspFromAnySide,
@@ -438,6 +441,12 @@ class IsGraspable(HasRootBody, Mixin):
     How many grasp candidates the annotation offers.
     """
 
+    perceived_grasps: list[PerceivedGrasp] = field(default_factory=list, kw_only=True)
+    """
+    The grasps a perception source predicted from what it saw of the object, the most
+    confident first.
+    """
+
     @classproperty
     def grasp_strategy(cls) -> GraspStrategy:
         """
@@ -451,10 +460,10 @@ class IsGraspable(HasRootBody, Mixin):
         result_pattern: Callable[[], Match[GraspResult]] | None = None,
     ) -> list[GraspCandidate]:
         """
-        The grasps this annotation offers, in no particular order: those of its
-        :meth:`grasped_part` when it is grasped at one of its parts; otherwise
-        :meth:`drawn_grasp_candidates`, or the :meth:`default_grasp_candidates` while no
-        model is given.
+        The grasps this annotation offers: those of its :meth:`grasped_part` when it is
+        grasped at one of its parts; otherwise its :attr:`perceived_grasps`, the most
+        confident first, if any were perceived; otherwise, in no particular order,
+        :meth:`drawn_grasp_candidates`, or :meth:`default_grasp_candidates` without a model.
 
         :param model_registry: Answers the statement of where the object may be grasped.
         :param result_pattern: Builds the pattern of the result the grasps asked of
@@ -465,6 +474,11 @@ class IsGraspable(HasRootBody, Mixin):
         part = self.grasped_part()
         if part is not self:
             return part.grasp_candidates(model_registry, result_pattern)
+        if self.perceived_grasps:
+            return [
+                GraspCandidate(self, grasp.grasp_pose)
+                for grasp in self.perceived_grasps
+            ]
         if model_registry is None:
             return self.default_grasp_candidates()
         return self.drawn_grasp_candidates(model_registry, result_pattern)

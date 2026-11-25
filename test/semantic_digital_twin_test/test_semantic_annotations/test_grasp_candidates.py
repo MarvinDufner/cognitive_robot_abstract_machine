@@ -32,7 +32,10 @@ from semantic_digital_twin.semantic_annotations.mixins import (
     HasDrawnGraspsByDefault,
 )
 from semantic_digital_twin.grasping.axial_grasp import AxialGrasp
-from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
+from semantic_digital_twin.grasping.grasp_candidates import (
+    GraspCandidate,
+    PerceivedGrasp,
+)
 from semantic_digital_twin.grasping.grasp_strategies import (
     GraspABar,
     GraspAcrossTheLength,
@@ -1043,6 +1046,29 @@ def test_a_bowl_without_a_rim_is_grasped_as_a_whole(bowl):
     bowl.rim = None
 
     assert bowl.grasped_part() is bowl
+
+
+# %% grasps a perception source predicted
+
+
+def test_perceived_grasps_are_offered_instead_of_the_default_ones(milk):
+    """
+    Grasps predicted from what was seen of the object say more about it than any it
+    offers without looking, so they are the ones offered, in the order they came in.
+    """
+    perceived_poses = [
+        Pose.from_xyz_rpy(x=0.01, pitch=np.pi / 2, reference_frame=milk.root),
+        Pose.from_xyz_rpy(y=-0.02, yaw=np.pi / 2, reference_frame=milk.root),
+    ]
+    milk.perceived_grasps = [
+        PerceivedGrasp(grasp_pose=pose, confidence=confidence)
+        for pose, confidence in zip(perceived_poses, (0.9, 0.6))
+    ]
+
+    candidates = milk.grasp_candidates()
+
+    assert [candidate.graspable for candidate in candidates] == [milk, milk]
+    assert [candidate.grasp_pose for candidate in candidates] == perceived_poses
 
 
 # %% how wide the object stands between the fingers

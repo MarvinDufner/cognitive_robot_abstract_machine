@@ -112,3 +112,24 @@ class GraspCandidate:
         :return:``reference_T_grasp``, the grasp in the same frame that pose is in.
         """
         return reference_T_object.homogeneous_matrix @ self.grasp_pose
+
+
+# %% perceived grasps
+
+
+@dataclass(eq=False, kw_only=True)
+class PerceivedGrasp:
+    """
+    A grasp a perception source predicted from a point cloud of an object.
+    """
+
+    grasp_pose: Pose
+    """
+    The grasp frame as :attr:`GraspCandidate.grasp_pose` describes it, relative to the
+    root body of the object it was predicted for.
+    """
+
+    confidence: float
+    """
+    How likely the perception source rates the grasp to succeed, from 0 to 1.
+    """
