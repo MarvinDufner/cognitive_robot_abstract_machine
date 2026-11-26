@@ -2,7 +2,7 @@
 The HSR drives to a laundry basket on the kitchen environment's living room floor and
 lifts the top T-shirt out by the grasp RoboKudo's doing-laundry engine finds, simulated
 in MuJoCo. The engine has to be running on the head camera. The T-shirts are rigid
-stand-ins, see :class:`TShirtStandIn`. Run it from this folder::
+stand-ins, see :class:`CrumpledTShirt`. Run it from this folder::
 
     python demo.py
 """
@@ -12,8 +12,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
+from random import Random
 
 import mujoco
+import trimesh
 
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.perception import LaundryGraspPerception
@@ -33,6 +35,9 @@ from krrood_spatial_math.spatial_types import (
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
+from semantic_digital_twin.pipeline.mesh_decomposition.vhacd import (
+    VHACDMeshDecomposer,
+)
 from semantic_digital_twin.predefined_maps.kitchen_environment import (
     KitchenEnvironment,
 )
@@ -55,18 +60,256 @@ from semantic_digital_twin.specifications.kinematic_structure_entities import (
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.specifications.worlds import WorldSpecification
 from semantic_digital_twin.world import World
-from semantic_digital_twin.world_description.geometry import (
-    Box,
-    Color,
-    Cylinder,
-    Scale,
-    Sphere,
-)
+from semantic_digital_twin.world_description.cloth import GarmentFile
+from semantic_digital_twin.world_description.geometry import Color, Mesh, Scale
 from semantic_digital_twin.world_description.inertial_properties import (
     InertiaTensor,
     Inertial,
 )
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
+
+# %% crumpling a garment
+
+
+@dataclass(kw_only=True)
+class Fold:
+    """
+    A fold laying the part of a garment beyond a straight crease over the rest of it.
+
+    Every layer bends around an axis above the crease on a half circle, one axis shared
+    by the layers it lies no further above than :attr:`largest_bend_radius`, so those on
+    top end up inside the fold and the part laid over lands above them.
+    """
+
+    garment_T_crease: HomogeneousTransformationMatrix
+    """
+    The crease in the frame of the garment, whose z-axis points up: its x-axis runs
+    along the crease and its y-axis points into the part that is laid over.
+    """
+
+    clearance: float
+    """
+    How far above the garment's highest point the shared axis lies, in metres.
+    """
+
+    largest_bend_radius: float
+    """
+    The widest a layer bends, in metres, so that a layer lying far below the shared axis
+    drapes over instead of standing up in a loop.
+    """
+
+    def lay_over(self, *, surface: trimesh.Trimesh) -> None:
+        """
+        Fold the garment's surface in place.
+
+        :param surface: The garment's surface, in the garment's frame.
+        """
+        surface.apply_transform(self.garment_T_crease.inverse().to_np())
+        shared_axis_height = surface.bounds[1][2] + self.clearance
+        folded_vertices = []
+        for x, y, z in surface.vertices.tolist():
+            if y <= 0.0:
+                folded_vertices.append([x, y, z])
+                continue
+            bend_radius = min(shared_axis_height - z, self.largest_bend_radius)
+            axis_height = z + bend_radius
+            bend_angle = y / bend_radius
+            if bend_angle < math.pi:
+                folded_vertices.append(
+                    [
+                        x,
+                        bend_radius * math.sin(bend_angle),
+                        axis_height - bend_radius * math.cos(bend_angle),
+                    ]
+                )
+            else:
+                folded_vertices.append(
+                    [x, math.pi * bend_radius - y, axis_height + bend_radius]
+                )
+        surface.vertices = folded_vertices
+        surface.apply_transform(self.garment_T_crease.to_np())
+
+
+@dataclass(kw_only=True)
+class WrinkleWave:
+    """
+    Parallel wrinkles running across a garment.
+    """
+
+    direction: float
+    """
+    The direction across the wrinkles, as the angle from the garment's x-axis, in
+    radians.
+    """
+
+    spacing: float
+    """
+    The distance between neighbouring wrinkles, in metres.
+    """
+
+    phase: float
+    """
+    Where along :attr:`direction` the wrinkles lie, as the phase of the wave at the
+    garment's origin, in radians.
+    """
+
+    def elevation(self, *, x: float, y: float) -> float:
+        """
+        :param x: The x-coordinate of a point of the garment, in its frame.
+        :param y: The y-coordinate of the point, in the garment's frame.
+        :return: How far the wrinkles raise the garment at the point, relative to their
+            depth, from -1 to 1.
+        """
+        distance = x * math.cos(self.direction) + y * math.sin(self.direction)
+        return math.sin(2 * math.pi * distance / self.spacing + self.phase)
+
+
+@dataclass(kw_only=True)
+class Crumpling:
+    """
+    How a garment lying flat is crumpled up: turned, folded over and over across its
+    longer side until it fits a footprint, settling under its own weight after each
+    fold, then wrinkled, with a tuft pulled up from the middle of its top.
+
+    Its randomness is fixed by :attr:`seed`, so the garment crumples alike in every run.
+    """
+
+    seed: int
+    """
+    The seed of the garment's random turn, creases and wrinkles.
+    """
+
+    largest_extent: float
+    """
+    The most the crumpled garment may span along the x- and the y-axis of its frame, in
+    metres.
+    """
+
+    crease_skew: float = 0.25
+    """
+    The most a crease turns away from running straight across the garment's longer side,
+    in radians.
+    """
+
+    fold_clearance: float = 0.008
+    """
+    How far above the garment's highest point a fold's layers bend around, in metres.
+    """
+
+    largest_bend_radius: float = 0.03
+    """
+    The widest a layer bends in a fold, in metres.
+    """
+
+    settled_height_ratio: float = 0.7
+    """
+    How much of its height the garment keeps when a fold settles under its own weight.
+    """
+
+    wrinkle_depth: float = 0.006
+    """
+    How far the wrinkles typically raise and lower the garment, in metres.
+    """
+
+    wrinkle_spacing: float = 0.08
+    """
+    The typical distance between neighbouring wrinkles, in metres.
+
+    Each wave of wrinkles is spaced between half and one and a half times as far.
+    """
+
+    wrinkle_wave_count: int = 6
+    """
+    How many waves of wrinkles, each running in its own direction, overlap.
+    """
+
+    tuft_height: float = 0.06
+    """
+    How high the tuft is pulled up above the garment around it, in metres.
+    """
+
+    tuft_width: float = 0.02
+    """
+    How far from its middle the tuft has sunk to :math:`1/e` of its height, in metres.
+    """
+
+    def crumple(self, *, surface: trimesh.Trimesh) -> None:
+        """
+        Crumple a garment's surface in place.
+
+        :param surface: The garment's surface lying flat, its z-axis pointing up. It is
+            left with the middle of its footprint and its underside at the origin.
+        """
+        random_numbers = Random(self.seed)
+        surface.apply_transform(
+            HomogeneousTransformationMatrix.from_xyz_rpy(
+                yaw=random_numbers.uniform(0.0, 2 * math.pi)
+            ).to_np()
+        )
+        self.fold_until_it_fits(surface=surface, random_numbers=random_numbers)
+        (min_x, min_y, _), (max_x, max_y, _) = surface.bounds.tolist()
+        surface.apply_translation([-(min_x + max_x) / 2, -(min_y + max_y) / 2, 0.0])
+        self.wrinkle(surface=surface, random_numbers=random_numbers)
+        surface.apply_translation([0.0, 0.0, -surface.bounds[0][2]])
+
+    def fold_until_it_fits(
+        self, *, surface: trimesh.Trimesh, random_numbers: Random
+    ) -> None:
+        """
+        Fold the garment's surface in place across its longer side, through the middle
+        of its footprint, until it spans no more than :attr:`largest_extent`.
+
+        :param surface: The garment's surface, its z-axis pointing up.
+        :param random_numbers: The source of the creases' skews and of which side of
+            them is laid over.
+        """
+        (min_x, min_y, _), (max_x, max_y, _) = surface.bounds.tolist()
+        while max(max_x - min_x, max_y - min_y) > self.largest_extent:
+            crease_across_x = max_x - min_x >= max_y - min_y
+            Fold(
+                garment_T_crease=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    x=(min_x + max_x) / 2,
+                    y=(min_y + max_y) / 2,
+                    yaw=(math.pi / 2 if crease_across_x else 0.0)
+                    + random_numbers.uniform(-self.crease_skew, self.crease_skew)
+                    + random_numbers.choice([0.0, math.pi]),
+                ),
+                clearance=self.fold_clearance,
+                largest_bend_radius=self.largest_bend_radius,
+            ).lay_over(surface=surface)
+            surface.apply_scale([1.0, 1.0, self.settled_height_ratio])
+            (min_x, min_y, _), (max_x, max_y, _) = surface.bounds.tolist()
+
+    def wrinkle(self, *, surface: trimesh.Trimesh, random_numbers: Random) -> None:
+        """
+        Raise and lower the garment's surface in place by waves of wrinkles and by the
+        tuft over its origin.
+
+        :param surface: The garment's surface, its z-axis pointing up.
+        :param random_numbers: The source of the waves of wrinkles.
+        """
+        waves = [
+            WrinkleWave(
+                direction=random_numbers.uniform(0.0, 2 * math.pi),
+                spacing=random_numbers.uniform(
+                    self.wrinkle_spacing / 2, 3 * self.wrinkle_spacing / 2
+                ),
+                phase=random_numbers.uniform(0.0, 2 * math.pi),
+            )
+            for _ in range(self.wrinkle_wave_count)
+        ]
+        wave_depth = self.wrinkle_depth / math.sqrt(len(waves))
+        surface.vertices = [
+            [
+                x,
+                y,
+                z
+                + wave_depth * sum(wave.elevation(x=x, y=y) for wave in waves)
+                + self.tuft_height * math.exp(-(x**2 + y**2) / self.tuft_width**2),
+            ]
+            for x, y, z in surface.vertices.tolist()
+        ]
+
 
 # %% the scene
 
@@ -86,10 +329,11 @@ class SceneBody(StrEnum):
 
 
 @dataclass(kw_only=True)
-class TShirtStandIn:
+class CrumpledTShirt:
     """
-    A rigid stand-in for a folded T-shirt lying in the basket: a flat block with a tuft
-    of fabric standing up from its top, where a gripper pinches real cloth.
+    A rigid stand-in for a T-shirt lying crumpled in the basket, made from
+    :attr:`GarmentFile.T_SHIRT`: drawn as its crumpled surface, it collides as the
+    convex parts that surface decomposes into.
     """
 
     name: SceneBody
@@ -99,30 +343,32 @@ class TShirtStandIn:
 
     basket_T_t_shirt: HomogeneousTransformationMatrix
     """
-    Where the middle of the block's underside lies, relative to the middle of the
+    Where the middle of the T-shirt's underside lies, relative to the middle of the
     basket's underside.
     """
 
-    block_scale: Scale = field(default_factory=lambda: Scale(0.2, 0.2, 0.05))
+    crumpling: Crumpling
     """
-    The size of the folded T-shirt.
+    How the T-shirt is crumpled up.
     """
 
-    block_T_tuft: HomogeneousTransformationMatrix = field(
-        default_factory=HomogeneousTransformationMatrix
+    garment_scale: float = 0.8
+    """
+    How large the T-shirt is relative to :attr:`GarmentFile.T_SHIRT`, which is larger
+    than most.
+    """
+
+    largest_triangle_side: float = 0.02
+    """
+    The longest side a triangle of the T-shirt's surface has before it is crumpled, in
+    metres, short enough for its folds to bend smoothly.
+    """
+
+    collision_decomposer: VHACDMeshDecomposer = field(
+        default_factory=lambda: VHACDMeshDecomposer(max_convex_hulls=16)
     )
     """
-    Where the foot of the tuft stands, relative to the middle of the block's top.
-    """
-
-    tuft_radius: float = 0.02
-    """
-    The radius of the tuft, in metres.
-    """
-
-    tuft_height: float = 0.05
-    """
-    How high the straight part of the tuft stands, below its rounded tip, in metres.
+    Decomposes the crumpled T-shirt into the convex parts it collides as.
     """
 
     mass: float = 0.2
@@ -137,50 +383,29 @@ class TShirtStandIn:
 
     def body_specification(self) -> BodySpecification:
         """
-        :return: The T-shirt as a free body whose frame lies in the middle of the
-            block's underside.
+        :return: The T-shirt as a free body whose frame lies in the middle of its
+            underside.
         """
-        block_height = self.block_scale.z
-        tuft_foot = (
-            HomogeneousTransformationMatrix.from_xyz_rpy(z=block_height)
-            @ self.block_T_tuft
-        )
-        shapes = ShapeCollection(
-            [
-                Box(
-                    scale=self.block_scale,
-                    origin=HomogeneousTransformationMatrix.from_xyz_rpy(
-                        z=block_height / 2
-                    ),
-                    color=self.color,
-                ),
-                Cylinder(
-                    width=2 * self.tuft_radius,
-                    height=self.tuft_height,
-                    origin=tuft_foot
-                    @ HomogeneousTransformationMatrix.from_xyz_rpy(
-                        z=self.tuft_height / 2
-                    ),
-                    color=self.color,
-                ),
-                Sphere(
-                    radius=self.tuft_radius,
-                    origin=tuft_foot
-                    @ HomogeneousTransformationMatrix.from_xyz_rpy(z=self.tuft_height),
-                    color=self.color,
-                ),
-            ]
-        )
-        length, width = self.block_scale.x, self.block_scale.y
+        surface = Mesh(
+            filename=str(GarmentFile.T_SHIRT),
+            scale=Scale(self.garment_scale, self.garment_scale, self.garment_scale),
+        ).mesh
+        surface.merge_vertices(merge_tex=True, merge_norm=True)
+        surface = surface.subdivide_to_size(max_edge=self.largest_triangle_side)
+        self.crumpling.crumple(surface=surface)
+        visual = Mesh.from_trimesh(mesh=surface)
+        visual.color = self.color
+        length, width, height = surface.extents.tolist()
         return BodySpecification(
-            self.name.value,
-            shapes,
+            name=self.name.value,
+            shapes=ShapeCollection(self.collision_decomposer.apply_to_mesh(visual)),
+            visual_shapes=ShapeCollection([visual]),
             inertial=Inertial(
                 mass=self.mass,
-                center_of_mass=Point3(z=block_height / 2),
+                center_of_mass=Point3(z=height / 2),
                 inertia=InertiaTensor.from_values(
-                    ixx=self.mass * (width**2 + block_height**2) / 12,
-                    iyy=self.mass * (length**2 + block_height**2) / 12,
+                    ixx=self.mass * (width**2 + height**2) / 12,
+                    iyy=self.mass * (length**2 + height**2) / 12,
                     izz=self.mass * (length**2 + width**2) / 12,
                     ixy=0.0,
                     ixz=0.0,
@@ -202,12 +427,25 @@ class LaundryBasketDemonstration(RobotDemonstration):
     """
 
     used_robot: type[AbstractRobot] = HSRB
+    """
+    The HSR, the robot of the doing-laundry challenge.
+    """
 
     ros_node_name: str = "hsr_laundry_basket_demo"
+    """
+    The name of the demonstration's ROS node.
+    """
 
     executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor
+    """
+    Performs the plan in MuJoCo, where friction alone holds the lifted T-shirt.
+    """
 
     collision_avoidance: bool = True
+    """
+    On, since the HSR moves its whole body with its arm and has to keep it clear of the
+    basket.
+    """
 
     basket_pose: HomogeneousTransformationMatrix = field(
         default_factory=lambda: HomogeneousTransformationMatrix.from_xyz_rpy(
@@ -275,26 +513,23 @@ class LaundryBasketDemonstration(RobotDemonstration):
     the fingers hold it.
     """
 
-    t_shirts: list[TShirtStandIn] = field(
+    t_shirts: list[CrumpledTShirt] = field(
         default_factory=lambda: [
-            TShirtStandIn(
+            CrumpledTShirt(
                 name=SceneBody.BOTTOM_LEFT_T_SHIRT,
-                basket_T_t_shirt=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    y=0.11, z=0.01
-                ),
-                block_T_tuft=HomogeneousTransformationMatrix.from_xyz_rpy(y=0.06),
+                basket_T_t_shirt=HomogeneousTransformationMatrix.from_xyz_rpy(y=0.115),
+                crumpling=Crumpling(seed=7, largest_extent=0.21, tuft_height=0.0),
             ),
-            TShirtStandIn(
+            CrumpledTShirt(
                 name=SceneBody.BOTTOM_RIGHT_T_SHIRT,
-                basket_T_t_shirt=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    y=-0.11, z=0.01
-                ),
-                block_T_tuft=HomogeneousTransformationMatrix.from_xyz_rpy(y=-0.06),
+                basket_T_t_shirt=HomogeneousTransformationMatrix.from_xyz_rpy(y=-0.115),
+                crumpling=Crumpling(seed=8, largest_extent=0.21, tuft_height=0.0),
                 color=Color.GREEN(),
             ),
-            TShirtStandIn(
+            CrumpledTShirt(
                 name=SceneBody.TOP_T_SHIRT,
-                basket_T_t_shirt=HomogeneousTransformationMatrix.from_xyz_rpy(z=0.06),
+                basket_T_t_shirt=HomogeneousTransformationMatrix.from_xyz_rpy(z=0.065),
+                crumpling=Crumpling(seed=9, largest_extent=0.3),
                 color=Color.RED(),
             ),
         ]
