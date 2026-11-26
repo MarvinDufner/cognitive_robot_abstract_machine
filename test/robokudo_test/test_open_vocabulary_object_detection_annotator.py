@@ -255,6 +255,31 @@ def test_detect_objects_creates_classified_hypotheses_without_publishing(
     annotator.get_annotator_output_struct().set_image.assert_not_called()
 
 
+def test_a_box_reaching_past_the_image_edges_is_clipped_to_the_image(
+    numpy_image_annotator: OpenVocabularyObjectDetectionAnnotator,
+) -> None:
+    """
+    A detection overlapping the image border gets a region inside the image, since a
+    region starting left of or above the image selects no pixels.
+    """
+    annotator = numpy_image_annotator
+    image = annotator.get_cas().get(CASViews.COLOR_IMAGE)
+    height, width = image.shape[:2]
+    annotator.processor.post_process_grounded_object_detection.return_value = [
+        {
+            DetectionResultField.BOXES: torch.Tensor(
+                [[-1.6, -0.7, width + 2.3, height + 1.5]]
+            ),
+            DetectionResultField.SCORES: torch.Tensor([0.875]),
+            DetectionResultField.LABELS: torch.tensor([1]),
+        }
+    ]
+
+    [hypothesis] = annotator.detect_objects(image)
+
+    assert hypothesis.roi.roi.get_corner_points() == (0, 0, width, height)
+
+
 def test_predict_mask_returns_full_color_resolution_byte_mask(
     precision_mask_annotator: OpenVocabularyObjectDetectionAnnotator,
 ) -> None:

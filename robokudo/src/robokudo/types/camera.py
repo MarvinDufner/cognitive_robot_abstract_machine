@@ -203,6 +203,13 @@ class RegisteredDepthImage:
         """
         return 1000.0
 
+    @property
+    def color_focal_length(self) -> float:
+        """
+        The horizontal focal length of the color image, in color image pixels.
+        """
+        return self.camera_model.focal_length_x / self.color_to_depth_ratio.horizontal
+
     @classmethod
     def from_cas(cls, cas: CAS) -> RegisteredDepthImage:
         """

@@ -1,3 +1,7 @@
+"""
+The Toyota HSRB robot and its parts.
+"""
+
 from __future__ import annotations
 
 # %% Imports
@@ -157,12 +161,23 @@ class HSRBRightFinger(Finger):
 class HSRBGripper(
     EndEffector, HasTwoFingers[HSRBLeftFinger, HSRBRightFinger], ServoedRobotPart
 ):
+    """
+    The HSRB's hand, two fingers opened and closed by one motor.
+    """
+
+    @classproperty
+    def maximum_opening_width(cls) -> float:
+        """
+        The widest the hand opens, between its fingertips, in metres.
+        """
+        return 0.137
+
     @classproperty
     def squeeze(cls) -> float:
         """
-        Half the hand's widest opening of 13.7 cm, so the fingers are sent shut: the hand
-        grips with as much force as its motor builds up from how far it is sent past
-        what it holds, and its finger springs give way on top of that.
+        Half the hand's widest opening of 13.7 cm, so the fingers are sent shut: the
+        hand grips with as much force as its motor builds up from how far it is sent
+        past what it holds, and its finger springs give way on top of that.
         """
         return 0.07
 

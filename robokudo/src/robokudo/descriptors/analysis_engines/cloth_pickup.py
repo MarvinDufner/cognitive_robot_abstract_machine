@@ -9,6 +9,7 @@ from py_trees.composites import Sequence
 from py_trees.decorators import FailureIsSuccess, RunningIsFailure
 
 from robokudo.analysis_engine import AnalysisEngineInterface
+from robokudo.annotators.cloth_height_coloring import ClothHeightColoringAnnotator
 from robokudo.annotators.cluster_pose_bb import ClusterPoseBBAnnotator
 from robokudo.annotators.collection_reader import CollectionReaderAnnotator
 from robokudo.annotators.hypothesis_point_cloud import HypothesisPointCloudAnnotator
@@ -104,13 +105,10 @@ class AnalysisEngine(AnalysisEngineInterface):
                 OpenVocabularyObjectDetectionAnnotator(
                     name="LaundryBasketDetection", descriptor=detection_descriptor
                 ),
-                HypothesisPointCloudAnnotator(),
+                ClothHeightColoringAnnotator(),
                 ClusterPoseBBAnnotator(),
                 SemanticDigitalTwinConnector(),
                 SemanticAnnotationConnector(descriptor=annotation_descriptor),
-                FailureIsSuccess(
-                    name="Laundry Grasp If Queried", child=laundry_grasp_on_query
-                ),
             ]
         )
         return pipeline

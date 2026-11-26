@@ -29,6 +29,9 @@ class BBIdentifier(object):
     QUERY_ANSWER: str = "query_answer"
     """Result message instance from the action server (typically `robokudo_msgs.msg.QueryResult`)"""
 
+    QUERY_INTERIM_RESULT: str = "query_interim_result"
+    """Result the active goal ends with if a newer query supersedes it"""
+
     QUERY_FEEDBACK: str = "query_feedback"
     """Feedback message for the action server"""
 

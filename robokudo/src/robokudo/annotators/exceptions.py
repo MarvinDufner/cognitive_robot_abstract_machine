@@ -238,3 +238,20 @@ class FloorPlaneMissing(RoboKudoError, LookupError):
 
     def suggest_correction(self) -> str:
         return "run a PlaneAnnotator before the LaundryGraspPoseAnnotator."
+
+
+@dataclass(kw_only=True)
+class GripperOpeningMissing(RoboKudoError, ValueError):
+    """
+    The laundry grasp keeps the gripper's fingers clear of the basket's walls, but no
+    maximum opening of the gripper was configured.
+    """
+
+    def error_message(self) -> str:
+        return "The LaundryGraspPoseAnnotator has no gripper_maximum_opening."
+
+    def suggest_correction(self) -> str:
+        return (
+            "set its descriptor's gripper_maximum_opening from the robot in use, for "
+            "example HSRBGripper.maximum_opening_width."
+        )
