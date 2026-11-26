@@ -1,8 +1,8 @@
 """
 The HSR drives to a laundry basket on the kitchen environment's living room floor and
-lifts the top T-shirt out by the grasp RoboKudo's doing-laundry engine finds, simulated
-in MuJoCo. The engine has to be running on the head camera. The T-shirts are rigid
-stand-ins, see :class:`CrumpledTShirt`. Run it from this folder::
+lifts the top T-shirt out in MuJoCo, by a grasp assumed on its highest point while the
+simulation has no perception. The T-shirts are rigid stand-ins, see
+:class:`CrumpledTShirt`. Run it from this folder::
 
     python demo.py
 """
@@ -18,7 +18,6 @@ import mujoco
 import trimesh
 
 from coraplex.demonstrations import RobotDemonstration
-from coraplex.perception import LaundryGraspPerception
 from coraplex.plans.context_extensions import RobotAccess
 from coraplex.plans.executors import PhysicallySimulatedPlanExecutor, PlanExecutor
 from coraplex.robot_plans.actions.core.navigation import LookAtAction, NavigateAction
@@ -26,6 +25,8 @@ from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
 from cramph.composites import Sequence, StatementNode
 from cramph.context import ContextExtension, StatechartContext
+from cramph.data_types import ObservationStateValues
+from cramph.node import StatechartNode, SucceedsOnObservingTrue
 from cramph.statechart import Statechart
 from krrood.entity_query_language.factories import a, variable_from
 from krrood_spatial_math.spatial_types import (
@@ -67,6 +68,7 @@ from semantic_digital_twin.world_description.inertial_properties import (
     Inertial,
 )
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
+from semantic_digital_twin.world_description.world_entity import Body
 
 # %% crumpling a garment
 
@@ -311,6 +313,48 @@ class Crumpling:
         ]
 
 
+# %% the grasp assumed in place of perception
+
+
+@dataclass(eq=False, repr=False, kw_only=True)
+class AssumedLaundryGrasp(SucceedsOnObservingTrue, StatechartNode):
+    """
+    Statechart node that records on a basket a grasp from above on the highest point of
+    a T-shirt, where RoboKudo's doing-laundry engine grasps the laundry, in place of
+    :class:`~coraplex.perception.LaundryGraspPerception` while the simulation has no
+    perception.
+    """
+
+    basket: LaundryBasket
+    """
+    The basket to record the grasp on.
+    """
+
+    t_shirt: Body
+    """
+    The T-shirt on top of the laundry in the basket.
+    """
+
+    def on_tick(self) -> ObservationStateValues:
+        """
+        :meth:`StatechartNode.on_tick`, recording the grasp where the T-shirt lies now
+        and observing true.
+        """
+        world = self.context.world
+        [surface] = self.t_shirt.visual.shapes
+        x, y, z = max(
+            surface.mesh_in_frame(world.root).vertices.tolist(),
+            key=lambda vertex: vertex[2],
+        )
+        with world.modify_world():
+            self.basket.update_laundry_grasp_pose(
+                Pose.from_xyz_rpy(
+                    x=x, y=y, z=z, pitch=math.pi / 2, reference_frame=world.root
+                )
+            )
+        return ObservationStateValues.TRUE
+
+
 # %% the scene
 
 
@@ -422,8 +466,8 @@ class CrumpledTShirt:
 @dataclass(kw_only=True)
 class LaundryBasketDemonstration(RobotDemonstration):
     """
-    The robot drives to the laundry basket, looks into it, has RoboKudo find a grasp on
-    the laundry and lifts the T-shirt there out of the basket by it.
+    The robot drives to the laundry basket, looks into it and lifts the top T-shirt out
+    of the basket by a grasp on the highest point of the laundry.
     """
 
     used_robot: type[AbstractRobot] = HSRB
@@ -610,8 +654,8 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     def build_statechart(self, context: StatechartContext) -> Statechart:
         """
-        Park the arm, drive in front of the basket, look into it and lift the T-shirt
-        out by the grasp RoboKudo found on the laundry, grounded once it was perceived:
+        Park the arm, drive in front of the basket, look into it, assume a grasp on the
+        laundry and lift the T-shirt out by it, grounded once it was assumed:
 
         turned half a turn first, which the HSR reaches without turning its base, and
         closed once the fingers stall on the cloth.
@@ -633,7 +677,12 @@ class LaundryBasketDemonstration(RobotDemonstration):
                     ParkArmsAction(arms=hsrb.all_arms),
                     NavigateAction(target_location=world_T_standing.pose),
                     LookAtAction(target=Pose(reference_frame=basket.root)),
-                    LaundryGraspPerception(basket=basket),
+                    AssumedLaundryGrasp(
+                        basket=basket,
+                        t_shirt=context.world.get_body_by_name(
+                            SceneBody.TOP_T_SHIRT.value
+                        ),
+                    ),
                     StatementNode(
                         statement=a(PickUpAction)(
                             grasp=a(
