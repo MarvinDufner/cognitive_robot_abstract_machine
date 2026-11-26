@@ -17,6 +17,9 @@ from semantic_digital_twin.robots.hsrb import HSRB
 from ..pytest_environment import runs_in_continuous_integration
 
 pytestmark = [
+    pytest.mark.skip(
+        reason="Needs RoboKudo's doing-laundry engine running on the simulated head camera"
+    ),
     pytest.mark.skipif(
         not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
     ),

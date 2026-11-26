@@ -1,51 +1,62 @@
+"""
+Perception for plans: what to look for, the sources that answer it, and the statechart
+nodes that write what they perceived into the world.
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import timedelta
+from enum import StrEnum
 
 import numpy as np
 
 from krrood.ormatic.utils import classproperty
-from cramph.node import EndedByOwner, FailsOnObservingFalse
+from cramph.node import (
+    EndedByOwner,
+    FailsOnObservingFalse,
+    SucceedsOnObservingTrue,
+)
 from cramph.context import ContextExtension
 from cramph.data_types import ObservationStateValues
 from cramph.node import StatechartNode
 from giskardpy.motion_statechart.ros_context import RosContextExtension
 from krrood.adapters.json_serializer import SubclassJSONSerializer, from_json, to_json
+from krrood.patterns.called_positionally import called_positionally
 from rclpy.action import ActionClient
+from rclpy.action.client import ClientGoalHandle
 from rclpy.node import Node
+from rclpy.qos import QoSProfile
+from rclpy.subscription import Subscription
+from rclpy.task import Future
+from rosidl_runtime_py.utilities import get_action
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     WorldEntityWithIDKwargsTracker,
 )
 from semantic_digital_twin.reasoning.robot_predicates import VisibleTo
-from semantic_digital_twin.robots.robot_parts import AbstractRobot, Camera
+from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.mixins import IsPerceivable
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    LaundryBasket,
+)
 from krrood_spatial_math.spatial_types import (
     HomogeneousTransformationMatrix,
     RotationMatrix,
-    Vector3,
 )
 from krrood_spatial_math.spatial_types import Pose, Point3
-from semantic_digital_twin.datastructures.camera_model import PinholeCameraModel
-from semantic_digital_twin.semantic_annotations.semantic_annotations import (
-    Cloth,
-    LaundryBasket,
-)
-from semantic_digital_twin.spatial_computations.raytracer import RayTracer
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
 from semantic_digital_twin.world_description.world_entity import (
     SemanticAnnotation,
     Body,
 )
+from std_msgs.msg import Float64MultiArray
 from typing_extensions import Any, Self, TYPE_CHECKING
 
 from coraplex.datastructures.enums import PerceptionSource
-from coraplex.plans.context_extensions import RobotAccess
 from coraplex.exceptions import (
     AmbiguousDetection,
-    CameraImageAxisVertical,
     PerceivedObjectNotInWorld,
     PerceptionSourceUnavailable,
     UnidentifiedDetections,
@@ -525,16 +536,41 @@ class PerceptionTask(EndedByOwner, FailsOnObservingFalse, StatechartNode):
         return ObservationStateValues.TRUE
 
 
-# %% taking hold of the laundry in a basket
+# %% the grasp on the laundry in a basket
+
+
+class DoingLaundryInterface(StrEnum):
+    """
+    The names RoboKudo's doing-laundry engine is reached by, which have to match the ones
+    the engine declares.
+    """
+
+    QUERY_ACTION_TYPE = "robokudo_msgs/action/Query"
+    """
+    The action RoboKudo answers its queries over.
+    """
+
+    T_SHIRT_PILE_QUERY = "tshirt-pile"
+    """
+    The query after which the engine streams a grasp on the laundry in a basket until the
+    query is canceled.
+    """
+
+    GRASP_TOPIC = "/basket_tshirt_grasp_pose"
+    """
+    The topic the engine streams the grasp on, as a homogeneous transformation matrix in
+    the map frame, row by row.
+    """
 
 
 @dataclass(eq=False, repr=False, kw_only=True)
-class LaundryGraspDetection(EndedByOwner, FailsOnObservingFalse, StatechartNode):
+class LaundryGraspPerception(
+    SucceedsOnObservingTrue, FailsOnObservingFalse, StatechartNode
+):
     """
-    Statechart node that records on a basket where to take hold of its laundry, as
-    RoboKudo's cloth pickup engine does, but read from the world model through the
-    robot's default camera: on the highest cloth it sees in the basket, approaching
-    straight down and closing along the image's horizontal axis laid flat.
+    Statechart node that asks RoboKudo's doing-laundry engine where to take hold of the
+    laundry in a basket and records the first grasp the engine streams on the basket,
+    read in the world's root frame. Ending the node cancels the query.
     """
 
     basket: LaundryBasket
@@ -542,145 +578,138 @@ class LaundryGraspDetection(EndedByOwner, FailsOnObservingFalse, StatechartNode)
     The basket whose laundry to take hold of.
     """
 
-    _observation: ObservationStateValues | None = field(
+    server_timeout: timedelta = field(default=timedelta(seconds=10))
+    """
+    How long to wait for RoboKudo's query action before giving up.
+    """
+
+    _action_client: ActionClient = field(init=False, repr=False)
+    """
+    The client the query is sent with, created during :meth:`set_up`.
+    """
+
+    _subscription: Subscription = field(init=False, repr=False)
+    """
+    The subscription to the streamed grasps, created during :meth:`set_up`.
+    """
+
+    _streamed_grasp: Float64MultiArray | None = field(
         init=False, default=None, repr=False
     )
     """
-    The observation this node keeps once it looked into the basket, None before that.
+    The latest grasp the engine streamed since the query was sent, None before the first.
+    """
+
+    _goal_handle: ClientGoalHandle | None = field(init=False, default=None, repr=False)
+    """
+    The query's goal, None until the action server responded to it.
+    """
+
+    _query_result: Future | None = field(init=False, default=None, repr=False)
+    """
+    The result the query ends with, None until the action server accepted it.
     """
 
     @classproperty
     def required_context_extensions(cls) -> tuple[type[ContextExtension], ...]:
-        return super().required_context_extensions + (RobotAccess,)
+        """
+        :attr:`StatechartNode.required_context_extensions` and the ROS access the query
+        goes through.
+        """
+        return super().required_context_extensions + (RosContextExtension,)
+
+    def set_up(self) -> None:
+        """
+        :meth:`StatechartNode.set_up`, connected to RoboKudo's query action and to the
+        grasp topic.
+
+        :raises PerceptionSourceUnavailable: If RoboKudo's query action is not served
+            within :attr:`server_timeout`.
+        """
+        super().set_up()
+        ros_context = self.context.require_extension(extension_type=RosContextExtension)
+        self._action_client = ros_context.get_or_create_action_client(
+            get_action(DoingLaundryInterface.QUERY_ACTION_TYPE),
+            ROBOKUDO_QUERY_ACTION_NAME,
+        )
+        if not self._action_client.wait_for_server(
+            timeout_sec=self.server_timeout.total_seconds()
+        ):
+            raise PerceptionSourceUnavailable(action_name=ROBOKUDO_QUERY_ACTION_NAME)
+        self._subscription = ros_context.ros_node.create_subscription(
+            Float64MultiArray,
+            DoingLaundryInterface.GRASP_TOPIC,
+            self._keep_streamed_grasp,
+            QoSProfile(depth=1),
+        )
 
     def on_start(self) -> None:
-        self._observation = None
+        """
+        :meth:`StatechartNode.on_start`, sending the query and forgetting any grasp
+        streamed before it.
+        """
+        self._streamed_grasp = None
+        self._goal_handle = None
+        self._query_result = None
+        query = get_action(DoingLaundryInterface.QUERY_ACTION_TYPE).Goal(
+            query=DoingLaundryInterface.T_SHIRT_PILE_QUERY
+        )
+        self._action_client.send_goal_async(query).add_done_callback(
+            self._keep_goal_handle
+        )
 
     def on_tick(self) -> ObservationStateValues | None:
-        if self._observation is None:
-            self._observation = self._record_laundry_grasp()
-        return self._observation
-
-    def _record_laundry_grasp(self) -> ObservationStateValues:
         """
-        Record on the basket the grasp on the highest point of the laundry the camera
-        sees in it.
-
-        :return: True once the grasp was recorded, False when the camera sees no cloth
-            in the basket.
+        :meth:`StatechartNode.on_tick`, observing true once a grasp was recorded and false
+        once the query ended without one.
         """
-        robot = self.context.require_extension(extension_type=RobotAccess).robot
-        camera = robot.get_default_camera()
-        world_P_laundry = self.visible_laundry_points(robot=robot, camera=camera)
-        if len(world_P_laundry) == 0:
+        if self._streamed_grasp is not None:
+            self._record_streamed_grasp()
+            return ObservationStateValues.TRUE
+        if self._goal_handle is None:
+            return None
+        if not self._goal_handle.accepted or self._query_result.done():
             return ObservationStateValues.FALSE
-        highest_point = world_P_laundry[np.argmax(world_P_laundry[:, 2])]
-        grasp_pose = self.top_down_grasp_pose(grasp_point=highest_point, camera=camera)
-        with self.context.world.modify_world():
-            self.basket.update_laundry_grasp_pose(grasp_pose)
-        return ObservationStateValues.TRUE
+        return None
 
-    def visible_laundry_points(
-        self, *, robot: AbstractRobot, camera: Camera
-    ) -> np.ndarray:
+    def on_end(self) -> None:
         """
-        :param robot: The robot carrying the camera.
-        :param camera: The camera looking into the basket.
-        :return: The points of cloth inside the basket's bounding box that the camera
-            sees, in the world frame, one per row.
+        :meth:`StatechartNode.on_end`, canceling the query, which the engine otherwise
+        streams until a newer query arrives.
         """
-        world_P_seen, seen_bodies = self.first_hits_past_robot(
-            robot=robot, camera=camera
-        )
-        cloth_bodies = {
-            cloth.root
-            for cloth in self.context.world.get_semantic_annotations_by_type(Cloth)
-        }
-        on_cloth = np.array([body in cloth_bodies for body in seen_bodies], dtype=bool)
-        world_P_cloth = world_P_seen[on_cloth]
-        return world_P_cloth[self.are_inside_basket(world_P_points=world_P_cloth)]
+        if self._goal_handle is not None and self._goal_handle.accepted:
+            self._goal_handle.cancel_goal_async()
 
-    def first_hits_past_robot(
-        self, *, robot: AbstractRobot, camera: Camera
-    ) -> tuple[np.ndarray, list[Body]]:
+    def _record_streamed_grasp(self) -> None:
         """
-        :param robot: The robot whose own bodies the camera sees past, as the camera
-            sits inside its housing.
-        :param camera: The camera to cast the pixel rays of.
-        :return: The point each pixel ray hits first outside the robot, in the world
-            frame, one per row, and the body hit there, for each ray that hits any.
+        Record the latest streamed grasp on the basket.
         """
-        camera_model = PinholeCameraModel.from_field_of_view(
-            resolution=camera.resolution, field_of_view=camera.field_of_view
-        )
-        ray_tracer = RayTracer(self.context.world)
-        rays = ray_tracer.create_camera_rays(
-            camera.world_T_forward_view, camera_model=camera_model
-        )
-        hits = ray_tracer.ray_test(
-            rays.origin_points,
-            rays.origin_points + rays.direction_vectors,
-            multiple_hits=True,
-            min_distance=camera.camera_range.minimum_distance,
-            max_distance=camera.camera_range.maximum_distance,
-        )
-        robot_bodies = set(robot.bodies)
-        outside_robot = np.array(
-            [body not in robot_bodies for body in hits.bodies], dtype=bool
-        )
-        ray_indices = hits.ray_indices[outside_robot]
-        hit_points = hits.hit_points[outside_robot]
-        hit_bodies = [body for body, kept in zip(hits.bodies, outside_robot) if kept]
-        distances = np.linalg.norm(hit_points - rays.origin_points[ray_indices], axis=1)
-        by_ray_then_distance = np.lexsort((distances, ray_indices))
-        _, first_of_each_ray = np.unique(
-            ray_indices[by_ray_then_distance], return_index=True
-        )
-        first_hits = by_ray_then_distance[first_of_each_ray]
-        return hit_points[first_hits], [hit_bodies[hit] for hit in first_hits]
-
-    def are_inside_basket(self, *, world_P_points: np.ndarray) -> np.ndarray:
-        """
-        :param world_P_points: Points in the world frame, one per row.
-        :return: Whether each point lies inside the basket's bounding box.
-        """
-        basket = self.basket.root
-        basket_box = basket.collision.as_bounding_box_collection_in_frame(
-            basket
-        ).bounding_box()
-        basket_T_world = self.context.world.compute_forward_kinematics_np(
-            basket, self.context.world.root
-        )
-        basket_P_points = (
-            world_P_points @ basket_T_world[:3, :3].T + basket_T_world[:3, 3]
-        )
-        lower = np.array([basket_box.min_x, basket_box.min_y, basket_box.min_z])
-        upper = np.array([basket_box.max_x, basket_box.max_y, basket_box.max_z])
-        return np.all((basket_P_points >= lower) & (basket_P_points <= upper), axis=1)
-
-    def top_down_grasp_pose(self, *, grasp_point: np.ndarray, camera: Camera) -> Pose:
-        """
-        :param grasp_point: Where to take hold, in the world frame.
-        :param camera: The camera whose image decides the closing direction.
-        :return: A grasp at the point approaching straight down along its x-axis and
-            closing along its y-axis, the image's horizontal axis laid flat.
-        :raises CameraImageAxisVertical: If the image's horizontal axis points straight
-            up or down.
-        """
+        data = self._streamed_grasp.data
+        columns = self._streamed_grasp.layout.dim[-1].size
         world = self.context.world
-        image_x_axis = camera.root.global_transform.to_np()[:3, 0]
-        flat_image_x_axis = np.array([image_x_axis[0], image_x_axis[1], 0.0])
-        length = np.linalg.norm(flat_image_x_axis)
-        if np.isclose(length, 0.0):
-            raise CameraImageAxisVertical(camera_name=camera.root.name)
-        closing = flat_image_x_axis / length
-        rotation = RotationMatrix.from_vectors(
-            x=Vector3(0.0, 0.0, -1.0, reference_frame=world.root),
-            y=Vector3(*closing, reference_frame=world.root),
+        world_T_grasp = HomogeneousTransformationMatrix(
+            data=[
+                list(data[start : start + columns])
+                for start in range(0, len(data), columns)
+            ],
             reference_frame=world.root,
         )
-        return Pose(
-            position=Point3(*grasp_point, reference_frame=world.root),
-            orientation=rotation.quaternion,
-            reference_frame=world.root,
-        )
+        with world.modify_world():
+            self.basket.update_laundry_grasp_pose(world_T_grasp.pose)
+
+    @called_positionally
+    def _keep_streamed_grasp(self, grasp: Float64MultiArray) -> None:
+        """
+        :param grasp: The grasp the engine streamed.
+        """
+        self._streamed_grasp = grasp
+
+    @called_positionally
+    def _keep_goal_handle(self, goal_response: Future) -> None:
+        """
+        :param goal_response: The action server's response to the query.
+        """
+        goal_handle = goal_response.result()
+        if goal_handle.accepted:
+            self._query_result = goal_handle.get_result_async()
+        self._goal_handle = goal_handle

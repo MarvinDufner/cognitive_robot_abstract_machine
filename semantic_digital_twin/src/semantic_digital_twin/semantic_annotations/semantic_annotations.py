@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing_extensions import Iterable, Iterator, Self, TYPE_CHECKING
 
 
+import math
+
 import numpy as np
 import trimesh
 
@@ -2049,15 +2051,15 @@ class LaundryBasket(Container, HasCaseAsRootBody, IsPerceivable):
         if not cloths:
             raise NoClothInWorld()
         world_T_grasp = world.transform(self.laundry_grasp_pose, world.root)
-        world_P_grasp = np.append(world_T_grasp.to_np()[:3, 3], 1.0)
 
         def distance_to_surface(cloth: Cloth) -> float:
-            cloth_P_grasp = (
-                world.compute_forward_kinematics_np(cloth.root, world.root)
-                @ world_P_grasp
-            )
+            """
+            :param cloth: The cloth to measure to.
+            :return: How far the grasp lies from the surface of the cloth, in metres.
+            """
+            x, y, z, _ = world.transform(world_T_grasp.position, cloth.root).to_list()
             _, distances, _ = trimesh.proximity.closest_point(
-                cloth.root.combined_mesh, [cloth_P_grasp[:3]]
+                cloth.root.combined_mesh, [[x, y, z]]
             )
             return float(distances[0])
 
@@ -2065,7 +2067,7 @@ class LaundryBasket(Container, HasCaseAsRootBody, IsPerceivable):
         world_T_pinch = (
             world_T_grasp.homogeneous_matrix
             @ HomogeneousTransformationMatrix.from_xyz_rpy(
-                x=pinch_depth, roll=np.pi if turned_about_approach else 0.0
+                x=pinch_depth, roll=math.pi if turned_about_approach else 0.0
             )
         )
         return GraspCandidate(cloth, world.transform(world_T_pinch.pose, cloth.root))

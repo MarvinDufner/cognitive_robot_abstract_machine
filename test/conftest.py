@@ -1,3 +1,7 @@
+"""
+Fixtures shared by the tests of every package.
+"""
+
 import os
 import threading
 import time
@@ -88,6 +92,7 @@ from semantic_digital_twin.robots.justin import Justin
 from semantic_digital_twin.robots.mmp_dresden import MMPDresden
 from semantic_digital_twin.robots.unitree_g1 import UnitreeG1
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    LaundryBasket,
     Milk,
     Table,
     Apple,
@@ -287,6 +292,18 @@ def world_with_two_bodies() -> tuple[World, Body, Body]:
     parent = Body(name=PrefixedName("parent"))
     child = Body(name=PrefixedName("child"))
     return world, parent, child
+
+
+@pytest.fixture
+def laundry_basket() -> LaundryBasket:
+    """
+    :return: A laundry basket in a world of its own.
+    """
+    world = World.create_with_root_body("root")
+    with world.modify_world():
+        return LaundryBasket.create_with_new_body_in_world(
+            name="laundry_basket", world=world
+        )
 
 
 @pytest.fixture()

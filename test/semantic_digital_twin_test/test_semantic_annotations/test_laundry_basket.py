@@ -28,18 +28,6 @@ from semantic_digital_twin.world_description.geometry import Scale
 
 
 @pytest.fixture
-def laundry_basket() -> LaundryBasket:
-    """
-    :return: A laundry basket in a world of its own.
-    """
-    world = World.create_with_root_body("root")
-    with world.modify_world():
-        return LaundryBasket.create_with_new_body_in_world(
-            name="laundry_basket", world=world
-        )
-
-
-@pytest.fixture
 def laundry_grasp_pose(laundry_basket: LaundryBasket) -> Pose:
     """
     :return: A grasp approaching the laundry straight down, in the basket's world frame.
@@ -214,12 +202,10 @@ def test_the_fingers_close_the_pinch_depth_past_the_perceived_grasp(
 
     grasp = perceived_laundry_basket.grasp_on_laundry(pinch_depth=pinch_depth)
 
-    world_T_perceived = laundry_grasp_pose.to_np()
-    approach = world_T_perceived[:3, 0]
-    assert numpy.allclose(
-        grasp.world_T_grasp.to_np()[:3, 3],
-        world_T_perceived[:3, 3] + pinch_depth * approach,
-    )
+    approach = laundry_grasp_pose.rotation_matrix.x_vector()
+    expected_position = laundry_grasp_pose.position + approach * pinch_depth
+    distance = grasp.world_T_grasp.position.euclidean_distance(expected_position)
+    assert float(distance) == pytest.approx(0.0)
 
 
 def test_a_turned_grasp_closes_along_the_same_line_from_the_other_side(
@@ -235,8 +221,16 @@ def test_a_turned_grasp_closes_along_the_same_line_from_the_other_side(
         pinch_depth=0.02, turned_about_approach=True
     )
 
-    world_T_grasp = grasp.world_T_grasp.to_np()
-    world_T_turned = turned.world_T_grasp.to_np()
-    assert numpy.allclose(world_T_turned[:3, 3], world_T_grasp[:3, 3])
-    assert numpy.allclose(world_T_turned[:3, 0], world_T_grasp[:3, 0])
-    assert numpy.allclose(world_T_turned[:3, 1], -world_T_grasp[:3, 1])
+    world_T_grasp = grasp.world_T_grasp
+    world_T_turned = turned.world_T_grasp
+    grasp_rotation = world_T_grasp.rotation_matrix
+    turned_rotation = world_T_turned.rotation_matrix
+    assert float(
+        world_T_turned.position.euclidean_distance(world_T_grasp.position)
+    ) == pytest.approx(0.0)
+    assert float(
+        turned_rotation.x_vector().dot(grasp_rotation.x_vector())
+    ) == pytest.approx(1.0)
+    assert float(
+        turned_rotation.y_vector().dot(grasp_rotation.y_vector())
+    ) == pytest.approx(-1.0)

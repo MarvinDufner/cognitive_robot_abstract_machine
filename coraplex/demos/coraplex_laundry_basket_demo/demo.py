@@ -1,23 +1,22 @@
 """
-The HSR drives to a laundry basket on the floor of the kitchen environment's living
-room, looks into it and lifts the top T-shirt out by the highest point of the laundry,
-simulated in MuJoCo.
-
-The T-shirts are rigid stand-ins, see :class:`TShirtStandIn`. Run it from this folder::
+The HSR drives to a laundry basket on the kitchen environment's living room floor and
+lifts the top T-shirt out by the grasp RoboKudo's doing-laundry engine finds, simulated
+in MuJoCo. The engine has to be running on the head camera. The T-shirts are rigid
+stand-ins, see :class:`TShirtStandIn`. Run it from this folder::
 
     python demo.py
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 import mujoco
-import numpy as np
 
 from coraplex.demonstrations import RobotDemonstration
-from coraplex.perception import LaundryGraspDetection
+from coraplex.perception import LaundryGraspPerception
 from coraplex.plans.context_extensions import RobotAccess
 from coraplex.plans.executors import PhysicallySimulatedPlanExecutor, PlanExecutor
 from coraplex.robot_plans.actions.core.navigation import LookAtAction, NavigateAction
@@ -198,7 +197,7 @@ class TShirtStandIn:
 @dataclass(kw_only=True)
 class LaundryBasketDemonstration(RobotDemonstration):
     """
-    The robot drives to the laundry basket, looks into it, finds the highest point of
+    The robot drives to the laundry basket, looks into it, has RoboKudo find a grasp on
     the laundry and lifts the T-shirt there out of the basket by it.
     """
 
@@ -227,7 +226,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     robot_start_pose: HomogeneousTransformationMatrix = field(
         default_factory=lambda: HomogeneousTransformationMatrix.from_xyz_rpy(
-            x=1.3, y=2.2, yaw=np.pi
+            x=1.3, y=2.2, yaw=math.pi
         )
     )
     """
@@ -242,7 +241,8 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     pinch_depth: float = 0.02
     """
-    How far below the highest point of the laundry the fingers close, in metres.
+    How far past the top of the laundry, along the grasp's approach, the fingers close,
+    in metres.
     """
 
     approach_clearance: float = 0.2
@@ -375,10 +375,11 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     def build_statechart(self, context: StatechartContext) -> Statechart:
         """
-        Park the arm, drive in front of the basket, look into it and lift the T-shirt out
-        by the highest point of the laundry, a grasp grounded once the laundry was
-        perceived: turned half a turn first, which the HSR reaches without turning its
-        base, and closed once the fingers stall on the cloth.
+        Park the arm, drive in front of the basket, look into it and lift the T-shirt
+        out by the grasp RoboKudo found on the laundry, grounded once it was perceived:
+
+        turned half a turn first, which the HSR reaches without turning its base, and
+        closed once the fingers stall on the cloth.
         """
         hsrb = context.require_extension(extension_type=RobotAccess).robot
         [basket] = context.world.get_semantic_annotations_by_type(LaundryBasket)
@@ -386,7 +387,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
         world_T_standing = (
             self.basket_pose
             @ HomogeneousTransformationMatrix.from_xyz_rpy(
-                x=self.standing_distance, yaw=np.pi
+                x=self.standing_distance, yaw=math.pi
             )
         )
         world_T_standing.reference_frame = context.world.root
@@ -397,7 +398,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
                     ParkArmsAction(arms=hsrb.all_arms),
                     NavigateAction(target_location=world_T_standing.pose),
                     LookAtAction(target=Pose(reference_frame=basket.root)),
-                    LaundryGraspDetection(basket=basket),
+                    LaundryGraspPerception(basket=basket),
                     StatementNode(
                         statement=a(PickUpAction)(
                             grasp=a(

@@ -12,16 +12,23 @@ from __future__ import annotations
 import inspect
 import json
 import threading
+import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import timedelta
 
 import numpy as np
 import pytest
 import rclpy
 from coraplex.robot_plans.actions.core.exceptions import DetectionTargetMissing
-from rclpy.action import ActionServer
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.action import ActionServer, CancelResponse
+from rclpy.action.server import ServerGoalHandle
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.publisher import Publisher
+from rosidl_runtime_py.utilities import get_action
+from std_msgs.msg import Float64MultiArray, MultiArrayDimension, MultiArrayLayout
 
 from coraplex.datastructures.enums import (
     DetectionTechnique,
@@ -38,6 +45,8 @@ from coraplex.perception import PerceptionTask
 from coraplex.perception import (
     ROBOKUDO_QUERY_ACTION_NAME,
     Detection,
+    DoingLaundryInterface,
+    LaundryGraspPerception,
     PerceptionInterface,
     PerceptionQuery,
     RoboKudoPerception,
@@ -49,6 +58,7 @@ from cramph.composites import TryInOrder
 from cramph.context import StatechartContext
 from cramph.data_types import LifeCycleValues, ObservationStateValues
 from cramph.exceptions import NodesMissingContextExtensionsError
+from cramph.node import StatechartNode
 from cramph.statechart import Statechart
 from giskardpy.motion_control import MotionControl
 from giskardpy.motion_statechart.graph_node import EndMotion, MotionStatechartNode
@@ -58,13 +68,19 @@ from giskardpy.motion_statechart.tasks.cartesian_tasks import (
     CartesianPosition,
 )
 from krrood.adapters.json_serializer import from_json, to_json
+from krrood.patterns.called_positionally import called_positionally
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     WorldEntityWithIDKwargsTracker,
 )
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Bowl, Milk
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Bowl,
+    LaundryBasket,
+    Milk,
+)
 from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix, Point3
 from krrood_spatial_math.spatial_types import Pose
 from semantic_digital_twin.world import World
+from typing_extensions import Any
 from .conftest import motion_nodes_in_physics_of, motion_nodes_of
 from ..plan_running import robot_executor, statechart_of
 from ..plan_running import run_plan
@@ -747,10 +763,10 @@ def test_labelled_candidates_are_narrowed_to_the_requested_type(
 
 
 def build_perception_task(
-    task: PerceptionTask, world: World, ros_node: Node
+    task: StatechartNode, world: World, ros_node: Node
 ) -> Statechart:
     """
-    Put a perception task through the build phase a motion state chart would give it.
+    Put a perception node through the build phase a motion state chart would give it.
 
     :param task: The task to build.
     :param world: The world the chart runs against.
@@ -1153,3 +1169,261 @@ def test_a_detection_needs_an_object_type_or_a_box(pr2_apartment_context) -> Non
 
     with pytest.raises(DetectionTargetMissing):
         motion_nodes_of(DetectAction(technique=DetectionTechnique.TYPES), extensions)
+
+
+# %% the laundry grasp streamed by RoboKudo's doing-laundry engine
+
+
+@dataclass(kw_only=True)
+class GraspStreamingQueryServer:
+    """
+    Action server standing in for RoboKudo's doing-laundry engine: from when a query
+    arrives it streams a fixed grasp on the grasp topic until the query is canceled, or,
+    without a grasp, aborts the query at once.
+    """
+
+    world_T_grasp: HomogeneousTransformationMatrix | None
+    """
+    The grasp to stream, None to stream none.
+    """
+
+    stream_period: timedelta = field(default=timedelta(milliseconds=50))
+    """
+    How long the server waits between two grasps it streams.
+    """
+
+    received_queries: list[str] = field(default_factory=list)
+    """
+    The names of the queries the server received, in order.
+    """
+
+    query_canceled: threading.Event = field(default_factory=threading.Event)
+    """
+    Set once a client canceled a streaming query.
+    """
+
+    stopped: threading.Event = field(default_factory=threading.Event)
+    """
+    Set once the server is stopped, which ends any stream still running.
+    """
+
+    node: Node = field(init=False)
+    """
+    The node the server and the grasp topic live on.
+    """
+
+    publisher: Publisher = field(init=False)
+    """
+    The publisher of the streamed grasp.
+    """
+
+    server: ActionServer = field(init=False)
+    """
+    The query action server.
+    """
+
+    executor: MultiThreadedExecutor = field(init=False)
+    """
+    The executor serving cancel requests while a query streams.
+    """
+
+    thread: threading.Thread = field(init=False)
+    """
+    The thread spinning :attr:`executor`.
+    """
+
+    def __post_init__(self) -> None:
+        self.node = rclpy.create_node("doing_laundry_stand_in")
+        self.publisher = self.node.create_publisher(
+            Float64MultiArray, DoingLaundryInterface.GRASP_TOPIC, 10
+        )
+        self.server = ActionServer(
+            self.node,
+            get_action(DoingLaundryInterface.QUERY_ACTION_TYPE),
+            ROBOKUDO_QUERY_ACTION_NAME,
+            self.stream_grasp,
+            callback_group=ReentrantCallbackGroup(),
+            cancel_callback=lambda cancel_request: CancelResponse.ACCEPT,
+        )
+        self.executor = MultiThreadedExecutor()
+        self.executor.add_node(self.node)
+        self.thread = threading.Thread(target=self.executor.spin, daemon=True)
+        self.thread.start()
+
+    @called_positionally
+    def stream_grasp(self, goal_handle: ServerGoalHandle) -> Any:
+        """
+        Stream :attr:`world_T_grasp` until the query is canceled, or abort it without
+        one.
+
+        :param goal_handle: The query.
+        :return: The query's empty result.
+        """
+        self.received_queries.append(goal_handle.request.query)
+        result = get_action(DoingLaundryInterface.QUERY_ACTION_TYPE).Result()
+        if self.world_T_grasp is None:
+            goal_handle.abort()
+            return result
+        rows = self.world_T_grasp.to_np().tolist()
+        grasp = Float64MultiArray(
+            layout=MultiArrayLayout(
+                dim=[
+                    MultiArrayDimension(
+                        size=len(rows), stride=len(rows) * len(rows[0])
+                    ),
+                    MultiArrayDimension(size=len(rows[0]), stride=len(rows[0])),
+                ]
+            ),
+            data=[value for row in rows for value in row],
+        )
+        while not goal_handle.is_cancel_requested and not self.stopped.is_set():
+            self.publisher.publish(grasp)
+            time.sleep(self.stream_period.total_seconds())
+        self.query_canceled.set()
+        goal_handle.canceled()
+        return result
+
+    def stop(self) -> None:
+        """
+        End any stream and shut the server down.
+        """
+        self.stopped.set()
+        self.server.destroy()
+        self.executor.shutdown()
+        self.thread.join(timeout=2.0)
+        self.node.destroy_node()
+
+
+@pytest.fixture
+def doing_laundry_engine(rclpy_node):
+    """
+    Start a stand-in doing-laundry engine streaming whatever grasp a test asks it to.
+    """
+    pytest.importorskip("robokudo_msgs")
+    started = []
+
+    def start(
+        world_T_grasp: HomogeneousTransformationMatrix | None,
+    ) -> GraspStreamingQueryServer:
+        """
+        :param world_T_grasp: The grasp to stream, None to stream none.
+        :return: The started engine.
+        """
+        server = GraspStreamingQueryServer(world_T_grasp=world_T_grasp)
+        started.append(server)
+        return server
+
+    yield start
+    for server in started:
+        server.stop()
+
+
+@pytest.fixture
+def streamed_grasp(laundry_basket: LaundryBasket) -> HomogeneousTransformationMatrix:
+    """
+    :return: A grasp on the laundry in the basket, in the basket's world frame.
+    """
+    return HomogeneousTransformationMatrix.from_xyz_rpy(
+        x=0.6, y=0.1, z=0.35, yaw=0.3, reference_frame=laundry_basket._world.root
+    )
+
+
+def tick_until_observed(
+    node: LaundryGraspPerception, timeout: timedelta = timedelta(seconds=10)
+) -> ObservationStateValues:
+    """
+    Tick a started node until it observes something, as its chart would.
+
+    :param node: The started node.
+    :param timeout: How long to tick before the test fails.
+    :return: The node's first observation.
+    """
+    deadline = time.monotonic() + timeout.total_seconds()
+    while (observation := node.on_tick()) is None:
+        if time.monotonic() > deadline:
+            pytest.fail(f"{node} observed nothing within {timeout}")
+        time.sleep(0.01)
+    return observation
+
+
+def test_the_streamed_laundry_grasp_is_recorded_on_the_basket(
+    laundry_basket, streamed_grasp, rclpy_node, doing_laundry_engine
+) -> None:
+    """
+    The grasp the engine streams ends up on the basket, read in the world's root frame.
+    """
+    doing_laundry_engine(world_T_grasp=streamed_grasp)
+    node = LaundryGraspPerception(basket=laundry_basket)
+    build_perception_task(node, laundry_basket._world, rclpy_node)
+
+    node.on_start()
+    tick_until_observed(node)
+
+    recorded = laundry_basket.laundry_grasp_pose
+    assert recorded.reference_frame is laundry_basket._world.root
+    assert recorded.to_np().flatten().tolist() == pytest.approx(
+        streamed_grasp.to_np().flatten().tolist()
+    )
+
+
+def test_the_engine_is_asked_for_its_t_shirt_pile_grasp(
+    laundry_basket, streamed_grasp, rclpy_node, doing_laundry_engine
+) -> None:
+    """
+    The grasp on the laundry is what the engine streams after the T-shirt pile query.
+    """
+    engine = doing_laundry_engine(world_T_grasp=streamed_grasp)
+    node = LaundryGraspPerception(basket=laundry_basket)
+    build_perception_task(node, laundry_basket._world, rclpy_node)
+
+    node.on_start()
+    tick_until_observed(node)
+
+    assert engine.received_queries == [DoingLaundryInterface.T_SHIRT_PILE_QUERY]
+
+
+def test_ending_the_node_cancels_the_streaming_query(
+    laundry_basket, streamed_grasp, rclpy_node, doing_laundry_engine
+) -> None:
+    """
+    The engine streams until it is told to stop, so the node stops it once it is done.
+    """
+    engine = doing_laundry_engine(world_T_grasp=streamed_grasp)
+    node = LaundryGraspPerception(basket=laundry_basket)
+    build_perception_task(node, laundry_basket._world, rclpy_node)
+    node.on_start()
+    tick_until_observed(node)
+
+    node.on_end()
+
+    assert engine.query_canceled.wait(timeout=10.0)
+
+
+def test_a_query_ended_without_a_grasp_fails_the_node(
+    laundry_basket, rclpy_node, doing_laundry_engine
+) -> None:
+    """
+    A query the engine aborts before it streamed a grasp records none and fails the
+    node, instead of leaving it waiting for a grasp that never comes.
+    """
+    doing_laundry_engine(world_T_grasp=None)
+    node = LaundryGraspPerception(basket=laundry_basket)
+    build_perception_task(node, laundry_basket._world, rclpy_node)
+
+    node.on_start()
+
+    assert tick_until_observed(node) == ObservationStateValues.FALSE
+    assert laundry_basket.laundry_grasp_pose is None
+
+
+def test_a_missing_doing_laundry_engine_is_reported(laundry_basket, rclpy_node) -> None:
+    """
+    Without the engine the node gives up when it is built, instead of waiting forever.
+    """
+    pytest.importorskip("robokudo_msgs")
+    node = LaundryGraspPerception(
+        basket=laundry_basket, server_timeout=timedelta(seconds=1)
+    )
+
+    with pytest.raises(PerceptionSourceUnavailable):
+        build_perception_task(node, laundry_basket._world, rclpy_node)
