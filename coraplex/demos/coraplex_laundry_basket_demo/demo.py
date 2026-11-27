@@ -11,12 +11,13 @@ this folder::
 On the real HSR, RoboKudo's doing-laundry engine finds the basket and the grasp. Run it
 from this folder, with the HSR's Giskard and the engine running::
 
-    python -c "from coraplex.plans.executors import RealRobotPlanExecutor; \
-from demo import main; main(executor_type=RealRobotPlanExecutor)"
+    python -c "from coraplex.hsrb_hand import RealHSRBPlanExecutor; \
+from demo import main; main(executor_type=RealHSRBPlanExecutor)"
 """
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -28,6 +29,7 @@ import trimesh
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.plans.context_extensions import RobotAccess
 from coraplex.perception import LaundryBasketPerception, LaundryGraspPerception
+from coraplex.hsrb_hand import RealHSRBPlanExecutor
 from coraplex.plans.executors import (
     PhysicallySimulatedPlanExecutor,
     PlanExecutor,
@@ -35,10 +37,14 @@ from coraplex.plans.executors import (
 )
 from coraplex.robot_plans.actions.core.navigation import LookAtAction, NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
-from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
-from cramph.composites import Sequence, StatementNode
+from coraplex.robot_plans.actions.core.robot_body import (
+    MoveTorsoAction,
+    ParkArmsAction,
+)
+from cramph.composites import RepeatUntil, Sequence, StatementNode
 from cramph.context import ContextExtension, StatechartContext
 from cramph.data_types import ObservationStateValues
+from cramph.monitors import CountNodeResets
 from cramph.node import StatechartNode, SucceedsOnObservingTrue
 from cramph.statechart import Statechart
 from krrood.entity_query_language.factories import a, variable_from
@@ -48,6 +54,7 @@ from krrood_spatial_math.spatial_types import (
     Pose,
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
+from semantic_digital_twin.datastructures.definitions import TorsoState
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.pipeline.mesh_decomposition.vhacd import (
     VHACDMeshDecomposer,
@@ -82,6 +89,8 @@ from semantic_digital_twin.world_description.inertial_properties import (
 )
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
+
+logger = logging.getLogger("coraplex.laundry_basket_demo")
 
 # %% crumpling a garment
 
@@ -501,8 +510,8 @@ class LaundryBasketDemonstration(RobotDemonstration):
     executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor
     """
     Performs the plan in MuJoCo by default, where friction alone holds the lifted
-    T-shirt. A :class:`~coraplex.plans.executors.RealRobotPlanExecutor` performs it on
-    the real HSR.
+    T-shirt. A :class:`~coraplex.hsrb_hand.RealHSRBPlanExecutor` performs it on the
+    real HSR, whose hand moves through the grasp action of its gripper controller.
     """
 
     collision_avoidance: bool = True
@@ -517,9 +526,15 @@ class LaundryBasketDemonstration(RobotDemonstration):
         )
     )
     """
-    Where the middle of the basket's underside stands in the kitchen: in the middle of
-    the living room, clear of its walls and the sofa, its open side up. A real run moves
-    the basket to the one it finds in view nearest to here.
+    Where the middle of the basket's underside stands in the kitchen in a simulated run:
+    in the middle of the living room, clear of its walls and the sofa, its open side up.
+    A real run assumes it ahead of the robot instead, see :meth:`fetch_real_world`.
+    """
+
+    basket_distance_ahead_of_robot: float = 1.2
+    """
+    How far ahead of the robot's base a real run assumes the basket at first, in metres,
+    before the doing-laundry engine finds where it actually stands.
     """
 
     basket_scale: Scale = field(default_factory=lambda: Scale(0.35, 0.5, 0.25))
@@ -537,10 +552,16 @@ class LaundryBasketDemonstration(RobotDemonstration):
     coffee table.
     """
 
-    standing_distance: float = 0.45
+    basket_search_attempts: int = 5
+    """
+    How often a real run asks RoboKudo for the basket before it gives up, since each
+    answer comes from a single camera frame, which can miss the basket.
+    """
+
+    standing_distance: float = 0.65
     """
     How far in front of the middle of the basket the robot's base stands to take the
-    laundry out, in metres.
+    laundry out, in metres, leaving room for a real basket the found one is off from.
     """
 
     pinch_depth: float = 0.02
@@ -618,6 +639,16 @@ class LaundryBasketDemonstration(RobotDemonstration):
             SceneBody.LAUNDRY_BASKET
         )
 
+    @property
+    def basket_root_pose(self) -> HomogeneousTransformationMatrix:
+        """
+        :return: Where the basket's body frame, in the middle of the basket, lies when
+            the middle of its underside stands at :attr:`basket_pose`.
+        """
+        return self.basket_pose @ HomogeneousTransformationMatrix.from_xyz_rpy(
+            z=self.basket_scale.z / 2
+        )
+
     def populate_scene(self, world: World) -> None:
         """
         Stand the laundry basket against the living room's south wall, with the laundry
@@ -627,10 +658,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
             basket = LaundryBasket.create_with_new_body_in_world(
                 name=SceneBody.LAUNDRY_BASKET.value,
                 world=world,
-                world_root_T_self=self.basket_pose
-                @ HomogeneousTransformationMatrix.from_xyz_rpy(
-                    z=self.basket_scale.z / 2
-                ),
+                world_root_T_self=self.basket_root_pose,
                 parent_connection_specification=Connection6DoFSpecification(),
                 scale=self.basket_scale,
             )
@@ -658,6 +686,43 @@ class LaundryBasketDemonstration(RobotDemonstration):
             with world.modify_world():
                 world.add_semantic_annotation(Cloth(root=body))
         return world
+
+    def fetch_real_world(self) -> World:
+        """
+        :meth:`RobotDemonstration.fetch_real_world`, with the basket moved ahead of
+        where the robot is localized, see :meth:`place_basket_ahead_of_robot`.
+        """
+        world = super().fetch_real_world()
+        self.place_basket_ahead_of_robot(world=world)
+        return world
+
+    def place_basket_ahead_of_robot(self, *, world: World) -> None:
+        """
+        Move :attr:`basket_pose` and the basket in ``world``
+        :attr:`basket_distance_ahead_of_robot` ahead of the robot's base on the floor,
+        turned so that the side the robot takes the laundry out from faces the robot.
+        """
+        [robot] = world.get_semantic_annotations_by_type(self.used_robot)
+        [basket] = world.get_semantic_annotations_by_type(LaundryBasket)
+        base_pose = robot.mobile_base.root.global_pose
+        base_x, base_y, base_yaw = (
+            float(base_pose.x),
+            float(base_pose.y),
+            float(base_pose.yaw),
+        )
+        self.basket_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=base_x + self.basket_distance_ahead_of_robot * math.cos(base_yaw),
+            y=base_y + self.basket_distance_ahead_of_robot * math.sin(base_yaw),
+            yaw=base_yaw + math.pi,
+            reference_frame=world.root,
+        )
+        basket.root.parent_connection.origin = self.basket_root_pose
+        logger.info(
+            f"The robot is localized at x={base_x:.2f} y={base_y:.2f} "
+            f"yaw={math.degrees(base_yaw):.0f} deg in {world.root.name}; assuming the "
+            f"basket {self.basket_distance_ahead_of_robot:.2f} m ahead at "
+            f"x={float(self.basket_pose.x):.2f} y={float(self.basket_pose.y):.2f}."
+        )
 
     def acquire_world(self) -> World:
         """
@@ -687,23 +752,29 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     def build_statechart(self, context: StatechartContext) -> Statechart:
         """
-        Park the arm, drive in front of the basket, look into it, find a grasp on the
-        laundry and lift the T-shirt out by it, grounded once it was found:
+        Park the arm and lower the torso, drive in front of the basket, look into it,
+        find a grasp on the laundry and lift the T-shirt out by it, grounded once it was
+        found:
 
         turned half a turn first, which the HSR reaches without turning its base, and
         closed once the fingers stall on the cloth.
 
         A simulated run assumes the grasp on the highest point of the top T-shirt, while
-        a real run asks RoboKudo's doing-laundry engine for it. A real run starts looking
-        at the basket and first finds it with the engine, so that it stands in front of
-        the basket where it was found.
+        a real run asks RoboKudo's doing-laundry engine for it. A real run first looks
+        where it assumes the basket and finds it there with the engine, so that it
+        stands in front of the basket where it was found.
         """
         hsrb = context.require_extension(extension_type=RobotAccess).robot
         [basket] = context.world.get_semantic_annotations_by_type(LaundryBasket)
         [arm] = hsrb.all_arms
         simulated = issubclass(self.executor_type, SimulatedPlanExecutor)
         finding_the_basket = (
-            [] if simulated else [LaundryBasketPerception(basket=basket)]
+            []
+            if simulated
+            else [
+                LookAtAction(target=Pose(reference_frame=basket.root)),
+                self.build_basket_search(basket=basket),
+            ]
         )
         laundry_grasp = (
             AssumedLaundryGrasp(
@@ -717,8 +788,9 @@ class LaundryBasketDemonstration(RobotDemonstration):
         statechart.add_node(
             node=Sequence(
                 nodes=[
-                    *finding_the_basket,
                     ParkArmsAction(arms=hsrb.all_arms),
+                    MoveTorsoAction(torso_state=TorsoState.LOW),
+                    *finding_the_basket,
                     NavigateAction(
                         target_location=Pose.from_xyz_rpy(
                             x=self.standing_distance,
@@ -747,6 +819,20 @@ class LaundryBasketDemonstration(RobotDemonstration):
         )
         return statechart
 
+    def build_basket_search(self, *, basket: LaundryBasket) -> RepeatUntil:
+        """
+        :param basket: The basket to move to where RoboKudo sees it.
+        :return: A node asking RoboKudo for the basket until it was found, at most
+            :attr:`basket_search_attempts` times.
+        """
+        finding_the_basket = LaundryBasketPerception(basket=basket)
+        return RepeatUntil(
+            task=finding_the_basket,
+            stop_retry_monitor=CountNodeResets(
+                node=finding_the_basket, target=self.basket_search_attempts - 1
+            ),
+        )
+
     def build_simulation(self, world: World) -> MujocoSim:
         return MujocoSim(
             world=world,
@@ -759,7 +845,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
 def main(
     headless: bool = False,
-    executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor,
+    executor_type: type[PlanExecutor] = RealHSRBPlanExecutor,
 ) -> World:
     """
     Run the demonstration.

@@ -5,6 +5,8 @@ nodes that write what they perceived into the world.
 
 from __future__ import annotations
 
+import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -64,6 +66,8 @@ from coraplex.exceptions import (
 
 if TYPE_CHECKING:
     from robokudo_msgs.msg import ObjectDesignator
+
+logger = logging.getLogger(__name__)
 
 ROBOKUDO_QUERY_ACTION_NAME = "robokudo/query"
 """
@@ -734,29 +738,50 @@ class LaundryBasketPerception(
         :raises AmbiguousDetection: If the world holds another laundry basket.
         """
         if self._query.was_rejected:
+            logger.warning("RoboKudo rejected the find-basket query.")
             return ObservationStateValues.FALSE
         if not self._query.has_ended:
             return None
         world = self.context.world
+        designators = self._query.result.result().result.res
         detections = [
             Detection.from_designator(
                 designator=designator, semantic_annotation=LaundryBasket, world=world
             )
-            for designator in self._query.result.result().result.res
+            for designator in designators
             if designator.pose
         ]
         if not detections:
+            logger.warning(
+                f"RoboKudo reported {len(designators)} object(s) for the find-basket "
+                f"query, none of them with a pose."
+            )
             return ObservationStateValues.FALSE
         basket_position = self.basket.root.global_pose.position
-        nearest = min(
-            detections,
-            key=lambda detection: float(
+        distances = [
+            float(
                 world.transform(detection.pose, world.root).position.euclidean_distance(
                     basket_position
                 )
-            ),
-        )
+            )
+            for detection in detections
+        ]
+        for detection, distance in zip(detections, distances):
+            world_P_detection = world.transform(detection.pose, world.root)
+            logger.info(
+                f"RoboKudo sees a basket in {detection.pose.reference_frame.name} at "
+                f"x={float(world_P_detection.x):.2f} y={float(world_P_detection.y):.2f} "
+                f"z={float(world_P_detection.z):.2f} in {world.root.name}, "
+                f"{distance:.2f} m from where it was assumed."
+            )
+        nearest = detections[distances.index(min(distances))]
         nearest.apply_to(world, trust_orientation=False)
+        basket_pose = self.basket.root.global_pose
+        logger.info(
+            f"Moved the basket to the nearest of the {len(detections)} seen: "
+            f"x={float(basket_pose.x):.2f} y={float(basket_pose.y):.2f} "
+            f"yaw={math.degrees(float(basket_pose.yaw)):.0f} deg in {world.root.name}."
+        )
         return ObservationStateValues.TRUE
 
 
@@ -847,6 +872,9 @@ class LaundryGraspPerception(
             self._record_streamed_grasp()
             return ObservationStateValues.TRUE
         if self._query.was_rejected or self._query.has_ended:
+            logger.warning(
+                "RoboKudo ended the T-shirt pile query without streaming a grasp."
+            )
             return ObservationStateValues.FALSE
         return None
 
@@ -870,6 +898,11 @@ class LaundryGraspPerception(
                 for start in range(0, len(data), columns)
             ],
             reference_frame=world.root,
+        )
+        logger.info(
+            f"RoboKudo streamed a grasp on the laundry at "
+            f"x={float(world_T_grasp.x):.2f} y={float(world_T_grasp.y):.2f} "
+            f"z={float(world_T_grasp.z):.2f} in {world.root.name}."
         )
         with world.modify_world():
             self.basket.update_laundry_grasp_pose(world_T_grasp.pose)
