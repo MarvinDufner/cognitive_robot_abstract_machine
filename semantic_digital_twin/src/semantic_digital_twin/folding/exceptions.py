@@ -12,9 +12,9 @@ from krrood.exceptions import DataclassException
 
 
 @dataclass(kw_only=True)
-class UnrecognisedTShirtState(DataclassException):
+class UnrecognisedGarmentState(DataclassException):
     """
-    Raised when no state of a T-shirt's fold sequence matches the silhouette seen
+    Raised when no state of a garment's fold sequence matches the silhouette seen
     closely enough to plan the next fold from it.
     """
 
@@ -31,13 +31,13 @@ class UnrecognisedTShirtState(DataclassException):
 
     def error_message(self) -> str:
         return (
-            f"The silhouette seen overlaps every state of the T-shirt's fold sequence "
+            f"The silhouette seen overlaps every state of the garment's fold sequence "
             f"by at most {self.overlap:.2f} (intersection over union), less than the "
             f"{self.minimum_overlap:.2f} needed."
         )
 
     def suggest_correction(self) -> str:
         return (
-            "spread the T-shirt out flat before folding it, or check that the template "
-            "describes this T-shirt"
+            "spread the garment out flat before folding it, or check that the template "
+            "describes this garment"
         )

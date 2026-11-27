@@ -1,38 +1,35 @@
 """
-The folds that fold a spread T-shirt, found from where its landmarks lie, and the
-T-shirt part way through them.
+The folds that fold a spread T-shirt, found from where its landmarks lie.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
-from enum import Enum
 from functools import cached_property
 
 import numpy
 
-from semantic_digital_twin.folding.g_fold import LayeredCloth
-from semantic_digital_twin.folding.geometry import FoldSegment, Polygon
+from semantic_digital_twin.folding.garment import (
+    DepthAdjustableFold,
+    GarmentFold,
+    GarmentFoldSequence,
+    GarmentSide,
+    GarmentTemplate,
+    HalfFold,
+)
+from semantic_digital_twin.folding.geometry import FoldSegment
 from semantic_digital_twin.semantic_annotations.garments import TShirtLandmark
 
 # %% the spread T-shirt
 
 
-class TShirtSide(Enum):
+class TShirtSide(GarmentSide):
     """
     The sides of a T-shirt, left and right as its wearer sees them.
     """
 
     LEFT = "left"
     RIGHT = "right"
-
-    @property
-    def opposite(self) -> TShirtSide:
-        """
-        The other side.
-        """
-        return TShirtSide.RIGHT if self is TShirtSide.LEFT else TShirtSide.LEFT
 
     @property
     def hem(self) -> TShirtLandmark:
@@ -81,29 +78,13 @@ class TShirtSide(Enum):
 
 
 @dataclass(kw_only=True)
-class TShirtTemplate:
+class TShirtTemplate(GarmentTemplate[TShirtLandmark]):
     """
-    A T-shirt lying spread out, given by where its landmarks lie in a frame of its own.
+    A T-shirt lying spread out.
     """
-
-    landmark_positions: dict[TShirtLandmark, numpy.ndarray]
-    """
-    Where each landmark lies, on the plane the T-shirt lies on.
-    """
-
-    @cached_property
-    def outline(self) -> Polygon:
-        """
-        The outline of the T-shirt, through its landmarks in the order they follow it.
-        """
-        return Polygon(
-            vertices=numpy.array(
-                [self.landmark_positions[landmark] for landmark in TShirtLandmark]
-            )
-        )
 
     @property
-    def hem_middle(self) -> numpy.ndarray:
+    def lower_end_middle(self) -> numpy.ndarray:
         """
         The middle of the hem.
         """
@@ -113,7 +94,7 @@ class TShirtTemplate:
         ) / 2
 
     @property
-    def collar_middle(self) -> numpy.ndarray:
+    def upper_end_middle(self) -> numpy.ndarray:
         """
         The middle of the neckline, between the two shoulder seams.
         """
@@ -127,52 +108,7 @@ class TShirtTemplate:
 
 
 @dataclass(kw_only=True)
-class TShirtFold(ABC):
-    """
-    One fold of a T-shirt.
-    """
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """
-        What the fold does, in words, for people reading about it.
-        """
-
-    @abstractmethod
-    def fold_segment(self, *, template: TShirtTemplate) -> FoldSegment:
-        """
-        :param template: The T-shirt, spread out.
-        :return: The segment the fold folds over, in the template's frame. Folding over
-            it once the folds before it are made folds the T-shirt as this fold does, as
-            long as it crosses only cloth the folds before it left where it was.
-        """
-
-
-class DepthAdjustableFold(TShirtFold, ABC):
-    """
-    A fold whose segment may lie deeper in the T-shirt or less deep, as folds made by
-    hand or by a robot rarely lie exactly where they were planned.
-    """
-
-    @property
-    @abstractmethod
-    def depth_ratio(self) -> float:
-        """
-        How deep the fold reaches into the T-shirt, as a share of the length of the
-        T-shirt it is measured along.
-        """
-
-    @abstractmethod
-    def copied_at_depth(self, *, depth_ratio: float) -> DepthAdjustableFold:
-        """
-        :param depth_ratio: How deep the copy reaches, see :attr:`depth_ratio`.
-        :return: The same fold, reaching that deep.
-        """
-
-
-@dataclass(kw_only=True)
-class SleeveFold(TShirtFold):
+class SleeveFold(GarmentFold[TShirtTemplate]):
     """
     Folds a sleeve onto the body over the line from its armpit to its shoulder.
     """
@@ -196,7 +132,7 @@ class SleeveFold(TShirtFold):
 
 
 @dataclass(kw_only=True)
-class SideFold(DepthAdjustableFold):
+class SideFold(GarmentFold[TShirtTemplate], DepthAdjustableFold):
     """
     Folds a strip along one side of the body, with whatever lies on it, onto the body,
     over a segment running from the hem to the level of the collar.
@@ -232,49 +168,13 @@ class SideFold(DepthAdjustableFold):
         start = hem + self.strip_width_ratio * across
         return FoldSegment.through_points(
             first=start,
-            second=start + template.collar_middle - template.hem_middle,
+            second=start + template.upper_end_middle - template.lower_end_middle,
             folded_point=hem,
         )
 
 
 @dataclass(kw_only=True)
-class HalfFold(DepthAdjustableFold):
-    """
-    Folds the hem's end of the T-shirt onto its collar's end, over a segment across the
-    whole T-shirt.
-    """
-
-    hem_part_ratio: float = 0.5
-    """
-    Where the segment crosses the T-shirt, as the share of the distance from the hem's
-    middle to the collar's middle that lies on the hem's side of it.
-    """
-
-    @property
-    def description(self) -> str:
-        return "fold the hem onto the collar"
-
-    @property
-    def depth_ratio(self) -> float:
-        return self.hem_part_ratio
-
-    def copied_at_depth(self, *, depth_ratio: float) -> HalfFold:
-        return replace(self, hem_part_ratio=depth_ratio)
-
-    def fold_segment(self, *, template: TShirtTemplate) -> FoldSegment:
-        along = template.collar_middle - template.hem_middle
-        middle = template.hem_middle + self.hem_part_ratio * along
-        across = numpy.array([-along[1], along[0]]) / numpy.linalg.norm(along)
-        half_length = numpy.ptp(template.outline.vertices @ across)
-        return FoldSegment.through_points(
-            first=middle - half_length * across,
-            second=middle + half_length * across,
-            folded_point=template.hem_middle,
-        )
-
-
-@dataclass(kw_only=True)
-class TShirtFoldSequence:
+class TShirtFoldSequence(GarmentFoldSequence[TShirtTemplate]):
     """
     The folds that fold a spread T-shirt into a rectangle, after Miller et al., *A
     Geometric Approach to Robotic Laundry Folding* (IJRR 2012): the sleeve and then the
@@ -293,10 +193,7 @@ class TShirtFoldSequence:
     """
 
     @cached_property
-    def folds(self) -> list[TShirtFold]:
-        """
-        The folds, in the order they are made.
-        """
+    def folds(self) -> list[GarmentFold[TShirtTemplate]]:
         sides = [self.first_side, self.first_side.opposite]
         return [
             fold
@@ -307,53 +204,5 @@ class TShirtFoldSequence:
             )
         ] + [HalfFold()]
 
-
-# %% folded T-shirts
-
-
-@dataclass(kw_only=True)
-class FoldedTShirt:
-    """
-    A T-shirt part way through a fold sequence, in its template's frame.
-    """
-
-    template: TShirtTemplate
-    """
-    The T-shirt, spread out.
-    """
-
-    folds: list[TShirtFold]
-    """
-    The folds made to it, in the order they were made.
-    """
-
-    @cached_property
-    def fold_segments(self) -> list[FoldSegment]:
-        """
-        The segment of each fold, in the order the folds were made.
-        """
-        return [fold.fold_segment(template=self.template) for fold in self.folds]
-
-    @cached_property
-    def cloth(self) -> LayeredCloth:
-        """
-        The layers of the folded T-shirt.
-        """
-        cloth = LayeredCloth(layers=[self.template.outline])
-        for segment in self.fold_segments:
-            cloth = cloth.folded(segment=segment)
-        return cloth
-
-    @cached_property
-    def landmark_positions(self) -> dict[TShirtLandmark, numpy.ndarray]:
-        """
-        Where each landmark of the folded T-shirt lies.
-        """
-        cloth = LayeredCloth(layers=[self.template.outline])
-        positions = numpy.array(
-            [self.template.landmark_positions[landmark] for landmark in TShirtLandmark]
-        )
-        for segment in self.fold_segments:
-            positions = cloth.folded_points(points=positions, segment=segment)
-            cloth = cloth.folded(segment=segment)
-        return dict(zip(TShirtLandmark, positions))
+    def mirrored(self) -> TShirtFoldSequence:
+        return replace(self, first_side=self.first_side.opposite)

@@ -82,6 +82,50 @@ class TShirtLandmark(StrEnum):
     """
 
 
+class TrousersLandmark(StrEnum):
+    """
+    The points that outline a pair of trousers lying spread out, as in the pants model of
+    Miller et al., *A Geometric Approach to Robotic Laundry Folding* (IJRR 2012). Left and
+    right are the wearer's. The members follow the outline from the right end of the
+    waistband round both legs to its left end.
+    """
+
+    RIGHT_WAIST = "right_waist"
+    """
+    Where the waistband meets the right outseam.
+    """
+
+    RIGHT_CUFF_OUTSEAM = "right_cuff_outseam"
+    """
+    Where the right leg's cuff meets its outseam.
+    """
+
+    RIGHT_CUFF_INSEAM = "right_cuff_inseam"
+    """
+    Where the right leg's cuff meets its inseam.
+    """
+
+    CROTCH = "crotch"
+    """
+    Where the inseams of both legs meet.
+    """
+
+    LEFT_CUFF_INSEAM = "left_cuff_inseam"
+    """
+    Where the left leg's cuff meets its inseam.
+    """
+
+    LEFT_CUFF_OUTSEAM = "left_cuff_outseam"
+    """
+    Where the left leg's cuff meets its outseam.
+    """
+
+    LEFT_WAIST = "left_waist"
+    """
+    Where the waistband meets the left outseam.
+    """
+
+
 # %% garments
 
 

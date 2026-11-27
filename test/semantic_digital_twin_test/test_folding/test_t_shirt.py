@@ -8,9 +8,8 @@ import numpy
 import pytest
 
 from semantic_digital_twin.folding.g_fold import GFold
+from semantic_digital_twin.folding.garment import FoldedGarment, HalfFold
 from semantic_digital_twin.folding.t_shirt import (
-    FoldedTShirt,
-    HalfFold,
     SideFold,
     SleeveFold,
     TShirtFoldSequence,
@@ -28,7 +27,7 @@ def test_a_sleeve_fold_lays_the_sleeve_onto_the_body(
     """
     The sleeve is mirrored across the line from its armpit to its shoulder.
     """
-    folded = FoldedTShirt(
+    folded = FoldedGarment(
         template=t_shirt_template, folds=[SleeveFold(side=TShirtSide.RIGHT)]
     )
 
@@ -47,7 +46,7 @@ def test_a_sleeve_fold_holds_the_corners_of_the_cuff(
     """
     Lifting the sleeve, only the two ends of its cuff would slide down.
     """
-    t_shirt = FoldedTShirt(template=t_shirt_template, folds=[])
+    t_shirt = FoldedGarment(template=t_shirt_template, folds=[])
     g_fold = GFold(
         cloth=t_shirt.cloth,
         segment=SleeveFold(side=TShirtSide.RIGHT).fold_segment(
@@ -65,7 +64,7 @@ def test_a_side_fold_holds_the_hem_corner_and_the_shoulder(
     Lifting the side strip with the sleeve folded onto it, its hem corner and its
     shoulder would slide down; the sleeve's corner at the armpit rests on the strip.
     """
-    t_shirt = FoldedTShirt(
+    t_shirt = FoldedGarment(
         template=t_shirt_template, folds=[SleeveFold(side=TShirtSide.RIGHT)]
     )
     g_fold = GFold(
@@ -89,7 +88,7 @@ def test_the_half_fold_holds_the_corners_of_the_folded_hem(
     the corners of the side strips in the middle rest on the body.
     """
     sequence = TShirtFoldSequence()
-    t_shirt = FoldedTShirt(template=t_shirt_template, folds=sequence.folds[:4])
+    t_shirt = FoldedGarment(template=t_shirt_template, folds=sequence.folds[:4])
     g_fold = GFold(
         cloth=t_shirt.cloth,
         segment=sequence.folds[4].fold_segment(template=t_shirt_template),
@@ -119,7 +118,7 @@ def test_the_fold_sequence_folds_the_t_shirt_into_a_rectangle(
     the collar's half of its length.
     """
     sequence = TShirtFoldSequence(first_side=first_side)
-    folded = FoldedTShirt(template=t_shirt_template, folds=sequence.folds)
+    folded = FoldedGarment(template=t_shirt_template, folds=sequence.folds)
 
     vertices = numpy.concatenate([layer.vertices for layer in folded.cloth.layers])
     assert vertices.min(axis=0) == pytest.approx([-0.125, 0.35])

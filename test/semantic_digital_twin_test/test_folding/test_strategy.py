@@ -9,19 +9,19 @@ import numpy
 import pytest
 import trimesh
 
-from semantic_digital_twin.folding.exceptions import UnrecognisedTShirtState
+from semantic_digital_twin.folding.exceptions import UnrecognisedGarmentState
+from semantic_digital_twin.folding.garment import FoldedGarment
+from semantic_digital_twin.folding.garment_state import GarmentFoldStateEstimator
 from semantic_digital_twin.folding.geometry import PlaneTransform
 from semantic_digital_twin.folding.silhouette import ClothSilhouette
-from semantic_digital_twin.folding.strategy import TShirtGFoldStrategy
+from semantic_digital_twin.folding.strategy import GarmentGFoldStrategy
 from semantic_digital_twin.folding.t_shirt import (
-    FoldedTShirt,
     SideFold,
     SleeveFold,
     TShirtFoldSequence,
     TShirtSide,
     TShirtTemplate,
 )
-from semantic_digital_twin.folding.t_shirt_state import TShirtFoldStateEstimator
 
 # %% silhouettes
 
@@ -47,13 +47,15 @@ def test_the_silhouette_of_a_surface_covers_its_triangles() -> None:
 
 
 @pytest.fixture(scope="module")
-def strategy(t_shirt_template: TShirtTemplate) -> TShirtGFoldStrategy:
+def strategy(t_shirt_template: TShirtTemplate) -> GarmentGFoldStrategy:
     """
     :return: The strategy folding the T-shirt with grippers that hold cloth within
         6.5 cm, as wide as the HSR's hand opens.
     """
-    return TShirtGFoldStrategy(
-        state_estimator=TShirtFoldStateEstimator(template=t_shirt_template),
+    return GarmentGFoldStrategy(
+        state_estimator=GarmentFoldStateEstimator(
+            template=t_shirt_template, sequence=TShirtFoldSequence()
+        ),
         gripper_radius=0.065,
     )
 
@@ -68,15 +70,15 @@ def placement() -> PlaneTransform:
 
 def test_the_strategy_folds_a_spread_t_shirt_starting_with_its_first_sequence(
     t_shirt_template: TShirtTemplate,
-    strategy: TShirtGFoldStrategy,
+    strategy: GarmentGFoldStrategy,
     placement: PlaneTransform,
 ) -> None:
     """
     Either side of a spread T-shirt can be folded first; the strategy takes the first
-    fold of the first sequence its estimator knows.
+    fold of the sequence its estimator was given, not of its mirror image.
     """
     silhouette = ClothSilhouette.from_cloth(
-        cloth=FoldedTShirt(template=t_shirt_template, folds=[]).cloth.transformed(
+        cloth=FoldedGarment(template=t_shirt_template, folds=[]).cloth.transformed(
             placement
         ),
         cell_size=4e-3,
@@ -84,14 +86,14 @@ def test_the_strategy_folds_a_spread_t_shirt_starting_with_its_first_sequence(
 
     plan = strategy.plan_next_fold(silhouette=silhouette)
 
-    assert plan.fold == strategy.state_estimator.sequences[0].folds[0]
+    assert plan.fold == strategy.state_estimator.sequence.folds[0]
 
 
 @pytest.mark.parametrize("first_side", list(TShirtSide))
 @pytest.mark.parametrize("fold_count", range(1, 4))
 def test_the_strategy_plans_the_fold_that_comes_next(
     t_shirt_template: TShirtTemplate,
-    strategy: TShirtGFoldStrategy,
+    strategy: GarmentGFoldStrategy,
     placement: PlaneTransform,
     first_side: TShirtSide,
     fold_count: int,
@@ -101,7 +103,7 @@ def test_the_strategy_plans_the_fold_that_comes_next(
     plans the next fold of that sequence, where the T-shirt lies.
     """
     sequence = TShirtFoldSequence(first_side=first_side)
-    folded = FoldedTShirt(template=t_shirt_template, folds=sequence.folds[:fold_count])
+    folded = FoldedGarment(template=t_shirt_template, folds=sequence.folds[:fold_count])
     silhouette = ClothSilhouette.from_cloth(
         cloth=folded.cloth.transformed(placement), cell_size=4e-3
     )
@@ -124,7 +126,7 @@ def test_the_strategy_plans_the_fold_that_comes_next(
 @pytest.mark.parametrize("first_side", list(TShirtSide))
 def test_the_strategy_folds_a_t_shirt_with_both_sides_in_across_the_middle(
     t_shirt_template: TShirtTemplate,
-    strategy: TShirtGFoldStrategy,
+    strategy: GarmentGFoldStrategy,
     placement: PlaneTransform,
     first_side: TShirtSide,
 ) -> None:
@@ -133,7 +135,7 @@ def test_the_strategy_folds_a_t_shirt_with_both_sides_in_across_the_middle(
     middle; seen from above, either end may be the one folded onto the other.
     """
     sequence = TShirtFoldSequence(first_side=first_side)
-    folded = FoldedTShirt(template=t_shirt_template, folds=sequence.folds[:4])
+    folded = FoldedGarment(template=t_shirt_template, folds=sequence.folds[:4])
     silhouette = ClothSilhouette.from_cloth(
         cloth=folded.cloth.transformed(placement), cell_size=4e-3
     )
@@ -152,7 +154,7 @@ def test_the_strategy_folds_a_t_shirt_with_both_sides_in_across_the_middle(
 @pytest.mark.parametrize("strip_width_ratio", [0.15, 0.35])
 def test_the_estimator_finds_how_wide_a_side_strip_was_folded(
     t_shirt_template: TShirtTemplate,
-    strategy: TShirtGFoldStrategy,
+    strategy: GarmentGFoldStrategy,
     placement: PlaneTransform,
     strip_width_ratio: float,
 ) -> None:
@@ -165,7 +167,7 @@ def test_the_estimator_finds_how_wide_a_side_strip_was_folded(
         SideFold(side=TShirtSide.LEFT, strip_width_ratio=strip_width_ratio),
     ]
     silhouette = ClothSilhouette.from_cloth(
-        cloth=FoldedTShirt(template=t_shirt_template, folds=folds).cloth.transformed(
+        cloth=FoldedGarment(template=t_shirt_template, folds=folds).cloth.transformed(
             placement
         ),
         cell_size=4e-3,
@@ -173,21 +175,21 @@ def test_the_estimator_finds_how_wide_a_side_strip_was_folded(
 
     state = strategy.state_estimator.estimate(silhouette=silhouette)
 
-    [_, side_fold] = state.t_shirt.folds
+    [_, side_fold] = state.garment.folds
     assert side_fold.side == TShirtSide.LEFT
     assert side_fold.depth_ratio == pytest.approx(strip_width_ratio, abs=0.02)
 
 
 def test_the_strategy_plans_nothing_once_the_t_shirt_is_folded(
     t_shirt_template: TShirtTemplate,
-    strategy: TShirtGFoldStrategy,
+    strategy: GarmentGFoldStrategy,
     placement: PlaneTransform,
 ) -> None:
     """
     After the last fold of the sequence, there is nothing left to fold.
     """
     sequence = TShirtFoldSequence()
-    folded = FoldedTShirt(template=t_shirt_template, folds=sequence.folds)
+    folded = FoldedGarment(template=t_shirt_template, folds=sequence.folds)
     silhouette = ClothSilhouette.from_cloth(
         cloth=folded.cloth.transformed(placement), cell_size=4e-3
     )
@@ -196,7 +198,7 @@ def test_the_strategy_plans_nothing_once_the_t_shirt_is_folded(
 
 
 def test_the_strategy_refuses_a_silhouette_unlike_any_state(
-    strategy: TShirtGFoldStrategy,
+    strategy: GarmentGFoldStrategy,
 ) -> None:
     """
     A T-shirt twisted into a rope, 0.9 m long and 8 cm wide, matches no state of the
@@ -208,5 +210,5 @@ def test_the_strategy_refuses_a_silhouette_unlike_any_state(
         cell_size=4e-3,
     )
 
-    with pytest.raises(UnrecognisedTShirtState):
+    with pytest.raises(UnrecognisedGarmentState):
         strategy.plan_next_fold(silhouette=rope)
