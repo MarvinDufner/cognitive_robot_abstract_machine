@@ -15,6 +15,9 @@ from robokudo.annotators.collection_reader import CollectionReaderAnnotator
 from robokudo.annotators.image_preprocessor import ImagePreprocessorAnnotator
 from robokudo.annotators.query import QueryAnnotator
 from robokudo.behaviours.query_stream import ContinueQueryStream, QueryStream
+from robokudo.descriptors.analysis_engines.subtree_find_basket import (
+    Subtree as FindBasketSubtree,
+)
 from robokudo.descriptors.analysis_engines.subtree_tshirt_pile import (
     Subtree as TShirtPileSubtree,
 )
@@ -38,6 +41,11 @@ class DoingLaundryQuery(StrEnum):
     """
     Publish the grasp from above on the highest point of the T-shirt pile in a laundry
     basket, until the next query arrives or the query is canceled.
+    """
+
+    FIND_BASKET = "find-basket"
+    """
+    Answer once with the pose of each laundry basket in view.
     """
 
 
@@ -79,6 +87,7 @@ class AnalysisEngine(AnalysisEngineInterface):
                         query_stream=query_stream,
                         gripper_maximum_opening=HSRBGripper.maximum_opening_width,
                     ).implementation(),
+                    DoingLaundryQuery.FIND_BASKET: FindBasketSubtree().implementation(),
                 },
                 filter_fn=lambda query: query.query,
             )
