@@ -1,5 +1,5 @@
 """
-Pictures of the T-shirt on the folding bench seen from above, with the next fold its
+Pictures of the garment on the folding bench seen from above, with the next fold its
 planner decided on drawn over it.
 """
 
@@ -12,8 +12,8 @@ import numpy
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 
-from experiments.t_shirt_folding.bench import TopView
-from semantic_digital_twin.folding.strategy import TShirtFoldPlan
+from experiments.garment_folding.bench import TopView
+from semantic_digital_twin.folding.strategy import GarmentFoldPlan
 
 # %% pictures
 
@@ -21,7 +21,7 @@ from semantic_digital_twin.folding.strategy import TShirtFoldPlan
 @dataclass(kw_only=True)
 class NextFoldPicture:
     """
-    A view of the table from above with the next fold of a T-shirt drawn on it: the
+    A view of the table from above with the next fold of a garment drawn on it: the
     outline and landmarks of the state the planner recognised, the fold segment, and for
     each grasp the vertices it holds, the gripper's reach, its path and where it lays
     the cloth down.
@@ -32,7 +32,7 @@ class NextFoldPicture:
     The table seen from above.
     """
 
-    plan: TShirtFoldPlan
+    plan: GarmentFoldPlan
     """
     The next fold.
     """
@@ -59,7 +59,7 @@ class NextFoldPicture:
 
     margin: float = 0.06
     """
-    How much of the table around the T-shirt and the grippers' paths the picture shows,
+    How much of the table around the garment and the grippers' paths the picture shows,
     in metres.
     """
 
@@ -133,8 +133,7 @@ class NextFoldPicture:
         axes.set_xlabel("x (m)")
         axes.set_ylabel("y (m)")
         axes.set_title(
-            f"{len(state.t_shirt.folds)} of {len(state.sequence.folds)} folds made "
-            f"({state.sequence.first_side.value} side first), "
+            f"{len(state.garment.folds)} of {len(state.sequence.folds)} folds made, "
             f"fit IoU {state.overlap:.2f}\n"
             f"next: {self.plan.fold.description}, "
             f"{len(self.plan.grasps)} gripper(s)"

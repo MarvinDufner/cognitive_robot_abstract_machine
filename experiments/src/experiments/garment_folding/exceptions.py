@@ -53,7 +53,7 @@ class NothingToPinch(DataclassException):
     """
 
     def error_message(self) -> str:
-        return f"No vertex of the T-shirt lies within reach of {self.position}."
+        return f"No vertex of the garment lies within reach of {self.position}."
 
     def suggest_correction(self) -> str:
-        return "grasp the T-shirt where its cloth lies, or widen the pinch radius"
+        return "grasp the garment where its cloth lies, or widen the pinch radius"

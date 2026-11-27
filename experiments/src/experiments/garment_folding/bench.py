@@ -1,19 +1,17 @@
 """
-A T-shirt on a table and two hands in MuJoCo, without a robot, to fold the T-shirt by
+A garment on a table and two hands in MuJoCo, without a robot, to fold the garment by
 g-folds and see how its folding planner copes with what the simulation makes of them.
 
-.. warning:: The simulated T-shirt is not a model of a real one: its layers pass through
+.. warning:: The simulated garment is not a model of a real one: its layers pass through
     each other, a hand holds every layer at the point it pinches, and the friction is a
     guess.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import StrEnum
-from pathlib import Path
 
 import mujoco
 import numpy
@@ -21,8 +19,8 @@ import trimesh
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from experiments.t_shirt_folding.exceptions import NothingToPinch, TooFewHands
-from krrood.patterns.path_enumeration import PathEnumeration
+from experiments.garment_folding.exceptions import NothingToPinch, TooFewHands
+from experiments.garment_folding.garments import BenchGarment
 from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix
 from physics_simulators.base_simulator import SimulatorCallbackResult
 from semantic_digital_twin.adapters.multi_sim import (
@@ -31,21 +29,16 @@ from semantic_digital_twin.adapters.multi_sim import (
     MujocoSim,
 )
 from semantic_digital_twin.folding.g_fold import FoldGrasp
+from semantic_digital_twin.folding.garment import GarmentFold
 from semantic_digital_twin.folding.geometry import FoldSegment, PlaneTransform
 from semantic_digital_twin.folding.silhouette import ClothSilhouette
 from semantic_digital_twin.folding.strategy import FoldPlan
-from semantic_digital_twin.folding.t_shirt import TShirtFold, TShirtTemplate
-from semantic_digital_twin.semantic_annotations.garments import TShirtLandmark
 from semantic_digital_twin.specifications.kinematic_structure_entities import (
     BodySpecification,
 )
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.air import Air
-from semantic_digital_twin.world_description.cloth import (
-    ClothElasticity,
-    ClothSheet,
-    GarmentFile,
-)
+from semantic_digital_twin.world_description.cloth import ClothSheet
 from semantic_digital_twin.world_description.geometry import Scale
 
 # %% what the bench holds
@@ -64,29 +57,17 @@ class BenchEntity(StrEnum):
 
     FLOOR = "floor"
     TABLE = "table"
-    T_SHIRT = "t_shirt"
+    GARMENT = "garment"
     TOP_CAMERA = "top_camera"
 
 
 class BenchHand(StrEnum):
     """
-    The hands of the bench, each a point that pins the T-shirt where it closes.
+    The hands of the bench, each a point that pins the garment where it closes.
     """
 
     LEFT = "left_hand"
     RIGHT = "right_hand"
-
-
-class BenchResource(PathEnumeration):
-    """
-    The files the bench reads.
-    """
-
-    T_SHIRT_LANDMARK_VERTICES = Path(__file__).parent / "t_shirt_landmark_vertices.json"
-    """
-    The index of the vertex of :attr:`GarmentFile.T_SHIRT` at each
-    :class:`TShirtLandmark`.
-    """
 
 
 # %% what the camera sees
@@ -95,8 +76,8 @@ class BenchResource(PathEnumeration):
 @dataclass(kw_only=True)
 class TopView:
     """
-    An image of the table taken straight from above with an orthographic camera, so
-    that its pixels lie on a square grid on the table's plane.
+    An image of the table taken straight from above with an orthographic camera, so that
+    its pixels lie on a square grid on the table's plane.
     """
 
     image: numpy.ndarray
@@ -137,29 +118,34 @@ class TopView:
 @dataclass(kw_only=True)
 class FoldingBench:
     """
-    A T-shirt lying spread out on a table, and two hands that pinch it, carry it along
+    A garment lying spread out on a table, and two hands that pinch it, carry it along
     fold paths and let go.
 
     The table's frame is the world's, moved up to the table top. What perception would
     report is read off the simulation.
     """
 
+    garment: BenchGarment
+    """
+    The garment on the table.
+    """
+
     placement: PlaneTransform = field(
         default_factory=lambda: PlaneTransform(translation=numpy.zeros(2))
     )
     """
-    Where the T-shirt is laid out: carries the frame of :attr:`t_shirt_template` onto
-    the table's plane.
+    Where the garment is laid out: carries the frame of the garment's template onto the
+    table's plane.
     """
 
     turned_over: bool = False
     """
-    Whether the T-shirt lies on its other face, mirrored, as turning it over leaves it.
+    Whether the garment lies on its other face, mirrored, as turning it over leaves it.
     """
 
-    folds_made: list[TShirtFold] = field(default_factory=list)
+    folds_made: list[GarmentFold] = field(default_factory=list)
     """
-    The folds the T-shirt was folded by, in order, before it is laid on the table; the
+    The folds the garment was folded by, in order, before it is laid on the table; the
     simulation starts with it folded.
     """
 
@@ -169,7 +155,7 @@ class FoldingBench:
     segment, in metres.
     """
 
-    table_side_length: float = 1.2
+    table_side_length: float = 1.5
     """
     How long each side of the square table top is, in metres.
     """
@@ -179,55 +165,22 @@ class FoldingBench:
     How high the table top is, in metres.
     """
 
-    collar_to_hem_length: float = 0.62
-    """
-    How long the T-shirt is from its collar to its hem, in metres.
-    """
-
-    sleeve_to_sleeve_width: float = 0.61
-    """
-    How wide the T-shirt is from the end of one sleeve to the end of the other, in
-    metres.
-    """
-
-    t_shirt_mass: float = 0.13
-    """
-    The mass of the T-shirt, in kilograms: that of RGBench's T-shirt, whose mesh
-    :attr:`GarmentFile.T_SHIRT` is, scaled with its area.
-    """
-
-    t_shirt_thickness: float = 1e-3
-    """
-    The thickness of the T-shirt's fabric, in metres; thinner than the 3 mm RGBench
-    states, at which a folded sleeve springs back open in the simulation.
-    """
-
-    t_shirt_elasticity: ClothElasticity = field(
-        default_factory=lambda: ClothElasticity(
-            young_modulus=3 / 4 * (1 - 0.35) * 2.3e5, poisson_ratio=0.35
-        )
-    )
-    """
-    How stiffly the T-shirt resists bending, as RGBench states it and
-    :class:`~experiments.t_shirt_demo.demo.TShirtSwingDemonstration` converts it.
-    """
-
     sliding_friction: float = 2.0
     """
-    The coefficient of friction between the T-shirt and the table, high enough that
-    the T-shirt does not slide over the table while it is folded, as g-folds assume.
+    The coefficient of friction between the garment and the table, high enough that the
+    garment does not slide over the table while it is folded, as g-folds assume.
     """
 
     laying_height: float = 0.01
     """
-    How far above the table top the lowest vertex of the T-shirt is laid out, to settle
+    How far above the table top the lowest vertex of the garment is laid out, to settle
     onto it, in metres.
     """
 
     pinch_radius: float = 0.03
     """
-    How far from a hand a vertex of the T-shirt may lie to be held when the hand
-    closes, in metres.
+    How far from a hand a vertex of the garment may lie to be held when the hand closes,
+    in metres.
     """
 
     hand_speed: float = 0.2
@@ -237,7 +190,7 @@ class FoldingBench:
 
     silhouette_cell_size: float = 4e-3
     """
-    The length of a side of the cells the T-shirt's silhouette is seen on, in metres.
+    The length of a side of the cells the garment's silhouette is seen on, in metres.
     """
 
     step_size: float = 4e-3
@@ -250,54 +203,29 @@ class FoldingBench:
     Whether the simulation runs without a viewer.
     """
 
-    t_shirt_template: TShirtTemplate = field(init=False)
-    """
-    The T-shirt as it lies spread out, in a frame of its own centred on it, its hem
-    along the y-axis.
-    """
-
     simulation: MujocoSim = field(init=False)
     """
-    The simulation of the table, the hands and the T-shirt.
+    The simulation of the table, the hands and the garment.
     """
 
     _cloth: ClothSheet = field(init=False)
     """
-    The cloth the T-shirt is simulated as.
-    """
-
-    _landmark_vertices: list[int] = field(init=False)
-    """
-    The index of the vertex of the T-shirt at each landmark, in the order of
-    :class:`TShirtLandmark`.
+    The cloth the garment is simulated as.
     """
 
     def __post_init__(self) -> None:
         """
-        Lay the T-shirt out flat where :attr:`placement` puts it and start the
-        simulation.
+        Lay the garment out where :attr:`placement` puts it, folded by
+        :attr:`folds_made`, and start the simulation.
         """
-        vertex_of_landmark = json.loads(
-            BenchResource.T_SHIRT_LANDMARK_VERTICES.read_text()
-        )
-        self._landmark_vertices = [
-            vertex_of_landmark[landmark] for landmark in TShirtLandmark
-        ]
-        flat_surface = self._flat_surface()
-        self.t_shirt_template = TShirtTemplate(
-            landmark_positions=dict(
-                zip(
-                    TShirtLandmark,
-                    flat_surface.vertices[self._landmark_vertices, :2],
-                )
-            )
-        )
         self._cloth = ClothSheet(
-            name=BenchEntity.T_SHIRT,
-            surface=self._laid_out_surface(self._folded_surface(flat_surface)),
-            mass=self.t_shirt_mass,
-            thickness=self.t_shirt_thickness,
-            elasticity=self.t_shirt_elasticity,
+            name=BenchEntity.GARMENT,
+            surface=self._laid_out_surface(
+                self._folded_surface(self.garment.spread_mesh.surface)
+            ),
+            mass=self.garment.mass,
+            thickness=self.garment.thickness,
+            elasticity=self.garment.elasticity,
             sliding_friction=self.sliding_friction,
         )
         self.simulation = MujocoSim(
@@ -308,31 +236,16 @@ class FoldingBench:
         )
         self.simulation.start_stepped_simulation()
 
-    def _flat_surface(self) -> trimesh.Trimesh:
-        """
-        :return: The T-shirt's mesh stretched to the T-shirt's length and width, in the
-            frame of :attr:`t_shirt_template`, its relief above zero.
-        """
-        surface = GarmentFile.T_SHIRT.create_surface(HomogeneousTransformationMatrix())
-        length, width, _ = surface.extents
-        surface.vertices = (surface.vertices - surface.bounds.mean(axis=0)) * [
-            self.collar_to_hem_length / length,
-            self.sleeve_to_sleeve_width / width,
-            1.0,
-        ]
-        surface.vertices[:, 2] -= surface.vertices[:, 2].min()
-        return surface
-
     def _folded_surface(self, flat_surface: trimesh.Trimesh) -> trimesh.Trimesh:
         """
-        :param flat_surface: The T-shirt's mesh in its own frame.
+        :param flat_surface: The garment's mesh, spread out in its own frame.
         :return: The mesh folded by each of :attr:`folds_made` in turn: the cloth each
             fold lifts is wrapped half around a cylinder of :attr:`crease_radius` lying
             along the fold's segment, and the rest of it laid on top, mirrored.
         """
         vertices = flat_surface.vertices.copy()
         for fold in self.folds_made:
-            segment = fold.fold_segment(template=self.t_shirt_template)
+            segment = fold.fold_segment(template=self.garment.template)
             lifted = self._lifted_vertices(
                 surface=flat_surface, vertices=vertices, segment=segment
             )
@@ -353,9 +266,9 @@ class FoldingBench:
         *, surface: trimesh.Trimesh, vertices: numpy.ndarray, segment: FoldSegment
     ) -> numpy.ndarray:
         """
-        :param surface: The T-shirt's mesh, whose edges join its vertices.
+        :param surface: The garment's mesh, whose edges join its vertices.
         :param vertices: Where the mesh's vertices lie now.
-        :param segment: The segment the T-shirt is folded over.
+        :param segment: The segment the garment is folded over.
         :return: The indices of the vertices the fold lifts: those left of the
             segment's line that the mesh joins, through vertices left of it, to a vertex
             next to the segment itself.
@@ -382,7 +295,7 @@ class FoldingBench:
 
     def _laid_out_surface(self, flat_surface: trimesh.Trimesh) -> trimesh.Trimesh:
         """
-        :param flat_surface: The T-shirt's mesh in its own frame.
+        :param flat_surface: The garment's mesh in its own frame.
         :return: The mesh, turned over if :attr:`turned_over`, placed by
             :attr:`placement` just above the table top.
         """
@@ -402,7 +315,7 @@ class FoldingBench:
     def _build_world(self) -> World:
         """
         :return: A world with a floor, the table, the hands, a camera above the table
-            and the T-shirt.
+            and the garment.
         """
         world = World.create_with_root_body(BenchEntity.ROOT)
         table_thickness = 0.04
@@ -436,55 +349,60 @@ class FoldingBench:
         world.add_simulator_property(self._cloth)
         return world
 
-    # %% the T-shirt
+    # %% the garment
 
     @property
-    def t_shirt_vertex_positions(self) -> numpy.ndarray:
+    def garment_vertex_positions(self) -> numpy.ndarray:
         """
-        Where each vertex of the T-shirt is, in the world frame, of shape (n, 3).
+        Where each vertex of the garment is, in the world frame, of shape (n, 3).
         """
         return self.simulation.simulator.get_flex_vertex_positions(
-            flex_name=BenchEntity.T_SHIRT
+            flex_name=BenchEntity.GARMENT
         ).result
 
     @property
-    def landmark_positions(self) -> dict[TShirtLandmark, numpy.ndarray]:
+    def landmark_positions(self) -> dict[StrEnum, numpy.ndarray]:
         """
-        Where the vertex at each landmark of the T-shirt is, in the world frame.
+        Where the vertex at each landmark of the garment is, in the world frame.
         """
         return dict(
-            zip(TShirtLandmark, self.t_shirt_vertex_positions[self._landmark_vertices])
+            zip(
+                self.garment.template.landmark_positions,
+                self.garment_vertex_positions[
+                    self.garment.spread_mesh.landmark_vertices
+                ],
+            )
         )
 
-    def let_t_shirt_settle(
+    def let_garment_settle(
         self,
         longest: timedelta = timedelta(seconds=4),
         still_below: float = 2e-3,
     ) -> None:
         """
-        Advance the simulation until the T-shirt lies still.
+        Advance the simulation until the garment lies still.
 
         :param longest: How long to wait for that at most, in simulated time.
         :param still_below: How far any vertex may move within a fifth of a second for
-            the T-shirt to count as lying still, in metres.
+            the garment to count as lying still, in metres.
         """
         interval = timedelta(seconds=0.2)
-        before = self.t_shirt_vertex_positions
+        before = self.garment_vertex_positions
         for _ in range(round(longest / interval)):
             self.simulation.step_simulation(interval)
-            now = self.t_shirt_vertex_positions
+            now = self.garment_vertex_positions
             if numpy.abs(now - before).max() < still_below:
                 return
             before = now
 
     def observe_silhouette(self) -> ClothSilhouette:
         """
-        :return: The silhouette of the T-shirt as a camera straight above the table
+        :return: The silhouette of the garment as a camera straight above the table
             sees it, on the table's plane.
         """
         return ClothSilhouette.from_surface(
             surface=trimesh.Trimesh(
-                self.t_shirt_vertex_positions, self._cloth.surface.faces, process=False
+                self.garment_vertex_positions, self._cloth.surface.faces, process=False
             ),
             cell_size=self.silhouette_cell_size,
         )
@@ -508,10 +426,10 @@ class FoldingBench:
 
     def perform(self, *, plan: FoldPlan) -> None:
         """
-        Make a fold with the hands as the plan says: each hand takes the T-shirt where
-        a grasp does, all of them follow their paths together, turning the cloth they
-        hold over the fold's line as they go, let go at the end, and the T-shirt comes
-        to rest.
+        Make a fold with the hands as the plan says: each hand takes the garment where a
+        grasp does, all of them follow their paths together, turning the cloth they hold
+        over the fold's line as they go, let go at the end, and the garment comes to
+        rest.
 
         :param plan: The fold to make.
         """
@@ -542,20 +460,20 @@ class FoldingBench:
             self.simulation.step_simulation(timedelta(seconds=self.step_size))
         for hand, _ in hands:
             self.simulation.simulator.unpin_flex_vertices(
-                flex_name=BenchEntity.T_SHIRT, body_name=hand
+                flex_name=BenchEntity.GARMENT, body_name=hand
             )
-        self.let_t_shirt_settle()
+        self.let_garment_settle()
 
     def _world_path(self, *, grasp: FoldGrasp, hand: BenchHand) -> numpy.ndarray:
         """
-        Put a hand where a grasp takes the T-shirt and close it there.
+        Put a hand where a grasp takes the garment and close it there.
 
         :param grasp: The grasp.
         :param hand: The hand that makes it.
         :return: The grasp's path in the world frame, starting halfway between the
             lowest and the highest layer of cloth the hand closed on.
         """
-        vertices = self.t_shirt_vertex_positions
+        vertices = self.garment_vertex_positions
         nearby = (
             numpy.linalg.norm(vertices[:, :2] - grasp.grasp_position, axis=1)
             <= self.pinch_radius
@@ -570,7 +488,7 @@ class FoldingBench:
             body_name=hand, position=path[0]
         )
         pinch = self.simulation.simulator.pin_flex_vertices(
-            flex_name=BenchEntity.T_SHIRT,
+            flex_name=BenchEntity.GARMENT,
             body_name=hand,
             body_P_centre=numpy.zeros(3),
             # closing between the layers, the hand reaches the top and bottom ones
