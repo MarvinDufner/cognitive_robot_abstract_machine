@@ -827,6 +827,172 @@ class TestClothSimulation:
         )
         assert simulator._mj_model.neq == equality_count
 
+    def test_an_unpinned_vertex_falls_with_the_rest_of_the_cloth(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        Unpinning takes back every pin between the flex and the body, so the vertex
+        pinned before is free to fall again.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        equality_count = simulator._mj_model.neq
+        hook = simulator._mj_data.body("hook")
+        start = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        hook_P_first_vertex = hook.xmat.reshape(3, 3).T @ (start[0] - hook.xpos)
+        pinned = simulator.callbacks["pin_flex_vertices"](
+            flex_name="cloth",
+            body_name="hook",
+            body_P_centre=hook_P_first_vertex,
+            radius=0.01,
+        ).result
+
+        result = simulator.callbacks["unpin_flex_vertices"](
+            flex_name="cloth", body_name="hook"
+        )
+        for _ in range(250):
+            simulator.step()
+        end = simulator.callbacks["get_flex_vertex_positions"](flex_name="cloth").result
+
+        assert (
+            result.type
+            is SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_MODEL
+        )
+        assert result.result.tolist() == pinned.tolist()
+        assert simulator._mj_model.neq == equality_count
+        assert numpy.all(end[pinned, 2] < start[pinned, 2])
+
+    def test_unpinning_fails_when_the_body_holds_no_vertex_of_the_flex(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        Unpinning reports a failure, and changes nothing, when nothing is pinned.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        equality_count = simulator._mj_model.neq
+
+        result = simulator.callbacks["unpin_flex_vertices"](
+            flex_name="cloth", body_name="hook"
+        )
+
+        assert (
+            result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION
+        )
+        assert simulator._mj_model.neq == equality_count
+
+    def test_flex_vertices_lie_at_rest_where_they_were_set(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        A cloth that fell for a while is put back where it started, and no longer moves
+        there.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        start = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        for _ in range(50):
+            simulator.step()
+
+        result = simulator.callbacks["set_flex_vertex_positions"](
+            flex_name="cloth", positions=start
+        )
+
+        assert (
+            result.type
+            is SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA
+        )
+        assert numpy.allclose(
+            simulator.callbacks["get_flex_vertex_positions"](flex_name="cloth").result,
+            start,
+        )
+        assert numpy.all(simulator._mj_data.qvel == 0.0)
+
+    @pytest.mark.parametrize(
+        "flex_name, vertex_count",
+        [("this_flex_does_not_exist", 12), ("cloth", 11)],
+    )
+    def test_setting_flex_vertex_positions_fails_without_the_flex_or_a_position_per_vertex(
+        self, simulator: MujocoSimulator, flex_name: str, vertex_count: int
+    ) -> None:
+        """
+        Setting vertex positions reports a failure, and moves nothing, when the flex is
+        missing or the positions are not one per vertex.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        start = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+
+        result = simulator.callbacks["set_flex_vertex_positions"](
+            flex_name=flex_name, positions=numpy.zeros((vertex_count, 3))
+        )
+
+        assert (
+            result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION
+        )
+        assert numpy.array_equal(
+            simulator.callbacks["get_flex_vertex_positions"](flex_name="cloth").result,
+            start,
+        )
+
+    def test_a_vertex_pinned_to_a_motion_capture_body_follows_it(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        A vertex pinned to the carrier is carried along when the carrier is moved, while
+        the vertices left free fall.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        start = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        carrier_position = simulator._mj_data.body("carrier").xpos.copy()
+        pinned = simulator.callbacks["pin_flex_vertices"](
+            flex_name="cloth",
+            body_name="carrier",
+            body_P_centre=start[0] - carrier_position,
+            radius=0.01,
+        ).result
+        step_count = 250
+        travel = numpy.array([0.0, 0.0, 0.2])
+
+        for step in range(1, step_count + 1):
+            result = simulator.callbacks["set_motion_capture_body_position"](
+                body_name="carrier",
+                position=carrier_position + travel * step / step_count,
+            )
+            simulator.step()
+        end = simulator.callbacks["get_flex_vertex_positions"](flex_name="cloth").result
+
+        assert (
+            result.type
+            is SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA
+        )
+        assert numpy.allclose(end[pinned], start[pinned] + travel, atol=5e-3)
+
+    @pytest.mark.parametrize("body_name", ["this_body_does_not_exist", "hook"])
+    def test_only_a_motion_capture_body_can_be_set_somewhere(
+        self, simulator: MujocoSimulator, body_name: str
+    ) -> None:
+        """
+        Setting the position of a body that is missing, or that the physics moves,
+        reports a failure.
+        """
+        result = simulator.callbacks["set_motion_capture_body_position"](
+            body_name=body_name, position=numpy.zeros(3)
+        )
+
+        assert (
+            result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION
+        )
+
 
 class TestOffscreenRenderingAvailability:
     """

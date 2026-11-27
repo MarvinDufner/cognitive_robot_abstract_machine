@@ -79,6 +79,12 @@ class ClothSheet(SimulatorAdditionalProperty):
     How stiffly the cloth resists bending.
     """
 
+    sliding_friction: float = 1.0
+    """
+    The coefficient of friction the cloth slides over whatever it touches with, which
+    takes precedence over the friction of what it touches.
+    """
+
     color: Color = field(default_factory=Color)
     """
     The color the cloth is drawn in.

@@ -340,6 +340,31 @@ def test_a_cloth_sheet_does_not_collide_with_itself(
     assert model.flex_selfcollide[flex_id] == mujoco.mjtFlexSelf.mjFLEXSELF_NONE
 
 
+def test_a_cloth_sheet_slides_over_what_it_lies_on_with_its_own_friction(
+    t_shirt_above_table: TShirtAboveTable,
+) -> None:
+    """
+    Every contact of a T-shirt lying on a table has the T-shirt's sliding friction, not
+    the larger one of the table.
+    """
+    t_shirt = t_shirt_above_table.t_shirt
+    t_shirt.sliding_friction = 0.3
+    simulation = MujocoSim(
+        world=t_shirt_above_table.world,
+        headless=True,
+        step_size=2e-3,
+        integrator=mujoco.mjtIntegrator.mjINT_DISCRETE,
+    )
+    simulation.start_stepped_simulation()
+
+    simulation.step_simulation(timedelta(seconds=1))
+    sliding_frictions = simulation.simulator._mj_data.contact.friction[:, 0].copy()
+    simulation.stop_simulation()
+
+    assert sliding_frictions.size > 0
+    assert numpy.all(sliding_frictions == t_shirt.sliding_friction)
+
+
 def test_a_t_shirt_and_the_cloth_standing_for_it_build_under_one_name(
     tmp_path: Path,
 ) -> None:

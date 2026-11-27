@@ -4,5 +4,6 @@
       <edge equality="true"/>
     </flexcomp>
     <body name="hook" pos="0.1 0.15 1.005" euler="30 45 60"/>
+    <body name="carrier" mocap="true" pos="0 0 1.005"/>
   </worldbody>
 </mujoco>

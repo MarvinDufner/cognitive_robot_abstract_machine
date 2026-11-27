@@ -547,6 +547,132 @@ class MujocoSimulator(BaseSimulator):
         )
 
     @BaseSimulator.simulator_callback
+    def unpin_flex_vertices(
+        self, flex_name: str, body_name: str
+    ) -> SimulatorCallbackResult:
+        """
+        Take back every pin :meth:`pin_flex_vertices` put between a flex and a body, so
+        the vertices it held are free again.
+
+        :param flex_name: The name of the flex
+        :param body_name: The name of the body holding vertices of the flex
+        :return: A SimulatorCallbackResult with the indices, within the flex, of the
+            vertices set free as the result
+        """
+        flex_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_FLEX, name=flex_name
+        )
+        vertex_body_names = (
+            []
+            if flex_id == -1
+            else [
+                self._mj_model.body(vertex_body_id).name
+                for vertex_body_id in self._mj_model.flex_vertbodyid[
+                    self._flex_vertices(flex_id)
+                ]
+            ]
+        )
+        pins = [
+            equality
+            for equality in self._mj_spec.equalities
+            if equality.type == mujoco.mjtEq.mjEQ_WELD
+            and equality.name1 == body_name
+            and equality.name2 in vertex_body_names
+        ]
+        if not pins:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"{body_name} holds no vertex of flex {flex_name}",
+            )
+        freed = numpy.array(sorted(vertex_body_names.index(pin.name2) for pin in pins))
+        for pin in pins:
+            self._mj_spec.delete(pin)
+        self._recompile()
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_MODEL,
+            info=f"Freed {freed.size} vertices of flex {flex_name} from {body_name}",
+            result=freed,
+        )
+
+    @BaseSimulator.simulator_callback
+    def set_flex_vertex_positions(
+        self, flex_name: str, positions: numpy.ndarray
+    ) -> SimulatorCallbackResult:
+        """
+        Put the vertices of a flex somewhere else, at rest, such as a cloth into a shape
+        it was left in before.
+
+        :param flex_name: The name of the flex, each of whose vertices is a body moving
+            on three slide joints
+        :param positions: The world position of each of the flex's n vertices, of shape
+            (n, 3)
+        :return: A SimulatorCallbackResult indicating the success or failure of the
+            operation
+        """
+        flex_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_FLEX, name=flex_name
+        )
+        if flex_id == -1:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"Flex {flex_name} not found",
+            )
+        vertices = self._flex_vertices(flex_id)
+        vertex_body_ids = self._mj_model.flex_vertbodyid[vertices]
+        joint_ids = self._mj_model.body_jntadr[vertex_body_ids, None] + numpy.arange(3)
+        if (
+            positions.shape != (len(vertex_body_ids), 3)
+            or numpy.any(self._mj_model.body_jntnum[vertex_body_ids] != 3)
+            or numpy.any(
+                self._mj_model.jnt_type[joint_ids] != mujoco.mjtJoint.mjJNT_SLIDE
+            )
+        ):
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"Flex {flex_name} does not have {len(positions)} vertices on "
+                f"three slide joints each",
+            )
+        mujoco.mj_kinematics(self._mj_model, self._mj_data)
+        displacements = positions - self._mj_data.flexvert_xpos[vertices]
+        self._mj_data.qpos[self._mj_model.jnt_qposadr[joint_ids]] += numpy.einsum(
+            "vja,va->vj", self._mj_data.xaxis[joint_ids], displacements
+        )
+        self._mj_data.qvel[self._mj_model.jnt_dofadr[joint_ids]] = 0.0
+        mujoco.mj_forward(self._mj_model, self._mj_data)
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA,
+            info=f"Set the vertex positions of flex {flex_name}",
+        )
+
+    @BaseSimulator.simulator_callback
+    def set_motion_capture_body_position(
+        self, body_name: str, position: numpy.ndarray
+    ) -> SimulatorCallbackResult:
+        """
+        Set where a motion capture body is, which the physics does not move and which
+        carries along whatever is constrained to it.
+
+        :param body_name: The name of the motion capture body
+        :param position: The world position of the body
+        :return: A SimulatorCallbackResult indicating the success or failure of the
+            operation
+        """
+        body_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_BODY, name=body_name
+        )
+        if body_id == -1 or self._mj_model.body_mocapid[body_id] == -1:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"Motion capture body {body_name} not found",
+            )
+        self._mj_data.mocap_pos[self._mj_model.body_mocapid[body_id]] = position
+        mujoco.mj_kinematics(self._mj_model, self._mj_data)
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA,
+            info=f"Set motion capture body {body_name} to position {position}",
+        )
+
+    @BaseSimulator.simulator_callback
     def get_geom_friction(self, geom_name: str) -> SimulatorCallbackResult:
         """
         Get a geom's contact friction (sliding, torsional, rolling) by its name.

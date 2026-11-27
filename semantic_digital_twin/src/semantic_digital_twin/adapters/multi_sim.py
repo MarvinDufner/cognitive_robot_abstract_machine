@@ -3411,6 +3411,10 @@ class MujocoBuilder(MultiSimBuilder):
         # the edge equality keeps the sheet from stretching, so elasticity resists bending
         flex.elastic2d = MujocoFlexElasticity.BENDING
         flex.selfcollide = mujoco.mjtFlexSelf.mjFLEXSELF_NONE
+        # a higher priority than a geom's default makes the cloth's friction the one of
+        # every contact, where MuJoCo would otherwise take the larger of the two
+        flex.priority = 1
+        flex.friction[0] = cloth.sliding_friction
         flex.rgba = list(cloth.color.to_rgba())
         edges = self.spec.add_equality()
         edges.type = mujoco.mjtEq.mjEQ_FLEX
