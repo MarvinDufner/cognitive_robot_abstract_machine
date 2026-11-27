@@ -12,12 +12,15 @@ import pytest
 from rclpy.node import Node
 from robokudo_msgs.action import Query
 
+from robokudo.annotators.cluster_pose_bb import ClusterPoseBBAnnotator
 from robokudo.annotators.collection_reader import CollectionReaderAnnotator
 from robokudo.annotators.image_preprocessor import ImagePreprocessorAnnotator
 from robokudo.annotators.laundry_grasp_pose import LaundryGraspPoseAnnotator
 from robokudo.annotators.laundry_grasp_publisher import LaundryGraspPublisher
+from robokudo.annotators.query import GenerateQueryResult
 from robokudo.annotators.steady_laundry_grasp import SteadyLaundryGraspAnnotator
 from robokudo.annotators.open_vocabulary_object_detection_annotator import (
+    OpenVocabularyObjectDetectionAnnotator,
     Owlv2ForObjectDetection,
     Owlv2Processor,
 )
@@ -28,6 +31,7 @@ from robokudo.descriptors.analysis_engines.doing_laundry import (
 )
 from robokudo.pipeline import Pipeline
 from robokudo.tree_components.query_based_task_scheduler import QueryBasedScheduler
+from robokudo.types.laundry import LaundryBasketClassName
 from semantic_digital_twin.robots.hsrb import HSRBGripper
 
 # %% Fixtures
@@ -137,6 +141,27 @@ def test_the_tshirt_pile_grasp_keeps_the_hsrb_hand_clear_of_the_walls(
         grasp_annotator.descriptor.parameters.gripper_maximum_opening
         == HSRBGripper.maximum_opening_width
     )
+
+
+def test_a_find_basket_query_answers_once_with_the_pose_of_the_basket(
+    scheduler: QueryBasedScheduler,
+) -> None:
+    """
+    The find-basket subtree detects only laundry baskets, estimates their pose and
+    answers the query with it, without streaming.
+    """
+    route = scheduler.filter_fn(Query.Goal(query=DoingLaundryQuery.FIND_BASKET))
+
+    subtree_behaviours = list(scheduler.tasks[route].iterate())
+    (detection,) = [
+        behaviour
+        for behaviour in subtree_behaviours
+        if isinstance(behaviour, OpenVocabularyObjectDetectionAnnotator)
+    ]
+    subtree_types = {type(behaviour) for behaviour in subtree_behaviours}
+    assert detection.descriptor.parameters.classes == list(LaundryBasketClassName)
+    assert {ClusterPoseBBAnnotator, GenerateQueryResult} <= subtree_types
+    assert StartQueryStream not in subtree_types
 
 
 def test_every_query_of_the_challenge_has_a_subtree(
