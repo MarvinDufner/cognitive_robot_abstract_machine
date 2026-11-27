@@ -1,10 +1,18 @@
 """
 The HSR drives to a laundry basket on the kitchen environment's living room floor and
-lifts the top T-shirt out in MuJoCo, by a grasp assumed on its highest point while the
-simulation has no perception. The T-shirts are rigid stand-ins, see
-:class:`CrumpledTShirt`. Run it from this folder::
+lifts the top T-shirt out of it.
+
+In MuJoCo the T-shirts are rigid stand-ins, see :class:`CrumpledTShirt`, and the grasp
+is assumed on their highest point while the simulation has no perception. Run it from
+this folder::
 
     python demo.py
+
+On the real HSR, RoboKudo's doing-laundry engine finds the grasp. Run it from this
+folder, with the HSR's Giskard and the engine running::
+
+    python -c "from coraplex.plans.executors import RealRobotPlanExecutor; \
+from demo import main; main(executor_type=RealRobotPlanExecutor)"
 """
 
 from __future__ import annotations
@@ -19,7 +27,12 @@ import trimesh
 
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.plans.context_extensions import RobotAccess
-from coraplex.plans.executors import PhysicallySimulatedPlanExecutor, PlanExecutor
+from coraplex.perception import LaundryGraspPerception
+from coraplex.plans.executors import (
+    PhysicallySimulatedPlanExecutor,
+    PlanExecutor,
+    SimulatedPlanExecutor,
+)
 from coraplex.robot_plans.actions.core.navigation import LookAtAction, NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
@@ -370,6 +383,11 @@ class SceneBody(StrEnum):
     BOTTOM_LEFT_T_SHIRT = "bottom_left_t_shirt"
     BOTTOM_RIGHT_T_SHIRT = "bottom_right_t_shirt"
     TOP_T_SHIRT = "top_t_shirt"
+    LAUNDRY = "laundry"
+    """
+    A cloth without collision geometry lying on the basket's bottom, standing for the
+    laundry whose shape perception does not know, which a real run takes hold of.
+    """
 
 
 @dataclass(kw_only=True)
@@ -482,7 +500,9 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor
     """
-    Performs the plan in MuJoCo, where friction alone holds the lifted T-shirt.
+    Performs the plan in MuJoCo by default, where friction alone holds the lifted
+    T-shirt. A :class:`~coraplex.plans.executors.RealRobotPlanExecutor` performs it on
+    the real HSR.
     """
 
     collision_avoidance: bool = True
@@ -598,10 +618,11 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     def populate_scene(self, world: World) -> None:
         """
-        Stand the empty laundry basket against the living room's south wall.
+        Stand the laundry basket against the living room's south wall, with the laundry
+        of unknown shape in it, see :attr:`SceneBody.LAUNDRY`.
         """
         with world.modify_world():
-            LaundryBasket.create_with_new_body_in_world(
+            basket = LaundryBasket.create_with_new_body_in_world(
                 name=SceneBody.LAUNDRY_BASKET.value,
                 world=world,
                 world_root_T_self=self.basket_pose
@@ -610,6 +631,15 @@ class LaundryBasketDemonstration(RobotDemonstration):
                 ),
                 scale=self.basket_scale,
             )
+        laundry = BodySpecification(name=SceneBody.LAUNDRY.value).spawn(
+            world,
+            parent=basket.root,
+            parent_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                z=-self.basket_scale.z / 2
+            ),
+        )
+        with world.modify_world():
+            world.add_semantic_annotation(Cloth(root=laundry))
 
     def build_simulated_world(self) -> World:
         """
@@ -654,15 +684,26 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     def build_statechart(self, context: StatechartContext) -> Statechart:
         """
-        Park the arm, drive in front of the basket, look into it, assume a grasp on the
-        laundry and lift the T-shirt out by it, grounded once it was assumed:
+        Park the arm, drive in front of the basket, look into it, find a grasp on the
+        laundry and lift the T-shirt out by it, grounded once it was found:
 
         turned half a turn first, which the HSR reaches without turning its base, and
         closed once the fingers stall on the cloth.
+
+        A simulated run assumes the grasp on the highest point of the top T-shirt, while
+        a real run asks RoboKudo's doing-laundry engine for it.
         """
         hsrb = context.require_extension(extension_type=RobotAccess).robot
         [basket] = context.world.get_semantic_annotations_by_type(LaundryBasket)
         [arm] = hsrb.all_arms
+        laundry_grasp = (
+            AssumedLaundryGrasp(
+                basket=basket,
+                t_shirt=context.world.get_body_by_name(SceneBody.TOP_T_SHIRT.value),
+            )
+            if issubclass(self.executor_type, SimulatedPlanExecutor)
+            else LaundryGraspPerception(basket=basket)
+        )
         world_T_standing = (
             self.basket_pose
             @ HomogeneousTransformationMatrix.from_xyz_rpy(
@@ -677,12 +718,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
                     ParkArmsAction(arms=hsrb.all_arms),
                     NavigateAction(target_location=world_T_standing.pose),
                     LookAtAction(target=Pose(reference_frame=basket.root)),
-                    AssumedLaundryGrasp(
-                        basket=basket,
-                        t_shirt=context.world.get_body_by_name(
-                            SceneBody.TOP_T_SHIRT.value
-                        ),
-                    ),
+                    laundry_grasp,
                     StatementNode(
                         statement=a(PickUpAction)(
                             grasp=a(
@@ -712,14 +748,21 @@ class LaundryBasketDemonstration(RobotDemonstration):
         )
 
 
-def main(headless: bool = False) -> World:
+def main(
+    headless: bool = False,
+    executor_type: type[PlanExecutor] = PhysicallySimulatedPlanExecutor,
+) -> World:
     """
     Run the demonstration.
 
-    :param headless: Whether the physics runs without a viewer.
+    :param headless: Whether the physics of a simulated run steps without a viewer.
+    :param executor_type: The executor running the plan, which decides whether it drives
+        the real HSR or simulates it.
     :return: The world the T-shirt was lifted in.
     """
-    return LaundryBasketDemonstration(headless=headless).run()
+    return LaundryBasketDemonstration(
+        headless=headless, executor_type=executor_type
+    ).run()
 
 
 if __name__ == "__main__":

@@ -190,6 +190,53 @@ def test_the_laundry_is_grasped_on_the_cloth_the_grasp_lies_on(
     assert grasp.graspable is grasped_cloth
 
 
+def test_the_laundry_is_grasped_on_a_cloth_of_unknown_shape(
+    perceived_laundry_basket: LaundryBasket,
+) -> None:
+    """
+    A cloth without collision geometry, whose shape perception does not know, can be
+    taken hold of.
+    """
+    world = perceived_laundry_basket._world
+    body = BodySpecification(name="laundry").spawn(
+        world, parent=perceived_laundry_basket.root
+    )
+    with world.modify_world():
+        cloth = Cloth(root=body)
+        world.add_semantic_annotation(cloth)
+
+    grasp = perceived_laundry_basket.grasp_on_laundry(pinch_depth=0.02)
+
+    assert grasp.graspable is cloth
+
+
+def test_a_cloth_of_unknown_shape_is_taken_hold_of_where_its_origin_lies_nearest(
+    perceived_laundry_basket: LaundryBasket, laundry_grasp_pose: Pose
+) -> None:
+    """
+    Of several cloths without collision geometry, the grasp is on the one whose origin
+    lies nearest to the perceived grasp.
+    """
+    world = perceived_laundry_basket._world
+    cloths = []
+    for name, distance in [("far_laundry", 0.3), ("near_laundry", 0.1)]:
+        body = BodySpecification(name=name).spawn(
+            world,
+            parent_T_self=HomogeneousTransformationMatrix.from_point_rotation_matrix(
+                point=laundry_grasp_pose.position
+            )
+            @ HomogeneousTransformationMatrix.from_xyz_rpy(y=distance),
+        )
+        with world.modify_world():
+            cloths.append(Cloth(root=body))
+            world.add_semantic_annotation(cloths[-1])
+    _, near_cloth = cloths
+
+    grasp = perceived_laundry_basket.grasp_on_laundry(pinch_depth=0.02)
+
+    assert grasp.graspable is near_cloth
+
+
 def test_the_fingers_close_the_pinch_depth_past_the_perceived_grasp(
     perceived_laundry_basket: LaundryBasket,
     grasped_cloth: Cloth,

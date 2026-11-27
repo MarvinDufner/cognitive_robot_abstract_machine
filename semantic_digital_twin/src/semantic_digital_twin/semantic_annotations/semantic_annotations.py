@@ -2039,7 +2039,8 @@ class LaundryBasket(Container, HasCaseAsRootBody, IsPerceivable):
             approach, closing along the same line from the other side, which a gripper
             with two equal fingers takes alike.
         :return: The grasp at :attr:`laundry_grasp_pose`, moved ``pinch_depth`` along its
-            approach, on the cloth whose surface lies nearest to it.
+            approach, on the cloth whose surface lies nearest to it, a cloth without
+            collision geometry counting by its origin.
         :raises LaundryGraspNotPerceived: If perception has not found where to take hold
             of the laundry.
         :raises NoClothInWorld: If the world holds no cloth to take hold of.
@@ -2052,18 +2053,21 @@ class LaundryBasket(Container, HasCaseAsRootBody, IsPerceivable):
             raise NoClothInWorld()
         world_T_grasp = world.transform(self.laundry_grasp_pose, world.root)
 
-        def distance_to_surface(cloth: Cloth) -> float:
+        def distance_to_cloth(cloth: Cloth) -> float:
             """
             :param cloth: The cloth to measure to.
-            :return: How far the grasp lies from the surface of the cloth, in metres.
+            :return: How far the grasp lies from the surface of the cloth, or from its
+                origin if it has no collision geometry, in metres.
             """
-            x, y, z, _ = world.transform(world_T_grasp.position, cloth.root).to_list()
-            _, distances, _ = trimesh.proximity.closest_point(
-                cloth.root.combined_mesh, [[x, y, z]]
-            )
+            cloth_P_grasp = world.transform(world_T_grasp.position, cloth.root)
+            surface = cloth.root.combined_mesh
+            if surface is None:
+                return float(cloth_P_grasp.norm())
+            x, y, z, _ = cloth_P_grasp.to_list()
+            _, distances, _ = trimesh.proximity.closest_point(surface, [[x, y, z]])
             return float(distances[0])
 
-        cloth = min(cloths, key=distance_to_surface)
+        cloth = min(cloths, key=distance_to_cloth)
         world_T_pinch = (
             world_T_grasp.homogeneous_matrix
             @ HomogeneousTransformationMatrix.from_xyz_rpy(
