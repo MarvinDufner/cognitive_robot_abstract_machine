@@ -5,7 +5,7 @@ silhouette alone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import cached_property
 
@@ -174,11 +174,9 @@ class GarmentFoldStateEstimator:
     fitted precisely, the depths of their folds included.
     """
 
-    scanned_depths: numpy.ndarray = field(
-        default_factory=lambda: numpy.linspace(0.05, 0.95, 19)
-    )
+    scanned_depth_count: int = 15
     """
-    The depths, as shares of the lengths they are measured along, that each fold of a
+    How many depths, evenly spread over the depths a fold may reach, each fold of a
     state is tried at before its placement and its folds' depths are fitted together.
     """
 
@@ -283,7 +281,13 @@ class GarmentFoldStateEstimator:
             adjusted = list(folds)
             for index, depth_ratio in zip(adjustable, depth_ratios):
                 adjusted[index] = folds[index].copied_at_depth(
-                    depth_ratio=float(numpy.clip(depth_ratio, 0.0, 1.0))
+                    depth_ratio=float(
+                        numpy.clip(
+                            depth_ratio,
+                            folds[index].smallest_depth_ratio,
+                            folds[index].largest_depth_ratio,
+                        )
+                    )
                 )
             return FoldedGarment(template=self.template, folds=adjusted)
 
@@ -308,11 +312,15 @@ class GarmentFoldStateEstimator:
                 *(folds[index].depth_ratio for index in adjustable),
             ]
         )
-        for parameter_index in range(4, len(parameters)):
+        for parameter_index, fold_index in enumerate(adjustable, start=4):
             candidates = numpy.repeat(
-                parameters[None], len(self.scanned_depths), axis=0
+                parameters[None], self.scanned_depth_count, axis=0
             )
-            candidates[:, parameter_index] = self.scanned_depths
+            candidates[:, parameter_index] = numpy.linspace(
+                folds[fold_index].smallest_depth_ratio,
+                folds[fold_index].largest_depth_ratio,
+                self.scanned_depth_count,
+            )
             parameters = min(candidates, key=missing_overlap)
         steps = [0.01, 0.01, 0.05, 0.02] + [0.05] * len(adjustable)
         for _ in range(2):

@@ -13,6 +13,7 @@ from functools import cached_property
 import numpy
 from typing_extensions import Generic, Self, TypeVar
 
+from krrood.ormatic.utils import classproperty
 from krrood.patterns.subclass_safe_generic import SubClassSafeGeneric
 from semantic_digital_twin.folding.g_fold import LayeredCloth
 from semantic_digital_twin.folding.geometry import FoldSegment, Polygon
@@ -124,6 +125,21 @@ class DepthAdjustableFold(ABC):
         garment it is measured along.
         """
 
+    @classproperty
+    @abstractmethod
+    def smallest_depth_ratio(cls) -> float:
+        """
+        The least deep the fold reaches and still is this fold, see
+        :attr:`depth_ratio`.
+        """
+
+    @classproperty
+    @abstractmethod
+    def largest_depth_ratio(cls) -> float:
+        """
+        The deepest the fold reaches and still is this fold, see :attr:`depth_ratio`.
+        """
+
     @abstractmethod
     def copied_at_depth(self, *, depth_ratio: float) -> Self:
         """
@@ -152,6 +168,22 @@ class HalfFold(GarmentFold[GarmentTemplate], DepthAdjustableFold):
     @property
     def depth_ratio(self) -> float:
         return self.lower_part_ratio
+
+    @classproperty
+    def smallest_depth_ratio(cls) -> float:
+        """
+        Folding much less of the garment's length over, the folded garment would look
+        like the unfolded one a little larger than its template.
+        """
+        return 0.3
+
+    @classproperty
+    def largest_depth_ratio(cls) -> float:
+        """
+        Folding much more of the garment's length over, the folded garment would look
+        like the unfolded one turned over, a little larger than its template.
+        """
+        return 0.7
 
     def copied_at_depth(self, *, depth_ratio: float) -> HalfFold:
         return replace(self, lower_part_ratio=depth_ratio)

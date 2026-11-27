@@ -9,6 +9,7 @@ from functools import cached_property
 
 import numpy
 
+from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.folding.garment import (
     DepthAdjustableFold,
     GarmentFold,
@@ -158,6 +159,21 @@ class SideFold(GarmentFold[TShirtTemplate], DepthAdjustableFold):
     @property
     def depth_ratio(self) -> float:
         return self.strip_width_ratio
+
+    @classproperty
+    def smallest_depth_ratio(cls) -> float:
+        """
+        A strip narrower than a tenth of the hem's width hardly changes the T-shirt's
+        outline.
+        """
+        return 0.1
+
+    @classproperty
+    def largest_depth_ratio(cls) -> float:
+        """
+        A strip wider than half the hem's width would reach across the T-shirt's middle.
+        """
+        return 0.5
 
     def copied_at_depth(self, *, depth_ratio: float) -> SideFold:
         return replace(self, strip_width_ratio=depth_ratio)
