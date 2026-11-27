@@ -15,6 +15,7 @@ from semantic_digital_twin.folding.g_fold import LayeredCloth
 from semantic_digital_twin.folding.geometry import FoldSegment, PlaneTransform
 from semantic_digital_twin.folding.silhouette import ClothSilhouette
 from semantic_digital_twin.folding.t_shirt import (
+    DepthAdjustableFold,
     FoldedTShirt,
     TShirtFold,
     TShirtFoldSequence,
@@ -174,7 +175,21 @@ class TShirtFoldStateEstimator:
     refined_stage_count: int = 3
     """
     How many of the states that overlap the silhouette seen most after a rough fit are
-    fitted precisely.
+    fitted precisely, the depths of their folds included.
+    """
+
+    scanned_depths: numpy.ndarray = field(
+        default_factory=lambda: numpy.linspace(0.05, 0.95, 19)
+    )
+    """
+    The depths, as shares of the lengths they are measured along, that each fold of a
+    state is tried at before its placement and its folds' depths are fitted together.
+    """
+
+    refinement_cell_size: float = 7.5e-3
+    """
+    How far apart the points lie, in metres, that the overlap of a precise fit is
+    counted on.
     """
 
     @cached_property
@@ -215,27 +230,127 @@ class TShirtFoldStateEstimator:
                 starts=self._centred_placements(
                     stage=stage, silhouette=silhouette, sample=sample
                 ),
-                precision=1e-2,
             )
             for stage in self._stages
         ]
         best_rough_fits = sorted(
-            zip(roughly_fitted, self._stages),
-            key=lambda fit: fit[0].overlap,
-            reverse=True,
+            roughly_fitted, key=lambda state: state.overlap, reverse=True
         )[: self.refined_stage_count]
+        margin = self.scale_tolerance * float(numpy.ptp(covered_points, axis=0).max())
+        lower = covered_points.min(axis=0) - margin
+        upper = covered_points.max(axis=0) + margin
+        columns, rows = numpy.meshgrid(
+            numpy.arange(lower[0], upper[0], self.refinement_cell_size),
+            numpy.arange(lower[1], upper[1], self.refinement_cell_size),
+        )
+        grid_points = numpy.column_stack([columns.ravel(), rows.ravel()])
         return max(
             (
-                self._fitted_state(
-                    stage=stage,
-                    silhouette=silhouette,
-                    sample=sample,
-                    starts=[state.placement],
-                    precision=1e-4,
+                self._refined_state(
+                    state=state,
+                    grid_points=grid_points,
+                    seen=silhouette.covers(grid_points),
                 )
-                for state, stage in best_rough_fits
+                for state in best_rough_fits
             ),
             key=lambda state: state.overlap,
+        )
+
+    def _refined_state(
+        self, *, state: TShirtFoldState, grid_points: numpy.ndarray, seen: numpy.ndarray
+    ) -> TShirtFoldState:
+        """
+        :param state: A state placed roughly.
+        :param grid_points: Points of a grid on the table's plane around the silhouette
+            seen, which the overlap is counted on.
+        :param seen: Whether the silhouette seen covers each grid point.
+        :return: The state with its placement and the depth of each of its folds that
+            may lie deeper or less deep fitted to the silhouette seen.
+        """
+        folds = state.t_shirt.folds
+        adjustable = [
+            index
+            for index, fold in enumerate(folds)
+            if isinstance(fold, DepthAdjustableFold)
+        ]
+
+        def t_shirt(depth_ratios: numpy.ndarray) -> FoldedTShirt:
+            """
+            :param depth_ratios: The depth of each fold that may lie at another depth.
+            :return: The T-shirt with its folds at those depths.
+            """
+            adjusted = list(folds)
+            for index, depth_ratio in zip(adjustable, depth_ratios):
+                adjusted[index] = folds[index].copied_at_depth(
+                    depth_ratio=float(numpy.clip(depth_ratio, 0.0, 1.0))
+                )
+            return FoldedTShirt(template=self.template, folds=adjusted)
+
+        def missing_overlap(parameters: numpy.ndarray) -> float:
+            """
+            :param parameters: The placement's parameters, see :meth:`_placement`,
+                followed by the depth of each fold that may lie at another depth.
+            :return: How far the overlap of the state they describe with the silhouette
+                seen falls short of one.
+            """
+            covered = t_shirt(parameters[4:]).cloth.contains(
+                self._placement(parameters[:4]).apply_inverse(grid_points)
+            )
+            return 1 - (covered & seen).sum() / max((covered | seen).sum(), 1)
+
+        placement = state.placement
+        parameters = numpy.array(
+            [
+                *placement.translation,
+                placement.rotation_angle,
+                numpy.log(placement.scale),
+                *(folds[index].depth_ratio for index in adjustable),
+            ]
+        )
+        for parameter_index in range(4, len(parameters)):
+            candidates = numpy.repeat(
+                parameters[None], len(self.scanned_depths), axis=0
+            )
+            candidates[:, parameter_index] = self.scanned_depths
+            parameters = min(candidates, key=missing_overlap)
+        steps = [0.01, 0.01, 0.05, 0.02] + [0.05] * len(adjustable)
+        for _ in range(2):
+            parameters = minimize(
+                missing_overlap,
+                parameters,
+                method="Nelder-Mead",
+                options={
+                    "initial_simplex": numpy.vstack(
+                        [parameters, parameters + numpy.diag(steps)]
+                    ),
+                    "xatol": 1e-3,
+                    "fatol": 1e-4,
+                },
+            ).x
+        return TShirtFoldState(
+            sequence=state.sequence,
+            t_shirt=t_shirt(parameters[4:]),
+            placement=self._placement(parameters[:4]),
+            overlap=1 - missing_overlap(parameters),
+        )
+
+    def _placement(self, parameters: numpy.ndarray) -> PlaneTransform:
+        """
+        :param parameters: The position, turn and logarithm of the scale of a
+            placement.
+        :return: The placement they describe, its scale within the tolerance.
+        """
+        x, y, angle, log_scale = parameters
+        return PlaneTransform(
+            translation=numpy.array([x, y]),
+            rotation_angle=angle,
+            scale=float(
+                numpy.clip(
+                    numpy.exp(log_scale),
+                    1 - self.scale_tolerance,
+                    1 + self.scale_tolerance,
+                )
+            ),
         )
 
     def _centred_placements(
@@ -307,7 +422,6 @@ class TShirtFoldStateEstimator:
         silhouette: ClothSilhouette,
         sample: numpy.ndarray,
         starts: list[PlaneTransform],
-        precision: float,
     ) -> TShirtFoldState:
         """
         :param stage: A state of a fold sequence.
@@ -315,40 +429,20 @@ class TShirtFoldStateEstimator:
         :param sample: The centres of the covered cells of the silhouette seen that the
             overlap is estimated from.
         :param starts: The placements to search from.
-        :param precision: How little a search step may change the placement, in metres
-            and radians, or the overlap, for the search to end.
-        :return: The state, placed where its silhouette overlaps the one seen most.
+        :return: The state, roughly placed where its silhouette overlaps the one seen
+            most.
         """
-
-        def placement(parameters: numpy.ndarray) -> PlaneTransform:
-            """
-            :param parameters: The position, turn and logarithm of the scale.
-            :return: The placement they describe, its scale within the tolerance.
-            """
-            x, y, angle, log_scale = parameters
-            return PlaneTransform(
-                translation=numpy.array([x, y]),
-                rotation_angle=angle,
-                scale=float(
-                    numpy.clip(
-                        numpy.exp(log_scale),
-                        1 - self.scale_tolerance,
-                        1 + self.scale_tolerance,
-                    )
-                ),
-            )
 
         def missing_overlap(parameters: numpy.ndarray) -> float:
             """
-            :param parameters: The position, turn and logarithm of the scale.
-            :return: How far the overlap of the placement they describe falls short
-                of one.
+            :param parameters: The parameters of a placement, see :meth:`_placement`.
+            :return: How far the overlap of the placement falls short of one.
             """
             return 1 - self._overlap(
                 stage=stage,
                 silhouette=silhouette,
                 sample=sample,
-                placement=placement(parameters),
+                placement=self._placement(parameters),
             )
 
         fits = []
@@ -365,8 +459,8 @@ class TShirtFoldStateEstimator:
                         "initial_simplex": numpy.vstack(
                             [initial, initial + numpy.diag([0.03, 0.03, 0.2, 0.05])]
                         ),
-                        "xatol": precision,
-                        "fatol": precision,
+                        "xatol": 1e-2,
+                        "fatol": 1e-2,
                     },
                 )
             )
@@ -374,6 +468,6 @@ class TShirtFoldStateEstimator:
         return TShirtFoldState(
             sequence=stage.sequence,
             t_shirt=stage.t_shirt,
-            placement=placement(best.x),
+            placement=self._placement(best.x),
             overlap=1 - float(best.fun),
         )

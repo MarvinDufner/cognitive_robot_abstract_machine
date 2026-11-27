@@ -15,6 +15,8 @@ from semantic_digital_twin.folding.silhouette import ClothSilhouette
 from semantic_digital_twin.folding.strategy import TShirtGFoldStrategy
 from semantic_digital_twin.folding.t_shirt import (
     FoldedTShirt,
+    SideFold,
+    SleeveFold,
     TShirtFoldSequence,
     TShirtSide,
     TShirtTemplate,
@@ -145,6 +147,35 @@ def test_the_strategy_folds_a_t_shirt_with_both_sides_in_across_the_middle(
     assert plan.g_fold.segment.signed_distances(
         numpy.array([expected_segment.start, expected_segment.end])
     ) == pytest.approx([0.0, 0.0], abs=0.01)
+
+
+@pytest.mark.parametrize("strip_width_ratio", [0.15, 0.35])
+def test_the_estimator_finds_how_wide_a_side_strip_was_folded(
+    t_shirt_template: TShirtTemplate,
+    strategy: TShirtGFoldStrategy,
+    placement: PlaneTransform,
+    strip_width_ratio: float,
+) -> None:
+    """
+    A side strip folded narrower or wider than the sequence's is recognised as the
+    sequence's side fold, made at the width it was made.
+    """
+    folds = [
+        SleeveFold(side=TShirtSide.LEFT),
+        SideFold(side=TShirtSide.LEFT, strip_width_ratio=strip_width_ratio),
+    ]
+    silhouette = ClothSilhouette.from_cloth(
+        cloth=FoldedTShirt(template=t_shirt_template, folds=folds).cloth.transformed(
+            placement
+        ),
+        cell_size=4e-3,
+    )
+
+    state = strategy.state_estimator.estimate(silhouette=silhouette)
+
+    [_, side_fold] = state.t_shirt.folds
+    assert side_fold.side == TShirtSide.LEFT
+    assert side_fold.depth_ratio == pytest.approx(strip_width_ratio, abs=0.02)
 
 
 def test_the_strategy_plans_nothing_once_the_t_shirt_is_folded(

@@ -187,8 +187,8 @@ class Polygon:
         """
         x, y = self.vertices.T
         return 0.5 * float(
-            numpy.dot(x, numpy.roll(y, -1)) - numpy.dot(numpy.roll(x, -1), y)
-        )
+            numpy.dot(x[:-1], y[1:]) - numpy.dot(x[1:], y[:-1])
+        ) + 0.5 * (float(x[-1] * y[0] - x[0] * y[-1]))
 
     @property
     def area(self) -> float:
@@ -214,11 +214,14 @@ class Polygon:
         :return: The pieces the polygon falls into when cut along every stretch of the
             segment that runs through its inside; the polygon alone if there is none.
         """
+        distances = segment.signed_distances(self.vertices)
+        if numpy.all(distances > -tolerance) or numpy.all(distances < tolerance):
+            return [self]
         points = self._boundary_with_cut_points(segment=segment, tolerance=tolerance)
-        distances = segment.signed_distances(points)
+        point_distances = segment.signed_distances(points)
         positions = segment.foot_distances(points)
         on_segment = numpy.flatnonzero(
-            (numpy.abs(distances) <= tolerance)
+            (numpy.abs(point_distances) <= tolerance)
             & (positions >= -tolerance)
             & (positions <= segment.length + tolerance)
         )

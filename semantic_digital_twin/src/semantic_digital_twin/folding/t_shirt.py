@@ -6,7 +6,7 @@ T-shirt part way through them.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import cached_property
 
@@ -70,6 +70,15 @@ class TShirtSide(Enum):
             return TShirtLandmark.LEFT_SLEEVE_TOP
         return TShirtLandmark.RIGHT_SLEEVE_TOP
 
+    @property
+    def sleeve_bottom(self) -> TShirtLandmark:
+        """
+        Where this side's cuff meets the seam under its sleeve.
+        """
+        if self is TShirtSide.LEFT:
+            return TShirtLandmark.LEFT_SLEEVE_BOTTOM
+        return TShirtLandmark.RIGHT_SLEEVE_BOTTOM
+
 
 @dataclass(kw_only=True)
 class TShirtTemplate:
@@ -123,6 +132,13 @@ class TShirtFold(ABC):
     One fold of a T-shirt.
     """
 
+    @property
+    @abstractmethod
+    def description(self) -> str:
+        """
+        What the fold does, in words, for people reading about it.
+        """
+
     @abstractmethod
     def fold_segment(self, *, template: TShirtTemplate) -> FoldSegment:
         """
@@ -130,6 +146,28 @@ class TShirtFold(ABC):
         :return: The segment the fold folds over, in the template's frame. Folding over
             it once the folds before it are made folds the T-shirt as this fold does, as
             long as it crosses only cloth the folds before it left where it was.
+        """
+
+
+class DepthAdjustableFold(TShirtFold, ABC):
+    """
+    A fold whose segment may lie deeper in the T-shirt or less deep, as folds made by
+    hand or by a robot rarely lie exactly where they were planned.
+    """
+
+    @property
+    @abstractmethod
+    def depth_ratio(self) -> float:
+        """
+        How deep the fold reaches into the T-shirt, as a share of the length of the
+        T-shirt it is measured along.
+        """
+
+    @abstractmethod
+    def copied_at_depth(self, *, depth_ratio: float) -> DepthAdjustableFold:
+        """
+        :param depth_ratio: How deep the copy reaches, see :attr:`depth_ratio`.
+        :return: The same fold, reaching that deep.
         """
 
 
@@ -144,6 +182,10 @@ class SleeveFold(TShirtFold):
     The side of the sleeve.
     """
 
+    @property
+    def description(self) -> str:
+        return f"fold the {self.side.value} sleeve onto the body"
+
     def fold_segment(self, *, template: TShirtTemplate) -> FoldSegment:
         positions = template.landmark_positions
         return FoldSegment.through_points(
@@ -154,7 +196,7 @@ class SleeveFold(TShirtFold):
 
 
 @dataclass(kw_only=True)
-class SideFold(TShirtFold):
+class SideFold(DepthAdjustableFold):
     """
     Folds a strip along one side of the body, with whatever lies on it, onto the body,
     over a segment running from the hem to the level of the collar.
@@ -170,6 +212,20 @@ class SideFold(TShirtFold):
     How wide the strip is, as a share of the width of the hem.
     """
 
+    @property
+    def description(self) -> str:
+        return (
+            f"fold the {self.side.value} side in by {self.strip_width_ratio:.0%} "
+            f"of the hem's width"
+        )
+
+    @property
+    def depth_ratio(self) -> float:
+        return self.strip_width_ratio
+
+    def copied_at_depth(self, *, depth_ratio: float) -> SideFold:
+        return replace(self, strip_width_ratio=depth_ratio)
+
     def fold_segment(self, *, template: TShirtTemplate) -> FoldSegment:
         hem = template.landmark_positions[self.side.hem]
         across = template.landmark_positions[self.side.opposite.hem] - hem
@@ -182,7 +238,7 @@ class SideFold(TShirtFold):
 
 
 @dataclass(kw_only=True)
-class HalfFold(TShirtFold):
+class HalfFold(DepthAdjustableFold):
     """
     Folds the hem's end of the T-shirt onto its collar's end, over a segment across the
     whole T-shirt.
@@ -193,6 +249,17 @@ class HalfFold(TShirtFold):
     Where the segment crosses the T-shirt, as the share of the distance from the hem's
     middle to the collar's middle that lies on the hem's side of it.
     """
+
+    @property
+    def description(self) -> str:
+        return "fold the hem onto the collar"
+
+    @property
+    def depth_ratio(self) -> float:
+        return self.hem_part_ratio
+
+    def copied_at_depth(self, *, depth_ratio: float) -> HalfFold:
+        return replace(self, hem_part_ratio=depth_ratio)
 
     def fold_segment(self, *, template: TShirtTemplate) -> FoldSegment:
         along = template.collar_middle - template.hem_middle
