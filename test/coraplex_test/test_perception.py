@@ -46,6 +46,7 @@ from coraplex.perception import (
     ROBOKUDO_QUERY_ACTION_NAME,
     Detection,
     DoingLaundryInterface,
+    LaundryBasketPerception,
     LaundryGraspPerception,
     PerceptionInterface,
     PerceptionQuery,
@@ -76,6 +77,9 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Bowl,
     LaundryBasket,
     Milk,
+)
+from semantic_digital_twin.specifications.connections import (
+    Connection6DoFSpecification,
 )
 from krrood_spatial_math.spatial_types import HomogeneousTransformationMatrix, Point3
 from krrood_spatial_math.spatial_types import Pose
@@ -536,6 +540,7 @@ class RecordedQueryServer:
 
         self.reports = reports
         self.received_types = []
+        self.received_queries = []
         self.node = rclpy.create_node(node_name)
         self.server = ActionServer(self.node, Query, action_name, self.execute_callback)
         self.executor = SingleThreadedExecutor()
@@ -552,6 +557,7 @@ class RecordedQueryServer:
         from std_msgs.msg import Header
 
         self.received_types.append(goal_handle.request.obj.type)
+        self.received_queries.append(goal_handle.request.query)
         goal_handle.succeed()
 
         designators = []
@@ -1329,7 +1335,7 @@ def streamed_grasp(laundry_basket: LaundryBasket) -> HomogeneousTransformationMa
 
 
 def tick_until_observed(
-    node: LaundryGraspPerception, timeout: timedelta = timedelta(seconds=10)
+    node: StatechartNode, timeout: timedelta = timedelta(seconds=10)
 ) -> ObservationStateValues:
     """
     Tick a started node until it observes something, as its chart would.
@@ -1427,3 +1433,128 @@ def test_a_missing_doing_laundry_engine_is_reported(laundry_basket, rclpy_node) 
 
     with pytest.raises(PerceptionSourceUnavailable):
         build_perception_task(node, laundry_basket._world, rclpy_node)
+
+
+# %% finding the laundry basket with RoboKudo's doing-laundry engine
+
+
+@pytest.fixture
+def free_laundry_basket(cylinder_bot_world: World) -> LaundryBasket:
+    """
+    :return: A laundry basket standing free beside the robot, turned away from the axes
+        of the world.
+    """
+    with cylinder_bot_world.modify_world():
+        return LaundryBasket.create_with_new_body_in_world(
+            name="laundry_basket",
+            world=cylinder_bot_world,
+            world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                x=2.0, y=-1.0, z=0.125, yaw=0.5
+            ),
+            parent_connection_specification=Connection6DoFSpecification(),
+        )
+
+
+def find_basket(basket: LaundryBasket, ros_node: Node) -> ObservationStateValues:
+    """
+    Run a node finding `basket` until it observed something.
+
+    :param basket: The basket to find.
+    :param ros_node: Node the engine is reached through.
+    :return: The node's observation.
+    """
+    node = LaundryBasketPerception(basket=basket)
+    build_perception_task(node, basket._world, ros_node)
+    node.on_start()
+    return tick_until_observed(node)
+
+
+def test_the_basket_is_moved_to_where_the_engine_found_it(
+    free_laundry_basket, rclpy_node, query_server_reporting
+) -> None:
+    """
+    The basket ends up where the engine saw it.
+    """
+    found_position = (2.3, -0.8, 0.13)
+    query_server_reporting(
+        [ReportedObject(class_label="laundry basket", position=found_position)]
+    )
+
+    find_basket(free_laundry_basket, rclpy_node)
+
+    position = free_laundry_basket.root.global_pose.position
+    assert position.to_np().flatten()[:3].tolist() == pytest.approx(found_position)
+
+
+def test_the_found_basket_keeps_its_orientation(
+    free_laundry_basket, rclpy_node, query_server_reporting
+) -> None:
+    """
+    The engine estimates the basket's orientation only up to half a turn, so the basket
+    keeps the one the world gave it.
+    """
+    expected_rotation = free_laundry_basket.root.global_pose.to_np()[:3, :3]
+    query_server_reporting(
+        [ReportedObject(class_label="laundry basket", position=(2.3, -0.8, 0.13))]
+    )
+
+    find_basket(free_laundry_basket, rclpy_node)
+
+    np.testing.assert_allclose(
+        free_laundry_basket.root.global_pose.to_np()[:3, :3],
+        expected_rotation,
+        atol=1e-9,
+    )
+
+
+def test_of_several_baskets_found_the_one_nearest_the_basket_is_taken(
+    free_laundry_basket, rclpy_node, query_server_reporting
+) -> None:
+    """
+    Of several baskets in view, the basket is the one seen nearest to where the world
+    has it.
+    """
+    nearest_position = (2.1, -0.9, 0.13)
+    query_server_reporting(
+        [
+            ReportedObject(class_label="basket", position=(0.5, 1.0, 0.13)),
+            ReportedObject(class_label="laundry basket", position=nearest_position),
+        ]
+    )
+
+    find_basket(free_laundry_basket, rclpy_node)
+
+    position = free_laundry_basket.root.global_pose.position
+    assert position.to_np().flatten()[:3].tolist() == pytest.approx(nearest_position)
+
+
+def test_the_engine_is_asked_for_the_laundry_baskets_in_view(
+    free_laundry_basket, rclpy_node, query_server_reporting
+) -> None:
+    """
+    The baskets are what the engine answers the find-basket query with.
+    """
+    engine = query_server_reporting(
+        [ReportedObject(class_label="laundry basket", position=(2.3, -0.8, 0.13))]
+    )
+
+    find_basket(free_laundry_basket, rclpy_node)
+
+    assert engine.received_queries == [DoingLaundryInterface.FIND_BASKET_QUERY]
+
+
+def test_finding_no_basket_fails_the_node(
+    free_laundry_basket, rclpy_node, query_server_reporting
+) -> None:
+    """
+    Where the engine sees no basket, the node fails and leaves the basket where it is.
+    """
+    expected_pose = free_laundry_basket.root.global_pose.to_np()
+    query_server_reporting([])
+
+    observation = find_basket(free_laundry_basket, rclpy_node)
+
+    assert observation == ObservationStateValues.FALSE
+    np.testing.assert_allclose(
+        free_laundry_basket.root.global_pose.to_np(), expected_pose, atol=1e-9
+    )

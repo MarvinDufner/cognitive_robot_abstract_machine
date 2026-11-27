@@ -8,8 +8,8 @@ this folder::
 
     python demo.py
 
-On the real HSR, RoboKudo's doing-laundry engine finds the grasp. Run it from this
-folder, with the HSR's Giskard and the engine running::
+On the real HSR, RoboKudo's doing-laundry engine finds the basket and the grasp. Run it
+from this folder, with the HSR's Giskard and the engine running::
 
     python -c "from coraplex.plans.executors import RealRobotPlanExecutor; \
 from demo import main; main(executor_type=RealRobotPlanExecutor)"
@@ -27,7 +27,7 @@ import trimesh
 
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.plans.context_extensions import RobotAccess
-from coraplex.perception import LaundryGraspPerception
+from coraplex.perception import LaundryBasketPerception, LaundryGraspPerception
 from coraplex.plans.executors import (
     PhysicallySimulatedPlanExecutor,
     PlanExecutor,
@@ -513,12 +513,13 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     basket_pose: HomogeneousTransformationMatrix = field(
         default_factory=lambda: HomogeneousTransformationMatrix.from_xyz_rpy(
-            x=-0.06, y=2.75
+            x=2.3, y=2.4
         )
     )
     """
-    Where the middle of the basket's underside stands in the kitchen: against the south
-    wall, beside the spot meant for the washing machine, its open side up.
+    Where the middle of the basket's underside stands in the kitchen: in the middle of
+    the living room, clear of its walls and the sofa, its open side up. A real run moves
+    the basket to the one it finds in view nearest to here.
     """
 
     basket_scale: Scale = field(default_factory=lambda: Scale(0.35, 0.5, 0.25))
@@ -528,11 +529,12 @@ class LaundryBasketDemonstration(RobotDemonstration):
 
     robot_start_pose: HomogeneousTransformationMatrix = field(
         default_factory=lambda: HomogeneousTransformationMatrix.from_xyz_rpy(
-            x=1.3, y=2.2, yaw=math.pi
+            x=3.5, y=2.4, yaw=math.pi
         )
     )
     """
-    Where the robot starts in the kitchen, facing the south wall.
+    Where the robot starts in the kitchen, facing the basket from the side of the
+    coffee table.
     """
 
     standing_distance: float = 0.45
@@ -629,6 +631,7 @@ class LaundryBasketDemonstration(RobotDemonstration):
                 @ HomogeneousTransformationMatrix.from_xyz_rpy(
                     z=self.basket_scale.z / 2
                 ),
+                parent_connection_specification=Connection6DoFSpecification(),
                 scale=self.basket_scale,
             )
         laundry = BodySpecification(name=SceneBody.LAUNDRY.value).spawn(
@@ -691,32 +694,38 @@ class LaundryBasketDemonstration(RobotDemonstration):
         closed once the fingers stall on the cloth.
 
         A simulated run assumes the grasp on the highest point of the top T-shirt, while
-        a real run asks RoboKudo's doing-laundry engine for it.
+        a real run asks RoboKudo's doing-laundry engine for it. A real run starts looking
+        at the basket and first finds it with the engine, so that it stands in front of
+        the basket where it was found.
         """
         hsrb = context.require_extension(extension_type=RobotAccess).robot
         [basket] = context.world.get_semantic_annotations_by_type(LaundryBasket)
         [arm] = hsrb.all_arms
+        simulated = issubclass(self.executor_type, SimulatedPlanExecutor)
+        finding_the_basket = (
+            [] if simulated else [LaundryBasketPerception(basket=basket)]
+        )
         laundry_grasp = (
             AssumedLaundryGrasp(
                 basket=basket,
                 t_shirt=context.world.get_body_by_name(SceneBody.TOP_T_SHIRT.value),
             )
-            if issubclass(self.executor_type, SimulatedPlanExecutor)
+            if simulated
             else LaundryGraspPerception(basket=basket)
         )
-        world_T_standing = (
-            self.basket_pose
-            @ HomogeneousTransformationMatrix.from_xyz_rpy(
-                x=self.standing_distance, yaw=math.pi
-            )
-        )
-        world_T_standing.reference_frame = context.world.root
         statechart = Statechart(context=context)
         statechart.add_node(
             node=Sequence(
                 nodes=[
+                    *finding_the_basket,
                     ParkArmsAction(arms=hsrb.all_arms),
-                    NavigateAction(target_location=world_T_standing.pose),
+                    NavigateAction(
+                        target_location=Pose.from_xyz_rpy(
+                            x=self.standing_distance,
+                            yaw=math.pi,
+                            reference_frame=basket.root,
+                        )
+                    ),
                     LookAtAction(target=Pose(reference_frame=basket.root)),
                     laundry_grasp,
                     StatementNode(
