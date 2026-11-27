@@ -864,6 +864,44 @@ class TestClothSimulation:
         assert simulator._mj_model.neq == equality_count
         assert numpy.all(end[pinned, 2] < start[pinned, 2])
 
+    def test_two_bodies_pin_vertices_one_right_after_the_other(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        Pinning recompiles the model, and the vertices still lie where they were for the
+        next pin, without a step in between, as two hands closing at once need.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        start = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        carrier_position = simulator._mj_data.body("carrier").xpos.copy()
+        hook = simulator._mj_data.body("hook")
+        hook_P_last_vertex = hook.xmat.reshape(3, 3).T @ (start[-1] - hook.xpos)
+        simulator.callbacks["pin_flex_vertices"](
+            flex_name="cloth",
+            body_name="carrier",
+            body_P_centre=start[0] - carrier_position,
+            radius=0.01,
+        )
+
+        positions = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        result = simulator.callbacks["pin_flex_vertices"](
+            flex_name="cloth",
+            body_name="hook",
+            body_P_centre=hook_P_last_vertex,
+            radius=0.01,
+        )
+
+        assert numpy.array_equal(positions, start)
+        assert (
+            result.type
+            is SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_MODEL
+        )
+
     def test_unpinning_fails_when_the_body_holds_no_vertex_of_the_flex(
         self, simulator: MujocoSimulator
     ) -> None:
@@ -977,6 +1015,49 @@ class TestClothSimulation:
         )
         assert numpy.allclose(end[pinned], start[pinned] + travel, atol=5e-3)
 
+    def test_a_vertex_pinned_beside_a_motion_capture_body_turns_with_it(
+        self, simulator: MujocoSimulator
+    ) -> None:
+        """
+        Turning the carrier half a turn about the x-axis swings a vertex pinned beside
+        it to the mirror image of where it was, as a hand turning over a cloth's edge
+        does.
+        """
+        simulator.start(simulate_in_thread=False, render_in_thread=False)
+        simulator.step()
+        start = simulator.callbacks["get_flex_vertex_positions"](
+            flex_name="cloth"
+        ).result
+        carrier_position = simulator._mj_data.body("carrier").xpos.copy()
+        offset = start[1] - carrier_position
+        pinned = simulator.callbacks["pin_flex_vertices"](
+            flex_name="cloth",
+            body_name="carrier",
+            body_P_centre=offset,
+            radius=0.01,
+        ).result
+        step_count = 250
+
+        for step in range(1, step_count + 1):
+            angle = numpy.pi * step / step_count
+            result = simulator.callbacks["set_motion_capture_body_pose"](
+                body_name="carrier",
+                position=carrier_position,
+                quaternion=numpy.array(
+                    [numpy.cos(angle / 2), numpy.sin(angle / 2), 0.0, 0.0]
+                ),
+            )
+            simulator.step()
+        end = simulator.callbacks["get_flex_vertex_positions"](flex_name="cloth").result
+
+        assert (
+            result.type
+            is SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA
+        )
+        assert numpy.allclose(
+            end[pinned], carrier_position + offset * [1.0, -1.0, -1.0], atol=5e-3
+        )
+
     @pytest.mark.parametrize("body_name", ["this_body_does_not_exist", "hook"])
     def test_only_a_motion_capture_body_can_be_set_somewhere(
         self, simulator: MujocoSimulator, body_name: str
@@ -987,6 +1068,24 @@ class TestClothSimulation:
         """
         result = simulator.callbacks["set_motion_capture_body_position"](
             body_name=body_name, position=numpy.zeros(3)
+        )
+
+        assert (
+            result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION
+        )
+
+    @pytest.mark.parametrize("body_name", ["this_body_does_not_exist", "hook"])
+    def test_only_a_motion_capture_body_can_be_posed(
+        self, simulator: MujocoSimulator, body_name: str
+    ) -> None:
+        """
+        Setting the pose of a body that is missing, or that the physics moves, reports a
+        failure.
+        """
+        result = simulator.callbacks["set_motion_capture_body_pose"](
+            body_name=body_name,
+            position=numpy.zeros(3),
+            quaternion=numpy.array([1.0, 0.0, 0.0, 0.0]),
         )
 
         assert (

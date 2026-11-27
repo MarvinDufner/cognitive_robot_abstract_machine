@@ -243,7 +243,8 @@ class MujocoSimulator(BaseSimulator):
     def _recompile(self) -> None:
         """
         Compile the model anew from :attr:`_mj_spec`, keeping the state of the
-        simulation, and show the new model in the viewer.
+        simulation, so that where everything lies can be read off at once, and show the
+        new model in the viewer.
         """
         with self._model_lock:
             self._mj_model, self._mj_data = self._mj_spec.recompile(
@@ -251,8 +252,8 @@ class MujocoSimulator(BaseSimulator):
             )
             if not self.headless:
                 self._renderer._sim().load(self._mj_model, self._mj_data, "")
-                if self.simulation_thread is None:
-                    mujoco.mj_step1(self._mj_model, self._mj_data)
+            if self.simulation_thread is None:
+                mujoco.mj_step1(self._mj_model, self._mj_data)
 
     @property
     def file_path(self) -> str:
@@ -657,20 +658,58 @@ class MujocoSimulator(BaseSimulator):
         :return: A SimulatorCallbackResult indicating the success or failure of the
             operation
         """
-        body_id = mujoco.mj_name2id(
-            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_BODY, name=body_name
-        )
-        if body_id == -1 or self._mj_model.body_mocapid[body_id] == -1:
+        motion_capture_index = self._motion_capture_index(body_name)
+        if motion_capture_index == -1:
             return SimulatorCallbackResult(
                 type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
                 info=f"Motion capture body {body_name} not found",
             )
-        self._mj_data.mocap_pos[self._mj_model.body_mocapid[body_id]] = position
+        self._mj_data.mocap_pos[motion_capture_index] = position
         mujoco.mj_kinematics(self._mj_model, self._mj_data)
         return SimulatorCallbackResult(
             type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA,
             info=f"Set motion capture body {body_name} to position {position}",
         )
+
+    @BaseSimulator.simulator_callback
+    def set_motion_capture_body_pose(
+        self, body_name: str, position: numpy.ndarray, quaternion: numpy.ndarray
+    ) -> SimulatorCallbackResult:
+        """
+        Set where a motion capture body is and how it is turned; whatever is constrained
+        to it moves and turns along.
+
+        :param body_name: The name of the motion capture body
+        :param position: The world position of the body
+        :param quaternion: The world orientation of the body, scalar first
+        :return: A SimulatorCallbackResult indicating the success or failure of the
+            operation
+        """
+        motion_capture_index = self._motion_capture_index(body_name)
+        if motion_capture_index == -1:
+            return SimulatorCallbackResult(
+                type=SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION,
+                info=f"Motion capture body {body_name} not found",
+            )
+        self._mj_data.mocap_pos[motion_capture_index] = position
+        self._mj_data.mocap_quat[motion_capture_index] = quaternion
+        mujoco.mj_kinematics(self._mj_model, self._mj_data)
+        return SimulatorCallbackResult(
+            type=SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA,
+            info=f"Set motion capture body {body_name} to position {position} and "
+            f"orientation {quaternion}",
+        )
+
+    def _motion_capture_index(self, body_name: str) -> int:
+        """
+        :param body_name: The name of a body.
+        :return: The index of the body among the motion capture bodies, -1 if no motion
+            capture body has that name.
+        """
+        body_id = mujoco.mj_name2id(
+            m=self._mj_model, type=mujoco.mjtObj.mjOBJ_BODY, name=body_name
+        )
+        return -1 if body_id == -1 else int(self._mj_model.body_mocapid[body_id])
 
     @BaseSimulator.simulator_callback
     def get_geom_friction(self, geom_name: str) -> SimulatorCallbackResult:
